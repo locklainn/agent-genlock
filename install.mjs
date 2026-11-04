@@ -9,6 +9,7 @@
  *   genlock install --skill               # also install the Claude Code skills
  *   genlock install --global              # into ~/.claude rather than this repository
  *   genlock install --full                # the long form of the tickets protocol
+ *   genlock install --private             # keep records out of git, on this machine only
  *   genlock install --check               # report, write nothing
  *
  * Idempotent: the block is fenced by markers and replaced in place, hooks and servers are
@@ -80,7 +81,10 @@ function weave(existing, body) {
   const b = existing.indexOf(BEGIN);
   const e = existing.indexOf(END);
   const managed = `${BEGIN}\n\n${body}\n\n${END}\n`;
-  if (b >= 0 && e > b) return existing.slice(0, b) + managed + existing.slice(e + END.length).replace(/^\n+/, '\n');
+  if (b >= 0 && e > b) {
+    const rest = existing.slice(e + END.length).replace(/^\n+/, '');
+    return existing.slice(0, b) + managed + (rest ? `\n${rest}` : '');
+  }
   const sep = existing.length === 0 ? '' : (existing.endsWith('\n\n') ? '' : existing.endsWith('\n') ? '\n' : '\n\n');
   return existing + sep + managed;
 }
@@ -99,9 +103,17 @@ for (const t of targets()) {
 }
 
 /** On PATH, the bare name survives upgrades. Otherwise this checkout's absolute path. */
-const onPath = spawnSync('sh', ['-c', 'command -v genlock'], { encoding: 'utf8' }).status === 0;
-const command = onPath ? ['genlock'] : [process.execPath, CLI];
-const shellCmd = (sub) => `${command.map((c) => (/\s/.test(c) ? `'${c}'` : c)).join(' ')} ${sub}`;
+const WINDOWS = process.platform === 'win32';
+const onPath = (WINDOWS
+  ? spawnSync('where', ['genlock'], { stdio: 'ignore' })
+  : spawnSync('sh', ['-c', 'command -v genlock'], { stdio: 'ignore' })).status === 0;
+if (!onPath) {
+  console.log('  genlock is not on PATH, so these settings name this copy by its full path and will not work on another\n'
+    + '  machine. To fix: npm install -g github:locklainn/agent-genlock, then run this again.');
+}
+const fwd = (p) => p.replace(/\\/g, '/');
+const command = onPath ? ['genlock'] : [fwd(process.execPath), fwd(CLI)];
+const shellCmd = (sub) => `${command.map((c) => (/\s/.test(c) ? `"${c}"` : c)).join(' ')} ${sub}`;
 
 function readJson(file) {
   if (!fs.existsSync(file)) return {};
@@ -116,7 +128,7 @@ if (has('--hooks')) {
   settings.hooks ||= {};
   const put = (event, matcher, sub) => {
     const kept = (settings.hooks[event] || [])
-      .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !/genlock(\.mjs)?['"]? (orient|guard|deliver)\b/.test(h.command || '')) }))
+      .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !/genlock(\.mjs)?["']? (orient|guard|deliver)\b/.test(h.command || '')) }))
       .filter((g) => g.hooks.length);
     const group = { hooks: [{ type: 'command', command: shellCmd(sub) }] };
     if (matcher) group.matcher = matcher;
@@ -138,7 +150,10 @@ if (has('--mcp')) {
     const cfg = readJson(file);
     const before = JSON.stringify(cfg, null, 2);
     cfg.mcpServers ||= {};
-    cfg.mcpServers.genlock = { command: command[0], args: [...command.slice(1), 'mcp'] };
+    // Windows cannot start npm's genlock.cmd shim directly, so it goes through cmd.
+    cfg.mcpServers.genlock = WINDOWS && onPath
+      ? { command: 'cmd', args: ['/c', 'genlock', 'mcp'] }
+      : { command: command[0], args: [...command.slice(1), 'mcp'] };
     writeIfChanged(file, before === '{}' ? '' : `${before}\n`, `${JSON.stringify(cfg, null, 2)}\n`, 'MCP server');
   }
 }
@@ -157,4 +172,26 @@ if (has('--skill')) {
   }
 }
 
+if (has('--private')) {
+  const r = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], { encoding: 'utf8' });
+  if (r.status !== 0) {
+    console.error('genlock: --private needs a git repository.');
+    process.exit(1);
+  }
+  const file = path.resolve(r.stdout.trim());
+  const before = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+  const after = /^\.genlock\/$/m.test(before) ? before : `${before}${before && !before.endsWith('\n') ? '\n' : ''}.genlock/\n`;
+  writeIfChanged(file, before, after, 'private records');
+}
+
 console.log(`\n${check ? 'Dry run. ' : ''}Modules: ${mods.join(', ')} (${block.split(/\s+/).length} words of rules).`);
+
+if (has('--next-steps') && !check) {
+  console.log(`
+Next:
+  genlock doctor      confirm it took
+  genlock orient      see where things stand, and whether goals are known
+  genlock guide       if there are already status notes or handoff documents here
+
+Restart your agent session so it loads the new rules, hooks and tools.`);
+}

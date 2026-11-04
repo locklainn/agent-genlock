@@ -17,7 +17,7 @@ fs.mkdirSync(CWD);
 
 let pass = 0; const fails = [];
 
-const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT };
+const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT };
 delete baseEnv.CLAUDE_CODE_SESSION_ID;
 
 function run(cwd, session, args, input) {
@@ -543,7 +543,7 @@ run(SP, 'intruder', ['release', 'other']);
 
 r = s('spinoff', 'launch', S2, '--user-said', 'yes do it');
 check('launch takes the claim on a yes', r.code === 0 && /footer2/.test(s('claims').out), r.all);
-const startSh = (/sh '([^']+start\.sh)'/.exec(r.out) || [])[1];
+const startSh = (/(?:sh '|-File ")([^'"]+start\.(?:sh|ps1))/.exec(r.out) || [])[1];
 check('...and writes a start script', !!startSh && fs.existsSync(startSh), r.out);
 const scriptText = startSh ? fs.readFileSync(startSh, 'utf8') : '';
 const session = (/--session-id '([^']+)'/.exec(scriptText) || [])[1];
@@ -638,6 +638,73 @@ check('doctor sees the hook once installed', /guard hook in/.test(r.out), r.out)
 inst('--skill');
 check('--skill installs each module\'s skill', ['ticketed-work', 'goals', 'continuity', 'coordination', 'spinoffs', 'status-labels']
   .every((n) => fs.existsSync(path.join(IN, '.claude/skills', n, 'SKILL.md'))));
+
+/* ---- first contact: setup, reads leave no trace ------------------------------- */
+
+const SETUP = path.join(ROOT, 'setup');
+fs.mkdirSync(SETUP);
+git(SETUP, 'init', '-q', '-b', 'main');
+git(SETUP, 'config', 'user.email', 't@example.com');
+git(SETUP, 'config', 'user.name', 'test');
+fs.writeFileSync(path.join(SETUP, 'CLAUDE.md'), '# Mine\n');
+git(SETUP, 'add', '.'); git(SETUP, 'commit', '-qm', 'i');
+const sx = (...args) => run(SETUP, 'x', args);
+
+for (const cmd of [['orient'], ['goal', 'list'], ['list'], ['claims'], ['inbox'], ['where'], ['doctor'], ['help'], ['guide']]) sx(...cmd);
+run(SETUP, null, ['guard'], JSON.stringify({ session_id: 'x', tool_name: 'Edit', tool_input: { file_path: path.join(SETUP, 'a') } }));
+run(SETUP, null, ['deliver'], JSON.stringify({ session_id: 'x' }));
+check('reading leaves no trace in the working tree', git(SETUP, 'status', '--porcelain').out === '', git(SETUP, 'status', '--porcelain').out);
+check('...or in .git', !fs.existsSync(path.join(SETUP, '.git', 'genlock')));
+const NOGIT = path.join(ROOT, 'nogit');
+fs.mkdirSync(NOGIT);
+run(NOGIT, 'x', ['orient']);
+check('...or in a folder that is not a repository', fs.readdirSync(NOGIT).length === 0, fs.readdirSync(NOGIT).join());
+
+r = sx('install', '--check');
+check('--check writes nothing', git(SETUP, 'status', '--porcelain').out === '', r.all);
+
+r = sx('guide');
+check('guide covers public repositories', /genlock init --private/.test(r.out), r.out);
+check('...and bringing notes across', /do not convert them in bulk/.test(r.out), r.out);
+check('help starts with how to begin', /START HERE[\s\S]*genlock init/.test(sx('help').out));
+
+r = sx('init');
+check('init without a choice about records is refused', r.code === 1 && /--private/.test(r.err) && /--shared/.test(r.err), r.all);
+check('...and writes nothing', git(SETUP, 'status', '--porcelain').out === '');
+r = sx('init', '--help');
+check('--help never runs the command', r.code === 0 && /START HERE/.test(r.out) && git(SETUP, 'status', '--porcelain').out === '', r.all);
+r = sx('goal', 'add', 'Should not exist', '--user-said', 'x', '-h');
+check('...on any command', /START HERE/.test(r.out) && !fs.existsSync(path.join(SETUP, '.genlock')), r.all);
+r = sx('init', '--check');
+check('init --check needs no choice and writes nothing', r.code === 0 && git(SETUP, 'status', '--porcelain').out === '', r.all);
+r = sx('init', '--shared');
+check('init runs', r.code === 0, r.all);
+check('...sets up rules, hooks, server and skills', /BEGIN genlock/.test(fs.readFileSync(path.join(SETUP, 'CLAUDE.md'), 'utf8'))
+  && fs.existsSync(path.join(SETUP, '.claude', 'settings.json')) && fs.existsSync(path.join(SETUP, '.mcp.json'))
+  && fs.existsSync(path.join(SETUP, '.claude', 'skills', 'goals', 'SKILL.md')), r.all);
+check('...says what to do next', /genlock doctor/.test(r.out), r.out);
+r = sx('doctor');
+check('doctor passes after init', r.code === 0, r.all);
+const initOnce = fs.readFileSync(path.join(SETUP, 'CLAUDE.md'), 'utf8');
+sx('init', '--shared');
+check('init twice changes nothing', fs.readFileSync(path.join(SETUP, 'CLAUDE.md'), 'utf8') === initOnce);
+
+r = sx('init', '--private');
+check('--private excludes records from git', r.code === 0 && /\.genlock\//.test(fs.readFileSync(path.join(SETUP, '.git', 'info', 'exclude'), 'utf8')), r.all);
+sx('goal', 'add', 'A private goal for this test', '--user-said', 'x');
+check('...so a record never shows as a change', !/\.genlock/.test(git(SETUP, 'status', '--porcelain', '-uall').out), git(SETUP, 'status', '--porcelain', '-uall').out);
+r = sx('sync');
+check('...sync explains rather than failing oddly', r.code === 1 && /private/.test(r.err), r.all);
+check('...doctor says so', /records are private/.test(sx('doctor').out));
+
+if (process.platform !== 'win32') {
+  const LINK = path.join(ROOT, 'link-to-setup');
+  fs.symlinkSync(SETUP, LINK);
+  sx('claim', 'held', '--path', 'src');
+  r = run(SETUP, null, ['guard'], JSON.stringify({ session_id: 'other', tool_name: 'Edit', tool_input: { file_path: path.join(LINK, 'src', 'new.js') } }));
+  check('the guard sees through a symlinked path, as with /tmp on macOS', r.code === 2, r.all);
+  sx('release', 'held');
+}
 
 /* ---- sync --------------------------------------------------------------------- */
 

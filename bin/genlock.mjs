@@ -10,16 +10,17 @@
  */
 
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { die, damaged, dirtyFiles, git, repoRoot, genlockDir, ensureStore, readEvents, listIds, identity } from '../lib/store.mjs';
+import { die, damaged, dirtyFiles, git, repoRoot, genlockDir, readEvents, listIds, identity } from '../lib/store.mjs';
 import {
   cmdAssign, cmdAssume, cmdDecide, cmdDone, cmdForbid, cmdGrill, cmdHazard, cmdLink, cmdLint, cmdList, cmdNew, cmdRef,
   cmdReq, cmdShow, cmdStart, cmdStatus, cmdUnforbid, cmdUpdate, mark, withReason,
 } from '../lib/tickets.mjs';
 import { cmdGoal } from '../lib/goals.mjs';
-import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, liveClaims, liveDir } from '../lib/claims.mjs';
+import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, liveBase, liveClaims } from '../lib/claims.mjs';
 import { cmdCheckpoint, cmdContinue, cmdOrient } from '../lib/continuity.mjs';
 import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
@@ -27,7 +28,13 @@ import { runMcp } from '../lib/mcp.mjs';
 
 const VERSION = '2.0.0';
 
-const USAGE = `genlock ${VERSION} -- keeps work intact as it passes between agent sessions.
+const USAGE = `genlock ${VERSION} -- keeps coding agents aligned through shared goals and tickets.
+
+START HERE
+  genlock init --private | --shared             set up this repository; records stay local, or are committed
+  genlock doctor                                confirm it took
+  genlock guide                                 adopting it where work is already under way
+  genlock orient                                what is going on here
 
 TICKETS   requirements first; done is proved, not asserted
   genlock new "TITLE" -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--ask ..] [--draft]
@@ -79,9 +86,8 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
 
   genlock mcp                                     run as an MCP server, over stdio
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
-  genlock doctor                                  is the merge rule active? are the hooks in?
   genlock where
-  genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--global] [--full] [--check]
+  genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--private] [--global] [--full] [--check]
 
 Exit codes: 0 fine, 1 usage or not found, 2 lint refused, 3 not done, 4 conflict or unsafe.`;
 
@@ -91,6 +97,8 @@ function cmdSync(a) {
   if (!fs.existsSync(genlockDir())) die('no .genlock/ here yet; nothing to commit');
   const root = repoRoot();
   if (!git(['rev-parse', '--git-dir'], root)) die('not a git repository');
+  if (git(['check-ignore', '-q', '.genlock/records/x.jsonl'], root) !== null)
+    die('records here are private: .genlock/ is excluded from git, so there is nothing to commit');
   if (git(['add', '--', '.genlock'], root) === null) die('git add failed');
   if (git(['diff', '--cached', '--quiet', '--', '.genlock'], root) !== null) {
     console.log('nothing new in .genlock/.');
@@ -107,17 +115,20 @@ function cmdDoctor() {
   const root = repoRoot();
   const problems = [];
   const report = (ok, text) => { console.log(`${ok ? 'ok ' : 'BAD'}  ${text}`); if (!ok) problems.push(text); };
-  ensureStore();
+  report(parseInt(process.versions.node, 10) >= 16, `node ${process.versions.node}`);
   const inGit = !!git(['rev-parse', '--git-dir'], root);
   report(inGit, inGit ? 'git repository' : 'not a git repository, so records have no merge protection');
   if (inGit) {
     const attr = git(['check-attr', 'merge', '--', '.genlock/records/T-X.jsonl'], root) || '';
-    report(/merge: union$/.test(attr), `merge rule for records: ${attr || 'unreadable'}`);
+    const ignored = git(['check-ignore', '-q', '.genlock/records/x.jsonl'], root) !== null;
+    if (ignored) console.log('ok   records are private: excluded from git, on this machine only');
+    else if (!listIds('T-').length && !listIds('G-').length) console.log('ok   no records yet: the merge rule arrives with the first one');
+    else report(/merge: union$/.test(attr), `merge rule for records: ${attr || 'unreadable'}`);
   }
-  const hookFiles = [path.join(root, '.claude/settings.json'), path.join(root, '.claude/settings.local.json'),
-    path.join(process.env.HOME || '', '.claude/settings.json')];
+  const hookFiles = [path.join(root, '.claude', 'settings.json'), path.join(root, '.claude', 'settings.local.json'),
+    path.join(os.homedir(), '.claude', 'settings.json')];
   const hook = hookFiles.find((f) => { try { return /guard/.test(fs.readFileSync(f, 'utf8')) && /genlock/.test(fs.readFileSync(f, 'utf8')); } catch { return false; } });
-  report(!!hook, hook ? `guard hook in ${hook}` : 'guard hook not installed, so claims are honour-system: genlock install --hooks');
+  report(!!hook, hook ? `guard hook in ${hook}` : 'guard hook not installed, so claims are honour-system: genlock init');
   const idv = identity();
   report(!!idv, idv ? `session identity ${idv.slice(0, 8)}` : 'no session identity: set GENLOCK_SESSION, or run under Claude Code');
   for (const id of [...listIds('T-'), ...listIds('G-'), ...listIds('Q-'), 'project']) readEvents(id);
@@ -128,14 +139,27 @@ function cmdDoctor() {
 
 function cmdWhere() {
   console.log(`records: ${genlockDir()}`);
-  console.log(`live:    ${liveDir()}`);
+  console.log(`live:    ${liveBase()}`);
 }
 
-function cmdInstall() {
-  const here = path.dirname(fileURLToPath(import.meta.url));
-  const r = spawnSync(process.execPath, [path.join(here, '..', 'install.mjs'), ...process.argv.slice(3)], { stdio: 'inherit' });
+const PACKAGE_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+function runInstaller(extra = []) {
+  const r = spawnSync(process.execPath, [path.join(PACKAGE_ROOT, 'install.mjs'), ...extra, ...process.argv.slice(3)], { stdio: 'inherit' });
   process.exit(r.status ?? 1);
 }
+const cmdInstall = () => runInstaller();
+function cmdInit() {
+  const args = process.argv.slice(3);
+  if (!args.includes('--private') && !args.includes('--shared') && !args.includes('--check')) {
+    die('init needs a choice, because it decides where your records go:\n\n'
+      + '  genlock init --private   records stay on this machine, excluded from git. Use for public or sensitive repositories\n'
+      + '  genlock init --shared    records are committed with your work, so they have history and reach other machines\n\n'
+      + 'Records are permanent logs that can quote people. Add --check to see what would change. Nothing was written.');
+  }
+  runInstaller(['--hooks', '--mcp', '--skill', '--next-steps']);
+}
+const cmdGuide = () => process.stdout.write(fs.readFileSync(path.join(PACKAGE_ROOT, 'docs', 'ADOPTING.md'), 'utf8'));
 
 /* -------------------------------------------------------------------- shell */
 
@@ -183,6 +207,8 @@ const COMMANDS = {
   doctor: cmdDoctor,
   where: cmdWhere,
   install: cmdInstall,
+  init: cmdInit,
+  guide: cmdGuide,
 };
 
 const SHORT = new Set(['r', 'c', 'm']);
@@ -216,9 +242,10 @@ function parse(argv) {
 }
 
 const argv = process.argv.slice(2);
-if (!argv.length || ['-h', '--help', 'help'].includes(argv[0])) { console.log(USAGE); process.exit(0); }
+// Anywhere on the line: asking for help must never run the command it is asking about.
+if (!argv.length || argv[0] === 'help' || argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); process.exit(0); }
 if (['-V', '--version', 'version'].includes(argv[0])) { console.log(VERSION); process.exit(0); }
 const fn = COMMANDS[argv[0]];
 if (!fn) die(`unknown command '${argv[0]}'. \`genlock help\` lists them.`);
-if (fn === cmdInstall) cmdInstall();
+if (fn === cmdInstall || fn === cmdInit || fn === cmdGuide) fn();
 else fn(parse(argv.slice(1)));

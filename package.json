@@ -10,6 +10,7 @@
     "bin/",
     "lib/",
     "agent/",
+    "docs/",
     "skills/",
     "install.mjs",
     "README.md",

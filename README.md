@@ -34,17 +34,45 @@ Each works without the others, except where noted. Install only what you want.
 | `continuity` | `orient`, `checkpoint`, `continue` | tickets, goals |
 | `spinoffs` | Move a tangent into its own session once it is shown to be safe and the user says yes | tickets, coordination |
 
+## Install
+
+You need [Node](https://nodejs.org) 16 or newer and git. The same commands work on macOS, Linux and Windows.
+
 ```bash
-genlock install                        # every module's rules, into this repo's agent file
-genlock install --only goals,tickets   # just these
+npm install -g github:locklainn/agent-genlock   # once per machine; run again to upgrade
+cd your-repository
+genlock init --private                          # or --shared; rules, hooks, MCP server, skills for this repository
+genlock doctor                                  # confirms it took
+```
+
+Then restart your agent session. That is all. From then on, just talk to your agent: it asks for your goals if it does not know them.
+
+**`--private` or `--shared`?** Records are permanent logs that can quote people. `--private` keeps them out of git, on your machine only: use it for a public or sensitive repository. `--shared` commits them with your work, so they have history and reach other machines.
+
+**Work already under way here?** `genlock guide` covers bringing across status notes and handoff documents without losing anything.
+
+To remove it: `npm uninstall -g @locklainn/genlock`, then see the end of `genlock guide`.
+
+| platform | new terminal for a spin-off |
+|---|---|
+| macOS | Terminal or iTerm |
+| Windows | PowerShell |
+| Linux | your default terminal, if one can be found |
+
+Wherever a window cannot be opened, genlock prints the command to run instead. On Windows, `.mcp.json` is written for Windows, so if your team mixes platforms, register the server per person instead: `claude mcp add --scope user genlock -- genlock mcp`.
+
+### Choosing pieces
+
+```bash
+genlock install --only goals,tickets   # just these modules' rules
 genlock install --hooks                # Claude Code hooks: orient, guard, deliver
 genlock install --mcp                  # register the MCP server in .mcp.json
 genlock install --skill                # one skill per module
-genlock install --global               # into ~/.claude instead of this repo
+genlock install --global               # into ~/.claude, so it applies to every repository you open
 genlock install --check                # say what would change, write nothing
 ```
 
-Node 16+ and nothing else. Until it is published: clone https://github.com/locklainn/agent-genlock and link `bin/genlock.mjs` onto your PATH.
+Other agents (Cursor, Codex, Windsurf, Copilot, Gemini, Cline) get the rules in their own instruction file. Hooks and spin-off windows are Claude Code only.
 
 ## There are no handoff documents
 
@@ -121,6 +149,7 @@ Almost every assertion is a refusal. Merge tests run real `git merge` and `git r
 | `lib/` | `store` records, `tickets`, `goals`, `claims`, `continuity`, `ask`, `spinoff`, `mcp`, `lint` |
 | `agent/` | each module's rules, for an agent's instructions; `tickets.full.md` is the long form |
 | `skills/` | one Claude Code skill per module |
+| `docs/ADOPTING.md` | what `genlock guide` prints |
 | `install.mjs` | writes rules, hooks, MCP config and skills, idempotently |
 
 MIT.
