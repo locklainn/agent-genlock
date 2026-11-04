@@ -1,66 +1,28 @@
 ---
 name: ticketed-work
-description: Work from a ticket whose requirements were written before the work started, so that "done" is proved rather than asserted. Use at the start of any task spanning more than a couple of tool calls, touching several files, changing visible behaviour, or capable of being half-done — and whenever about to report something complete, finished, working or ready.
+description: Work from a ticket whose requirements were written before the work started, so that "done" is proved rather than asserted. Use at the start of any task spanning more than a couple of tool calls, touching several files, changing visible behaviour, or capable of being half-done, and whenever about to report something complete, finished, working or ready.
 ---
 
-Use the `tkt` command. If it is not on PATH, use `npx @locklainn/tkt` in its place.
+Use the `genlock` command, or the genlock MCP tools if connected. If it is not on PATH, use `npx @locklainn/genlock`.
 
-## At the start of the work
+## Tickets: done is proved, not asserted
 
-Write the definition of done **before** doing any of it:
+`genlock` holds a definition of done written *before* the work, and refuses completion until each part has evidence.
 
-```
-tkt new "the outcome, as a state that will be true" \
-  --ask "the user's own words, if short" \
-  -r "a statement that will be TRUE or FALSE when this is finished" -c "the command or manual: check that settles it" \
-  -r "..." -c "..."
-```
+**Open a ticket before any work** that spans more than a couple of tool calls, touches several files, changes visible behaviour, or could be half-done. Not for questions, reads, explanations or one-liners.
 
-`tkt new` refuses vague requirements, and what it refuses is the lesson: `make search
-better` names a feeling, `searching "budgets" returns the 12 documents containing
-"budget"` names a state. Three to six requirements. They describe the finished state,
-never the steps. Cover the whole ask, including the inconvenient part.
+    genlock new "TITLE" -r "REQUIREMENT" -c "CHECK" [-r .. -c ..] [--goal G]
+    genlock start ID
+    genlock update ID "what just happened, and where it stands"
+    genlock met ID N --evidence "WHAT YOU OBSERVED"
+    genlock assume ID "WHAT" --breaks "WHAT IF WRONG"
+    genlock decide ID "WHAT WAS DECIDED" [--user-said ".."]
+    genlock grill ID --observed .. --cause .. --absence .. --assumption .. --falsify ..
+    genlock done ID      # exits non-zero and names the gap if anything is unproved
 
-**If you cannot write the requirements, you do not yet understand the ask.** Look first
-— the files, the git history, a command. Ask the user only where two readings lead to
-materially different work, and then batch the questions into one exchange.
-
-## While working
-
-```
-tkt met ID N --evidence "test/search.mjs budgets -> 12 hits"   # what you OBSERVED
-tkt fail ID N --evidence "..."                                  # tried; did not hold
-tkt waive ID N --reason "..."                                   # out of reach, and why
-tkt req ID -r "..." -c "..."                                    # discovered mid-flight
-tkt assume ID "what you took as given" --breaks "what if wrong"
-tkt status ID                                                   # a [STATUS-UPDATE] line
-```
-
-`ran the tests` is not evidence. The command and its output is. A waiver is not a
-proof. Adding a requirement is honest; deleting one to make `done` pass is not, and
-never edit the ticket files by hand.
-
-## Before saying it is done
-
-```
-tkt grill ID       # prints the five fixed questions and which are still open
-tkt grill ID --observed ".." --cause ".." --absence ".." --assumption ".." --falsify ".."
-tkt done ID
-```
-
-**`tkt done` exiting zero is the only thing that licenses the words "done",
-"complete", "finished", "working" or "ready".** If it refuses, it names the gap: close
-the gap, do not route around it. It prints the `[TASK-COMPLETE]`, `[GRILLED]` and
-`[ASSUMING]` lines itself — relay those rather than composing your own.
-
-## Stay invisible
-
-The user never opens a ticket and mostly should not know one exists. Do not narrate the
-mechanics, show JSON, paste command transcripts, or ask the user to write requirements
-or review a board. The id is a short prefix on a label: `[STATUS-UPDATE] ABC-0007 · …`.
-Requirements surface twice only — a one-line confirmation if the ask was genuinely
-ambiguous, and at completion, where `tkt done` prints them.
-
-Nothing is written into the repository; tickets live in `~/.tkt/<repo>/`.
-
-See `agent/PROTOCOL.md` in the package for the full reasoning behind each rule.
+- **A requirement is TRUE or FALSE once the work is finished**, with a check written up front: a command, or `manual:` / `file:` / `eye:`. `make search better` is refused. Three to six per ticket, covering the whole ask.
+- **`--evidence` is what you OBSERVED.** `ran the tests` is not evidence; `test/search.mjs budgets -> 12 hits` is.
+- **Keep `latest` current as work moves.** It is what the next session reads, and the only account of this work if this session dies.
+- **A waiver is not a proof.** It needs a reason, and the user's agreement if it drops something they asked for.
+- **`genlock done` exiting zero is the only thing licensing the words "done", "complete", "finished", "working" or "ready".** Relay the lines it prints. Never edit `.genlock/` by hand.
+- **Tickets are invisible to the user.** Do not narrate the mechanics, show JSON or ask them to review a board. Requirements surface in one line if the ask was ambiguous, and at completion.

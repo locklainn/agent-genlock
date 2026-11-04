@@ -1,16 +1,40 @@
 {
-  "name": "@locklainn/tkt",
-  "version": "1.0.0",
-  "description": "Agent-driven tickets. Requirements first; done is proved, not asserted.",
+  "name": "@locklainn/genlock",
+  "version": "2.0.0",
+  "description": "Keeps coding agents aligned: shared goals, proven tickets, live coordination, and safe spin-offs.",
   "type": "module",
-  "bin": { "tkt": "bin/tkt.mjs" },
-  "files": ["bin/", "agent/", "skills/", "install.mjs", "README.md", "LICENSE"],
-  "engines": { "node": ">=16" },
+  "bin": {
+    "genlock": "bin/genlock.mjs"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "agent/",
+    "skills/",
+    "install.mjs",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=16"
+  },
   "dependencies": {},
   "scripts": {
-    "test": "node tests/run.mjs",
-    "postinstall": "node -e \"process.env.TKT_NO_HINT||console.log('tkt installed. Next: npx tkt install  (writes the agent instructions into this repo)')\""
+    "test": "node tests/run.mjs"
   },
-  "keywords": ["claude-code", "agent", "tickets", "requirements", "definition-of-done", "ai-agent"],
-  "license": "MIT"
+  "keywords": [
+    "claude-code",
+    "agent",
+    "coordination",
+    "goals",
+    "tickets",
+    "mcp",
+    "definition-of-done"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/locklainn/agent-genlock.git"
+  },
+  "homepage": "https://github.com/locklainn/agent-genlock"
 }

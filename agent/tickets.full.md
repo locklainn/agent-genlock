@@ -1,8 +1,8 @@
 # Ticketed work: requirements first, and `done` is proved rather than asserted
 
 **This block is the whole protocol. Paste it into `CLAUDE.md`, `AGENTS.md`,
-`.cursorrules`, or any agent's system prompt.** It assumes the `tkt` command is on
-PATH (`npx tkt`, `npm i -g @locklainn/tkt`, or a copied `tkt.mjs`).
+`.cursorrules`, or any agent's system prompt.** It assumes the `genlock` command is on
+PATH (`npx @locklainn/genlock`, `npm i -g @locklainn/genlock`, or a copied checkout).
 
 ---
 
@@ -24,13 +24,13 @@ where it is cheap, instead of surfacing as a wrong deliverable at the end.
 
 ## The loop
 
-    tkt new "TITLE" -r "REQUIREMENT" -c "CHECK" [-r .. -c ..]   before starting
-    tkt met ID N --evidence "WHAT YOU OBSERVED"                 as each one lands
-    tkt assume ID "WHAT" --breaks "WHAT IF WRONG"                at a fork you cross
-    tkt grill ID --observed .. --cause .. --absence .. --assumption .. --falsify ..
-    tkt done ID                                                  it may refuse
+    genlock new "TITLE" -r "REQUIREMENT" -c "CHECK" [-r .. -c ..]   before starting
+    genlock met ID N --evidence "WHAT YOU OBSERVED"                 as each one lands
+    genlock assume ID "WHAT" --breaks "WHAT IF WRONG"                at a fork you cross
+    genlock grill ID --observed .. --cause .. --absence .. --assumption .. --falsify ..
+    genlock done ID                                                  it may refuse
 
-`tkt done` exits non-zero and names the gap if any requirement is unproved or the
+`genlock done` exits non-zero and names the gap if any requirement is unproved or the
 grill is unanswered. **Its zero exit is the only thing that licenses the words "done",
 "complete", "finished", "working" or "ready".** Say them on your own authority and you
 are guessing.
@@ -70,7 +70,7 @@ the finished state, never the steps to reach it.
 
 **Cover the whole ask, including the part you find inconvenient.** Requirements you
 wrote yourself, that you also mark met yourself, are trivially gameable, and the only
-thing standing against that is that `tkt done` prints them to the user at the moment
+thing standing against that is that `genlock done` prints them to the user at the moment
 you claim completion. Easy requirements become visible exactly then.
 
 ## 3. Work from the ticket, and record evidence as each requirement lands
@@ -79,13 +79,13 @@ you claim completion. Easy requirements become visible exactly then.
 not evidence. `test/search.mjs budgets -> 12 hits` is. Quote the command and its
 output, the cell and its value, the count before and after.
 
-- `tkt met ID N --evidence "..."` — proved.
-- `tkt fail ID N --evidence "..."` — tried and it did not hold. Record it; a failure
+- `genlock met ID N --evidence "..."` — proved.
+- `genlock fail ID N --evidence "..."` — tried and it did not hold. Record it; a failure
   recorded is worth more than a requirement quietly reworded until it passes.
-- `tkt waive ID N --reason "..."` — out of reach, with why. **A waiver is not a
+- `genlock waive ID N --reason "..."` — out of reach, with why. **A waiver is not a
   proof**, it is reported separately for that reason, and it needs the user's
   agreement if it removes something they asked for.
-- `tkt req ID -r ".." -c ".."` — a requirement discovered mid-flight. Adding one is
+- `genlock req ID -r ".." -c ".."` — a requirement discovered mid-flight. Adding one is
   normal and honest. Deleting one to make `done` pass is not.
 
 **Never edit the ticket JSON directly.** The refusal is the product; routing around it
@@ -93,7 +93,7 @@ by hand leaves a ticket that says done and a thing that is not.
 
 ## 4. Assumptions get named at the fork, as you cross it
 
-    tkt assume ID "fiscal years, not calendar; the sheet says neither" \
+    genlock assume ID "fiscal years, not calendar; the sheet says neither" \
       --breaks "every figure here shifts by one year"
 
 At the moment you cross it — not as a question up front before either of you knew
@@ -108,7 +108,7 @@ than running an interview.
 
 ## 5. The grill: five fixed questions, answered before done
 
-    tkt grill ID          # prints the five and which are still open
+    genlock grill ID          # prints the five and which are still open
 
 | field | the question |
 |---|---|
@@ -146,11 +146,11 @@ The tool writes the label; do not compose one by hand.
 
 | label | answers | when |
 |---|---|---|
-| `[TASK-COMPLETE]` | *is it done?* | printed by `tkt done`, never typed. It means measured, not felt |
-| `[STATUS-UPDATE]` | *what moved?* | `tkt status ID`. The work advanced or failed, **by an amount** — a number and a direction |
+| `[TASK-COMPLETE]` | *is it done?* | printed by `genlock done`, never typed. It means measured, not felt |
+| `[STATUS-UPDATE]` | *what moved?* | `genlock status ID`. The work advanced or failed, **by an amount** — a number and a direction |
 | `[TECH-REPORT]` | *why?* | a defect, a cause, a limitation. Typed by hand; it changes nothing about what is done |
-| `[ASSUMING]` | *what did you take for granted?* | printed by `tkt assume` |
-| `[GRILLED]` | *what survived?* | printed by `tkt done` |
+| `[ASSUMING]` | *what did you take for granted?* | printed by `genlock assume` |
+| `[GRILLED]` | *what survived?* | printed by `genlock done` |
 
 **`[STATUS-UPDATE]` and `[TECH-REPORT]` are the pair that gets confused.** "The town
 changed the table format after FY2023" is not a status update — it explains why a count
@@ -174,12 +174,12 @@ The user should never open a ticket, and mostly should not know one exists.
   met", no ticket JSON, no command transcripts. Run them and move on.
 - **Show requirements at exactly two moments**: a one-line confirmation of what you are
   about to build, if the ask was ambiguous enough that getting it wrong would waste
-  real work — and at completion, where `tkt done` prints them itself.
+  real work — and at completion, where `genlock done` prints them itself.
 - **The ticket id is a short prefix on a label**, nothing more: `[STATUS-UPDATE]
   ABC-0007 · ...`.
 - **Never ask the user to write requirements, prioritise a board, or review a ticket.**
   Writing them from the ask and the codebase is the job. If you genuinely cannot,
   the ask is ambiguous and the honest move is one batched question — not a ticket
   handed back.
-- **Nothing is written into the user's repository.** Tickets live in `~/.tkt/<repo>/`.
-  No new directory appears in a diff and no ticket file is ever committed.
+- **Records live in `.genlock/` and merge cleanly.** Each is an append-only file with a random
+  id, so tickets never conflict across branches. Commit them with the work, or with `genlock sync`.
