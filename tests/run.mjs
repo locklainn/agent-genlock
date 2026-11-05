@@ -568,6 +568,22 @@ check('the parent is blocked from the child\'s paths', r.code === 2, r.all);
 r = sg('parent', 'README.md');
 check('the parent is not held to a declared list', r.code === 0, r.all);
 
+/* ---- spin-offs inside the app ---------------------------------------------------- */
+
+const APPCH = path.join(ROOT, 'app-channel');
+const propApp = prop(['--path', 'src/appside']);
+const S3 = idOf({ out: propApp.out });
+const appLaunch = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S3, '--user-said', 'yes please'], {
+  cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: APPCH },
+});
+const spawnFile = path.join(APPCH, `spawn-${S3}.json`);
+check('inside the app, launch asks for a pane instead of a window', appLaunch.status === 0 && fs.existsSync(spawnFile) && /new pane/.test(appLaunch.stdout), appLaunch.stdout + appLaunch.stderr);
+const spawnReq = JSON.parse(fs.readFileSync(spawnFile, 'utf8'));
+check('...naming the ticket, and a session that holds the claim', spawnReq.ticket === S3 && JSON.parse(s('claims', '--json').out).some((c) => c.session === spawnReq.session && c.key === S3), JSON.stringify(spawnReq));
+check('...with the handoff prompt', spawnReq.prompt.includes(`genlock continue ${S3}`), spawnReq.prompt);
+const noYes = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S2, '--worktree'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: APPCH } });
+check('...and still needs the user\'s yes', noYes.status === 1 && /--user-said/.test(noYes.stderr), noYes.stderr);
+
 /* ---- MCP ---------------------------------------------------------------------- */
 
 function mcp(cwd, session, messages) {
@@ -636,8 +652,100 @@ check('--mcp registers the server', mc.mcpServers.genlock.args.includes('mcp'), 
 r = run(IN, 'x', ['doctor']);
 check('doctor sees the hook once installed', /guard hook in/.test(r.out), r.out);
 inst('--skill');
-check('--skill installs each module\'s skill', ['ticketed-work', 'goals', 'continuity', 'coordination', 'spinoffs', 'status-labels']
+check('--skill installs each module\'s skill', ['ticketed-work', 'goals', 'continuity', 'coordination', 'reviews', 'spinoffs', 'status-labels']
   .every((n) => fs.existsSync(path.join(IN, '.claude/skills', n, 'SKILL.md'))));
+
+/* ---- reviews and the snapshot --------------------------------------------------- */
+
+const RV = path.join(ROOT, 'rv');
+fs.mkdirSync(RV);
+git(RV, 'init', '-q', '-b', 'main');
+git(RV, 'config', 'user.email', 't@example.com');
+git(RV, 'config', 'user.name', 'test');
+fs.writeFileSync(path.join(RV, 'seed'), 'x\n'); git(RV, 'add', '.'); git(RV, 'commit', '-qm', 'i');
+const rv = (...args) => run(RV, 'rv', args);
+const snap = () => JSON.parse(rv('snapshot').out);
+
+let sn = snap();
+check('snapshot in an unused repository says so, and writes nothing',
+  sn.initialized === false && sn.goals.length === 0 && git(RV, 'status', '--porcelain').out === '' && !fs.existsSync(path.join(RV, '.git', 'genlock')), JSON.stringify(sn));
+check('...and needs no current goal or ticket', sn.current_goal === null && sn.last_ticket === null);
+
+fs.mkdirSync(path.join(RV, 'docs'));
+fs.writeFileSync(path.join(RV, 'docs', 'plan.md'), 'plan\n');
+const GA = goalOf(rv('goal', 'add', 'First goal to work through', '--user-said', 'x'));
+const GB = goalOf(rv('goal', 'add', 'Second goal to work through', '--user-said', 'x'));
+const TA = idOf(rv('new', 'First goal has a ticket open', '-r', 'the first check exits zero', '-c', 'node a.mjs', '--goal', GA));
+rv('goal', 'next', GB, 'Pay the bill', '--due', new Date(Date.now() + 3 * 86400000).toISOString().slice(0, 10));
+rv('update', TA, 'half done');
+
+r = rv('review', 'docs/plan.md');
+check('a review with no question is refused', r.code === 1 && /--why/.test(r.err), r.all);
+r = rv('review', 'docs/nothing.md', '--why', 'x');
+check('a review of a file that is not there is refused', r.code === 1 && /no file/.test(r.err), r.all);
+r = rv('review', 'docs/plan.md', '--why', 'Is section 2 right?', '--about', GA);
+const RID = (/\b(R-[0-9A-Z]{5})\b/.exec(r.out) || [])[1];
+check('a review is recorded', r.code === 0 && !!RID, r.all);
+rv('review', 'docs/plan.md', '--why', 'Is section 3 right too?');
+check('asking again about one file does not list it twice', snap().reviews.filter((x) => x.status === 'open').length === 1);
+rv('review', 'https://example.com/report', '--why', 'Does this read well?');
+r = run(path.join(RV, 'docs'), 'rv', ['review', 'plan.md', '--why', 'From a subfolder?']);
+check('a path from a subfolder resolves to the same file', snap().reviews.filter((x) => x.path === 'docs/plan.md').length === 1 && r.code === 0, r.all);
+check('orient lists what is waiting for review', /Waiting for the user to review/.test(rv('orient').out));
+
+sn = snap();
+check('snapshot: the current goal is the one with the latest ticket activity', sn.current_goal === GA, sn.current_goal);
+rv('goal', 'update', GB, 'moved on to the bill');
+check('...and follows the work to another goal', snap().current_goal === GB, snap().current_goal);
+sn = snap();
+check('snapshot: the last ticket worked', sn.last_ticket === TA, sn.last_ticket);
+const sa = sn.goals.find((x) => x.id === GB);
+check('snapshot: next things with days until due', sa.next[0].days_until === 3, JSON.stringify(sa.next));
+const st0 = sn.tickets.find((x) => x.id === TA);
+check('snapshot: a ticket has its latest', st0.latest.text === 'half done', JSON.stringify(st0));
+check('snapshot: progress is counted', sn.goals.find((x) => x.id === GA).progress.total === 1);
+rv('claim', TA, '--path', 'src');
+check('snapshot: live claims', snap().claims[0].paths[0] === 'src');
+rv('release', TA);
+r = rv('review', 'done', RID, '--note', 'looks right');
+sn = snap();
+check('a finished review stays on record but stops being open', sn.reviews.find((x) => x.id === RID).status === 'reviewed' && !/plan\.md/.test(rv('review', 'list').out), JSON.stringify(sn.reviews));
+const beforeSnap = git(RV, 'status', '--porcelain').out;
+rv('snapshot');
+check('snapshot writes nothing', git(RV, 'status', '--porcelain').out === beforeSnap);
+
+const mr = mcp(RV, 'mcp-session', [call(1, 'review_request', { path: 'seed', why: 'Over MCP?' }), call(2, 'reviews_list')]);
+check('MCP: review_request reaches the list', /seed/.test(mr[1].result.content[0].text), JSON.stringify(mr));
+
+/* ---- voice --------------------------------------------------------------------- */
+
+const VOICE = path.join(ROOT, 'voice-channel');
+const voiceRun = (args, input, extra = {}) => {
+  const res = spawnSync(process.execPath, [CLI, ...args], { cwd: RV, encoding: 'utf8', input, env: { ...baseEnv, GENLOCK_APP_CHANNEL: VOICE, ...extra } });
+  return { code: res.status, out: res.stdout || '', err: res.stderr || '' };
+};
+r = rv('say', 'hello');
+check('say with no channel says nobody is listening, and does not fail', r.code === 0 && /Nobody is listening/.test(r.out), r.all);
+r = voiceRun(['say']);
+check('say with nothing to say is refused', r.code === 1);
+const statusBeforeVoice = git(RV, 'status', '--porcelain').out;
+fs.mkdirSync(VOICE, { recursive: true });
+fs.writeFileSync(path.join(VOICE, 'pending'), '');
+r = voiceRun(['voice-check'], '{}');
+check('stopping after a dictated message without speaking is sent back', r.code === 2 && /genlock say/.test(r.err), r.err);
+fs.writeFileSync(path.join(VOICE, 'pending'), '');
+r = voiceRun(['voice-check'], '{"stop_hook_active":true}');
+check('...but only once, so it can never trap a session', r.code === 0, r.err);
+r = voiceRun(['voice-check'], '{}');
+check('a turn that was not dictated stops freely', r.code === 0, r.err);
+fs.writeFileSync(path.join(VOICE, 'pending'), '');
+r = voiceRun(['say', 'the', 'build', 'passed']);
+const said = fs.readdirSync(VOICE).filter((x) => x.startsWith('say-'));
+check('say hands over one whole message', r.code === 0 && said.length === 1 && JSON.parse(fs.readFileSync(path.join(VOICE, said[0]), 'utf8')).text === 'the build passed', said.join());
+check('...and clears the pending turn', !fs.existsSync(path.join(VOICE, 'pending')));
+r = voiceRun(['voice-check'], '{}');
+check('...so stopping is then free', r.code === 0, r.err);
+check('voice writes nothing to the repository', git(RV, 'status', '--porcelain').out === statusBeforeVoice);
 
 /* ---- first contact: setup, reads leave no trace ------------------------------- */
 

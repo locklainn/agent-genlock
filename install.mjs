@@ -33,6 +33,7 @@ const MODULES = {
   goals: { file: 'goals.md', skill: 'goals', needs: [] },
   continuity: { file: 'continuity.md', skill: 'continuity', needs: ['tickets', 'goals'] },
   coordination: { file: 'coordination.md', skill: 'coordination', needs: [] },
+  reviews: { file: 'reviews.md', skill: 'reviews', needs: [] },
   spinoffs: { file: 'spinoffs.md', skill: 'spinoffs', needs: ['tickets', 'coordination'] },
 };
 

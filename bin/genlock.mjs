@@ -24,9 +24,12 @@ import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, liveBase, liveClai
 import { cmdCheckpoint, cmdContinue, cmdOrient } from '../lib/continuity.mjs';
 import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
+import { cmdReview } from '../lib/reviews.mjs';
+import { cmdSnapshot } from '../lib/snapshot.mjs';
+import { cmdSay, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
-const VERSION = '2.0.0';
+const VERSION = '2.1.0';
 
 const USAGE = `genlock ${VERSION} -- keeps coding agents aligned through shared goals and tickets.
 
@@ -69,6 +72,9 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock checkpoint [--uncommitted ".."]         REFUSES until goals and tickets are current
   genlock continue [GOAL|TICKET]                  everything needed to carry on
 
+REVIEWS   files the user should look at, kept findable
+  genlock review PATH --why ".." [--about GOAL|TICKET]  |  genlock review list [--all]  |  genlock review done R [--note ..]
+
 QUESTIONS between sessions; nobody waits for an answer
   genlock ask TICKET|any "QUESTION"  |  genlock answer Q "ANSWER"  |  genlock inbox
   genlock ask user "QUESTION" [--about GOAL|TICKET]  |  genlock answer Q "ANSWER" --user-said ".."
@@ -85,6 +91,8 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock spinoff launch ID --user-said ".." [--worktree]
 
   genlock mcp                                     run as an MCP server, over stdio
+  genlock snapshot                                everything above as JSON, for tools that display it
+  genlock say "TEXT"                              speak a reply, in a session started with a voice channel
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
   genlock where
   genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--private] [--global] [--full] [--check]
@@ -131,7 +139,7 @@ function cmdDoctor() {
   report(!!hook, hook ? `guard hook in ${hook}` : 'guard hook not installed, so claims are honour-system: genlock init');
   const idv = identity();
   report(!!idv, idv ? `session identity ${idv.slice(0, 8)}` : 'no session identity: set GENLOCK_SESSION, or run under Claude Code');
-  for (const id of [...listIds('T-'), ...listIds('G-'), ...listIds('Q-'), 'project']) readEvents(id);
+  for (const id of [...listIds('T-'), ...listIds('G-'), ...listIds('Q-'), ...listIds('R-'), 'project']) readEvents(id);
   report(!damaged.length, damaged.length ? `${damaged.length} unreadable record line(s): ${damaged.slice(0, 3).join(', ')}` : 'every record line parses');
   console.log(`     ${listIds('T-').length} tickets, ${listIds('G-').length} goals, ${liveClaims().length} live claims, ${dirtyFiles().length} uncommitted files`);
   process.exit(problems.length ? 1 : 0);
@@ -197,6 +205,10 @@ const COMMANDS = {
   inbox: cmdInbox,
   deliver: cmdDeliver,
   mcp: runMcp,
+  review: cmdReview,
+  snapshot: cmdSnapshot,
+  say: cmdSay,
+  'voice-check': cmdVoiceCheck,
   claim: cmdClaim,
   release: cmdRelease,
   claims: cmdClaims,
