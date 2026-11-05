@@ -12,10 +12,20 @@ struct DashboardView: View {
                 Onboarding()
             } else {
                 StatStrip().padding(.horizontal, 24).padding(.bottom, 16)
-                HStack(alignment: .top, spacing: 16) {
-                    ForEach(Tier.allCases) { TierColumn(tier: $0) }
+                FocusTabs().padding(.horizontal, 24).padding(.bottom, 14)
+                Group {
+                    if let tier = model.focus.tier {
+                        FocusedTier(tier: tier).id(tier)
+                            .transition(.opacity.combined(with: .offset(y: 8)))
+                    } else {
+                        HStack(alignment: .top, spacing: 16) {
+                            ForEach(Tier.allCases) { TierColumn(tier: $0) }
+                        }
+                        .padding(.horizontal, 24).padding(.bottom, 24)
+                        .transition(.opacity)
+                    }
                 }
-                .padding(.horizontal, 24).padding(.bottom, 24)
+                .animation(.spring(duration: 0.32), value: model.focus)
             }
         }
     }
@@ -48,6 +58,131 @@ struct DashboardHeader: View {
     }
 }
 
+/// One tier at a time, so what matters now is all you see. A card dragged onto a tab moves there.
+struct FocusTabs: View {
+    @Environment(AppModel.self) private var model
+    @Namespace private var selection
+
+    var body: some View {
+        HStack(spacing: 6) {
+            ForEach(DashFocus.allCases) { FocusTab(focus: $0, namespace: selection) }
+            Spacer()
+        }
+    }
+}
+
+struct FocusTab: View {
+    @Environment(AppModel.self) private var model
+    let focus: DashFocus
+    let namespace: Namespace.ID
+    @State private var hovering = false
+    @State private var isTargeted = false
+
+    private var colors: [Color] { focus.tier.map(Theme.tint) ?? [Color(hex: 0x7C5CFF), Color(hex: 0x2DD4FF)] }
+    private var gradient: LinearGradient { LinearGradient(colors: colors, startPoint: .leading, endPoint: .trailing) }
+
+    var body: some View {
+        let selected = model.focus == focus
+        let count = focus.tier.map { model.store.inTier($0).count } ?? model.store.projects.count
+        Button {
+            withAnimation(.spring(duration: 0.32)) { model.focus = focus }
+        } label: {
+            HStack(spacing: 8) {
+                Text(focus.title).font(.system(size: 13.5, weight: .heavy, design: .rounded)).tracking(focus == .all ? 0.2 : 1.3)
+                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(hovering || isTargeted ? gradient : LinearGradient(colors: [Theme.textSecondary], startPoint: .leading, endPoint: .trailing)))
+                Text("\(count)").font(.system(size: 11, weight: .bold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(selected ? Color.white : Theme.textSecondary)
+                    .padding(.horizontal, 7).padding(.vertical, 2)
+                    .background(selected ? Color.white.opacity(0.24) : Color.white.opacity(0.08), in: Capsule())
+                    .contentTransition(.numericText())
+            }
+            .padding(.horizontal, 16).padding(.vertical, 9)
+            .background {
+                if selected {
+                    Capsule().fill(gradient)
+                        .shadow(color: colors[0].opacity(0.6), radius: 14, y: 3)
+                        .matchedGeometryEffect(id: "selected", in: namespace)
+                } else if hovering || isTargeted {
+                    Capsule().fill(Theme.surfaceRaised)
+                }
+            }
+            .overlay {
+                if isTargeted { Capsule().strokeBorder(gradient, lineWidth: 2) }
+            }
+            .scaleEffect(isTargeted ? 1.08 : 1)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.spring(duration: 0.25), value: isTargeted)
+        .animation(.spring(duration: 0.3), value: count)
+        .dropDestination(for: String.self) { ids, _ in
+            guard let tier = focus.tier, let id = ids.first else { return false }
+            model.move(id, to: tier)
+            return true
+        } isTargeted: { isTargeted = $0 && focus.tier != nil }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+/// A single tier, with the room to read it.
+struct FocusedTier: View {
+    @Environment(AppModel.self) private var model
+    let tier: Tier
+
+    var body: some View {
+        let projects = model.store.inTier(tier)
+        if projects.isEmpty {
+            EmptyTier(tier: tier)
+        } else {
+            ScrollView {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 400), spacing: 16, alignment: .top)], alignment: .leading, spacing: 16) {
+                    ForEach(projects) { ProjectCard(project: $0, tier: tier) }
+                }
+                .padding(.horizontal, 24).padding(.top, 4).padding(.bottom, 24)
+            }
+            .scrollIndicators(.never)
+        }
+    }
+}
+
+/// Nothing here yet. Filling it is one click, since the other tiers are not on screen to drag from.
+struct EmptyTier: View {
+    @Environment(AppModel.self) private var model
+    let tier: Tier
+
+    var body: some View {
+        let others = model.store.projects.filter { $0.tier != tier }
+        VStack(spacing: 16) {
+            Spacer(minLength: 0)
+            Image(systemName: tier == .today ? "sun.max.fill" : tier == .soon ? "calendar" : "moon.stars.fill")
+                .font(.system(size: 40)).foregroundStyle(Theme.gradient(tier))
+                .shadow(color: Theme.tint(tier)[0].opacity(0.6), radius: 18)
+            Text("Nothing in \(tier.title)").font(.system(size: 26, weight: .heavy, design: .rounded)).foregroundStyle(Theme.textPrimary)
+            if !others.isEmpty {
+                Text("Pull a project in").font(.system(size: 14)).foregroundStyle(Theme.textSecondary)
+                HStack(spacing: 10) {
+                    ForEach(others.prefix(5)) { p in
+                        Button { model.move(p.id, to: tier) } label: {
+                            HStack(spacing: 8) {
+                                Circle().fill(Theme.gradient(p.tier)).frame(width: 8, height: 8)
+                                Text(p.name).font(.system(size: 13.5, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                                Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textSecondary)
+                            }
+                            .padding(.horizontal, 14).padding(.vertical, 10)
+                            .glass(corner: 12)
+                            .contentShape(RoundedRectangle(cornerRadius: 12))
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            Spacer(minLength: 40)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
 /// The whole portfolio at a glance. Numbers first, because they are what you scan for.
 struct StatStrip: View {
     @Environment(AppModel.self) private var model
@@ -56,7 +191,8 @@ struct StatStrip: View {
         let cards = model.store.projects.compactMap { model.state(for: $0.id).snapshot }.map(CardSummary.init)
         HStack(spacing: 12) {
             StatTile(value: model.sessions.values.filter(\.isRunning).count, label: "Live sessions", symbol: "waveform.path.ecg", colors: [Theme.green, Theme.cyan])
-            StatTile(value: cards.reduce(0) { $0 + $1.waitingOnYou }, label: "Waiting on you", symbol: "person.fill.questionmark", colors: [Theme.violet, Color(hex: 0x6D6AFF)])
+            StatTile(value: model.needingAttention.count, label: "Sessions need you", symbol: "bell.badge.fill", colors: [Theme.red, Theme.amber])
+            StatTile(value: cards.reduce(0) { $0 + $1.waitingOnYou }, label: "Questions for you", symbol: "person.fill.questionmark", colors: [Theme.violet, Color(hex: 0x6D6AFF)])
             StatTile(value: cards.reduce(0) { $0 + $1.toReview }, label: "To review", symbol: "doc.text.magnifyingglass", colors: [Theme.cyan, Color(hex: 0x5B8CFF)])
             StatTile(value: cards.filter { $0.deadline != nil }.count, label: "Due this week", symbol: "flame.fill", colors: [Color(hex: 0xFF4D6D), Theme.amber])
         }
@@ -225,7 +361,9 @@ struct ProjectCard: View {
                 Image(systemName: "folder.fill").font(.system(size: 10.5)).foregroundStyle(Theme.gradient(tier))
                 Text(project.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
-                if isRunning { LiveChip() }
+                if let need = model.attention(project: project.id) {
+                    Pill(text: need == .waiting ? "NEEDS YOU" : "DONE", symbol: "bell.fill", color: need == .waiting ? Theme.red : Theme.amber)
+                } else if isRunning { LiveChip() }
                 if let order {
                     Text("\(order)").font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundStyle(.white)
                         .frame(width: 22, height: 22)

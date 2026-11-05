@@ -6,6 +6,16 @@ public enum Tier: String, Codable, CaseIterable, Identifiable {
     public var title: String { rawValue.uppercased() }
 }
 
+/// What the dashboard is looking at: one tier, or the whole board.
+public enum DashFocus: String, CaseIterable, Identifiable {
+    case today, soon, later, all
+    public var id: String { rawValue }
+    public var title: String { self == .all ? "All" : rawValue.uppercased() }
+    public var tier: Tier? { Tier(rawValue: rawValue) }
+    /// Opens on what matters now, or wherever you left it.
+    public init(saved: String?) { self = saved.flatMap(DashFocus.init(rawValue:)) ?? .today }
+}
+
 public struct Project: Codable, Equatable, Identifiable {
     public var path: String
     public var tier: Tier

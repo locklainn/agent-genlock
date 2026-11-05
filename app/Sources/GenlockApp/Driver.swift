@@ -1,5 +1,6 @@
 import AppKit
 import GenlockCore
+import UserNotifications
 
 /// Runs the built app from a script of real input events, for testing. It posts events into
 /// the app's own queue, so clicks go through the same path a mouse does, and needs no system
@@ -58,6 +59,8 @@ enum Driver {
             postFlags([], keyCode: 61)
         }
         if step["dashboard"] != nil { model.route = .dashboard }
+        if let name = step["open"] as? String, let id = projectID(named: name) { model.openSessions([id]) }
+        if let name = step["focus"] as? String, let focus = DashFocus(rawValue: name) { model.focusDashboard(focus) }
         if let path = step["addProject"] as? String { model.addProject(path: path) }
         if let args = step["tier"] as? [String], let id = projectID(named: args[0]), let tier = Tier(rawValue: args[1]) { model.move(id, to: tier) }
         if let args = step["dictate"] as? [String], let id = projectID(named: args[0]) { model.voice.submit(args[1], to: id) }
@@ -71,6 +74,21 @@ enum Driver {
         }
         if let args = step["terminalCapture"] as? [String], let id = projectID(named: args[0]), let view = model.sessions[id]?.view {
             terminalImage(of: view, to: args[1])
+        }
+        if let args = step["writeState"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id] {
+            let body = #"{"state":"\#(args[1])","message":"\#(args[2])","at":\#(Date().timeIntervalSince1970 * 1000)}"#
+            try? body.write(to: s.channel.folder.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
+        }
+        if let name = step["notificationClick"] as? String, let id = projectID(named: name) { model.showSession(id) }
+        if step["hideApp"] != nil { NSApp.hide(nil) }
+        if let path = step["deliveredReport"] as? String {
+            UNUserNotificationCenter.current().getDeliveredNotifications { list in
+                UNUserNotificationCenter.current().getNotificationSettings { settings in
+                    let lines = list.map { "\($0.request.content.title) | \($0.request.content.body)" }
+                    let out = "auth=\(settings.authorizationStatus.rawValue)\n" + lines.joined(separator: "\n")
+                    try? out.write(toFile: path, atomically: true, encoding: .utf8)
+                }
+            }
         }
         if let path = step["snapshot"] as? String { snapshot(to: path) }
         if let path = step["report"] as? String { report(to: path) }
@@ -114,6 +132,9 @@ enum Driver {
             "visible": model.visible.map { URL(fileURLWithPath: $0).lastPathComponent },
             "running": model.sessions.filter(\.value.isRunning).keys.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted(),
             "marked": model.markedCount,
+            "needing": model.needingAttention.map(\.label),
+            "dockBadge": NSApp.dockTile.badgeLabel ?? "",
+            "active": NSApp.isActive,
             "cards": cards,
             "spoken": model.voice.lastSpoken ?? "",
             "voice": model.voice.chosenVoice?.name ?? "",

@@ -16,7 +16,9 @@ func draw(_ px: Int) -> Data {
     NSBezierPath(roundedRect: body, xRadius: s * 0.19, yRadius: s * 0.19).fill()
     let colors: [NSColor] = [.systemOrange, .systemTeal, .systemPurple]
     for (i, color) in colors.enumerated() {
-        let y = s * (0.66 - CGFloat(i) * 0.16)
+        // Three rows, each y to y + 0.09, spaced 0.16 apart: 0.34 to 0.75 tall as a block would sit high,
+        // so the block is centred on the icon at 0.5.
+        let y = s * (0.615 - CGFloat(i) * 0.16)
         let path = NSBezierPath()
         path.lineWidth = s * 0.042
         path.lineCapStyle = .round

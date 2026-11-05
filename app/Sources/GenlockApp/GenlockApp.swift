@@ -1,6 +1,7 @@
 import AppKit
 import GenlockCore
 import SwiftUI
+import UserNotifications
 
 @main
 struct GenlockApp: App {
@@ -21,6 +22,11 @@ struct GenlockApp: App {
             }
             CommandMenu("Session") {
                 Button("Show Dashboard") { model.route = .dashboard }.keyboardShortcut("0")
+                Button("Focus on TODAY") { model.focusDashboard(.today) }.keyboardShortcut("1")
+                Button("Focus on SOON") { model.focusDashboard(.soon) }.keyboardShortcut("2")
+                Button("Focus on LATER") { model.focusDashboard(.later) }.keyboardShortcut("3")
+                Button("Show All Tiers") { model.focusDashboard(.all) }.keyboardShortcut("4")
+                Divider()
                 Button("Talk to Agent") { model.pressVoice() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button(model.voice.speakReplies ? "Turn Spoken Replies Off" : "Turn Spoken Replies On") {
                     model.voice.speakReplies.toggle()
@@ -28,10 +34,21 @@ struct GenlockApp: App {
                 Button("Stop Speaking") { model.voice.stopSpeaking() }.keyboardShortcut(".", modifiers: [.command, .shift])
             }
         }
+
+        MenuBarExtra {
+            MenuBarMenu().environment(model)
+        } label: {
+            let count = model.needingAttention.count
+            HStack(spacing: 3) {
+                Image(nsImage: MenuBarIcon.image(alert: count > 0))
+                if count > 0 { Text("\(count)") }
+            }
+            .accessibilityLabel(count > 0 ? "Genlock, \(count) need you" : "Genlock")
+        }
     }
 }
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var monitor: Any?
     private var shiftWasDown = false
     private var rightOptionWasDown = false
@@ -45,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return MainActor.assumeIsolated { self?.handle(event) ?? event }
         }
         AppModel.shared.boot()
+        // Only an app bundle can post notifications, and the center throws outside one.
+        if Bundle.main.bundleIdentifier != nil {
+            UNUserNotificationCenter.current().delegate = self
+            Notifier.requestPermission()
+        }
         Driver.runIfRequested()
     }
 
@@ -89,11 +111,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
+    /// Banners still show while Genlock is in front, for a session you are not looking at.
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completion: @escaping (UNNotificationPresentationOptions) -> Void) {
+        completion([.banner, .sound])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completion: @escaping () -> Void) {
+        let key = response.notification.request.content.userInfo["session"] as? String
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { if let key { AppModel.shared.showSession(key) } }
+            completion()
+        }
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { false }
 }
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         ZStack(alignment: .bottom) {
@@ -117,6 +155,7 @@ struct RootView: View {
         .animation(.spring(duration: 0.3), value: model.setupTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)
         .preferredColorScheme(.dark)
+        .onAppear { model.openMainWindow = { openWindow(id: "main") } }
         .dropDestination(for: URL.self) { urls, _ in
             let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
             for url in folders { model.addProject(path: url.path) }

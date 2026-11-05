@@ -26,10 +26,10 @@ import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
-import { cmdSay, cmdVoiceCheck } from '../lib/voice.mjs';
+import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
-const VERSION = '2.1.0';
+const VERSION = '2.2.0';
 
 const USAGE = `genlock ${VERSION} -- keeps coding agents aligned through shared goals and tickets.
 
@@ -209,6 +209,7 @@ const COMMANDS = {
   snapshot: cmdSnapshot,
   say: cmdSay,
   'voice-check': cmdVoiceCheck,
+  'session-state': cmdSessionState,
   claim: cmdClaim,
   release: cmdRelease,
   claims: cmdClaims,

@@ -58,17 +58,15 @@ public enum SessionLaunch {
     /// `prompt` opens a spin-off with its handoff. Flags come after it, because --allowedTools
     /// would otherwise swallow it as another tool name.
     public static func arguments(resume: Bool, voice: Bool, genlockCommand: String?, spinoffs: Bool = false,
-                                 sessionID: String? = nil, prompt: String? = nil) -> [String] {
+                                 reportsState: Bool = false, sessionID: String? = nil, prompt: String? = nil) -> [String] {
         var args: [String] = []
         if let prompt { args.append(prompt) }
         if resume { args.append("--continue") }
         if let sessionID { args += ["--session-id", sessionID] }
         guard let genlockCommand else { return args }
         var rules: [String] = []
-        if voice {
-            rules.append(voiceRule)
-            args += ["--settings", voiceSettings(genlockCommand: genlockCommand)]
-        }
+        if voice || reportsState { args += ["--settings", sessionSettings(genlockCommand: genlockCommand)] }
+        if voice { rules.append(voiceRule) }
         if spinoffs {
             rules.append(spinoffRule)
         }
@@ -78,10 +76,37 @@ public enum SessionLaunch {
         return args
     }
 
-    public static func voiceSettings(genlockCommand: String) -> String {
-        let settings: [String: Any] = ["hooks": ["Stop": [["hooks": [["type": "command", "command": "\(genlockCommand) voice-check"]]]]]]
+    /// Reports what the session is doing, and sends a silent dictated turn back once.
+    public static func sessionSettings(genlockCommand: String) -> String {
+        let hook: [[String: Any]] = [["hooks": [["type": "command", "command": "\(genlockCommand) session-state"]]]]
+        let settings: [String: Any] = ["hooks": ["Stop": hook, "Notification": hook, "UserPromptSubmit": hook, "PostToolUse": hook]]
         let data = try! JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)
+    }
+}
+
+/// What a session told the app about itself, through Claude Code's own hooks.
+public struct SessionReport: Decodable, Equatable {
+    public var state: String
+    public var message: String
+    public var at: Double
+}
+
+/// Whether a session needs you. It stops needing you once you have seen it or it has resumed.
+public enum Attention: String, Equatable {
+    case done, waiting
+
+    public var headline: String { self == .waiting ? "needs you" : "is done" }
+
+    /// `current` is what is outstanding; `looking` is whether you can see this session now.
+    public static func next(current: Attention?, report: SessionReport, isNew: Bool, looking: Bool) -> (attention: Attention?, notify: Bool) {
+        if looking { return (nil, false) }
+        guard isNew else { return (current, false) }
+        switch report.state {
+        case "done": return (.done, true)
+        case "waiting": return (.waiting, true)
+        default: return (nil, false)
+        }
     }
 }
 
@@ -151,6 +176,12 @@ public struct VoiceChannel {
             }
         }
         return out
+    }
+
+    /// What the session last reported, or nil if it has said nothing yet.
+    public func readState() -> SessionReport? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("state.json")) else { return nil }
+        return try? JSONDecoder().decode(SessionReport.self, from: data)
     }
 
     public func remove() { try? FileManager.default.removeItem(at: folder) }

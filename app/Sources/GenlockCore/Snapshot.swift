@@ -2,7 +2,7 @@ import Foundation
 
 /// The JSON that `genlock snapshot` prints. The app reads records only through this.
 public struct Snapshot: Decodable, Equatable {
-    public static let supportedFormat = 1
+    public static let supportedFormat = 2
 
     public var format: Int
     public var root: String

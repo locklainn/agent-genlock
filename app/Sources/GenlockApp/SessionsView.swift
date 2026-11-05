@@ -46,8 +46,10 @@ struct SessionBar: View {
                             else { model.visible = [id]; model.focus(id) }
                         } label: {
                             HStack(spacing: 6) {
-                                Circle().fill(running ? Theme.green : Theme.textTertiary).frame(width: 7, height: 7)
-                                    .shadow(color: running ? Theme.green : .clear, radius: 4)
+                                let need = model.sessions[id]?.attention
+                                let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (running ? Theme.green : Theme.textTertiary))
+                                Circle().fill(dot).frame(width: 7, height: 7)
+                                    .shadow(color: running || need != nil ? dot : .clear, radius: 4)
                                 Text(model.sessions[id]?.label ?? id).lineLimit(1)
                             }
                         }
@@ -138,6 +140,13 @@ struct PaneView: View {
                 Text(goal.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
+            if let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
+                switch phase {
+                case "working": Waveform(level: 0.55, bars: 8, height: 12, colors: [Theme.cyan, Color(hex: 0x7C5CFF)]).help("Working")
+                case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
+                default: Pill(text: "Done", symbol: "checkmark", color: Theme.green)
+                }
+            }
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }
             Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
                 .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")

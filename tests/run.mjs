@@ -747,6 +747,27 @@ r = voiceRun(['voice-check'], '{}');
 check('...so stopping is then free', r.code === 0, r.err);
 check('voice writes nothing to the repository', git(RV, 'status', '--porcelain').out === statusBeforeVoice);
 
+/* ---- telling the app what a session is doing ------------------------------------ */
+
+const stateOf = () => JSON.parse(fs.readFileSync(path.join(VOICE, 'state.json'), 'utf8'));
+r = voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
+check('a prompt means working', r.code === 0 && stateOf().state === 'working', r.err);
+r = voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}');
+check('a Claude Code notification means waiting, with its message', stateOf().state === 'waiting' && /permission/.test(stateOf().message), r.err);
+voiceRun(['session-state'], '{"hook_event_name":"PostToolUse"}');
+check('a tool finishing means working again', stateOf().state === 'working');
+voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"All   done\\nhere"}');
+check('stopping means done, with a tidy summary', stateOf().state === 'done' && stateOf().message === 'All done here', JSON.stringify(stateOf()));
+voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
+fs.writeFileSync(path.join(VOICE, 'pending'), '');
+r = voiceRun(['session-state'], '{"hook_event_name":"Stop"}');
+check('a dictated turn with no spoken reply is sent back and not called done', r.code === 2 && stateOf().state === 'working' && /genlock say/.test(r.err), r.err);
+fs.writeFileSync(path.join(VOICE, 'pending'), '');
+r = voiceRun(['session-state'], '{"hook_event_name":"Stop","stop_hook_active":true}');
+check('...only once, then it is done', r.code === 0 && stateOf().state === 'done', r.err);
+r = rv('session-state');
+check('with no app listening it does nothing', r.code === 0, r.all);
+
 /* ---- first contact: setup, reads leave no trace ------------------------------- */
 
 const SETUP = path.join(ROOT, 'setup');

@@ -241,6 +241,15 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(reloaded.inTier(.soon).map(\.path), ["/b"])
     }
 
+    func testTheDashboardOpensOnTodayOrWhereYouLeftIt() { // D1
+        XCTAssertEqual(DashFocus(saved: nil), .today)
+        XCTAssertEqual(DashFocus(saved: "nonsense"), .today)
+        XCTAssertEqual(DashFocus(saved: "later"), .later)
+        XCTAssertEqual(DashFocus(saved: "all"), .all)
+        XCTAssertNil(DashFocus.all.tier)
+        XCTAssertEqual(DashFocus.soon.tier, .soon)
+    }
+
     func testEveryProjectIsInExactlyOneTier() { // D1
         var store = ProjectStore(file: root.appendingPathComponent("x.json"))
         store.add(path: "/a"); store.add(path: "/b")
@@ -378,8 +387,49 @@ final class CoreTests: XCTestCase {
         let settings = args[args.firstIndex(of: "--settings")! + 1]
         let json = try JSONSerialization.jsonObject(with: Data(settings.utf8)) as! [String: Any]
         XCTAssertNotNil((json["hooks"] as? [String: Any])?["Stop"])
-        XCTAssertTrue(settings.contains("genlock voice-check"))
+        XCTAssertTrue(settings.contains("genlock session-state"))
         XCTAssertTrue(args.contains("Bash(genlock:*)"), "speaking must not stop for a permission prompt")
+    }
+
+    func testSessionsReportTheirStateWithSpeechOff() { // N1
+        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", reportsState: true)
+        let settings = args[args.firstIndex(of: "--settings")! + 1]
+        for event in ["Stop", "Notification", "UserPromptSubmit", "PostToolUse"] { XCTAssertTrue(settings.contains(event), event) }
+        XCTAssertFalse(args.contains("--append-system-prompt"), "no rule to add without speech")
+    }
+
+    func testAttentionFollowsTheSession() { // N1, N3, N5
+        let done = SessionReport(state: "done", message: "", at: 1)
+        let waiting = SessionReport(state: "waiting", message: "", at: 2)
+        let working = SessionReport(state: "working", message: "", at: 3)
+        XCTAssertEqual(Attention.next(current: nil, report: done, isNew: true, looking: false).attention, .done)
+        XCTAssertTrue(Attention.next(current: nil, report: done, isNew: true, looking: false).notify)
+        XCTAssertEqual(Attention.next(current: .done, report: waiting, isNew: true, looking: false).attention, .waiting)
+        XCTAssertFalse(Attention.next(current: .done, report: done, isNew: false, looking: false).notify, "one notification per event")
+        XCTAssertEqual(Attention.next(current: .done, report: done, isNew: false, looking: false).attention, .done, "stays until seen")
+        XCTAssertNil(Attention.next(current: .done, report: working, isNew: true, looking: false).attention, "it resumed")
+        XCTAssertNil(Attention.next(current: .done, report: done, isNew: false, looking: true).attention, "you have seen it")
+        XCTAssertFalse(Attention.next(current: nil, report: done, isNew: true, looking: true).notify, "no alert for what you are looking at")
+    }
+
+    func testAChannelReadsWhatASessionReports() throws { // N1
+        let channel = VoiceChannel(session: "s3", base: root.appendingPathComponent("voice"))
+        try channel.prepare()
+        XCTAssertNil(channel.readState())
+        var env = tools
+        env.environment["GENLOCK_APP_CHANNEL"] = channel.folder.path
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: env.genlockArgv![0])
+        p.arguments = Array(env.genlockArgv!.dropFirst()) + ["session-state"]
+        p.environment = env.environment
+        let input = Pipe()
+        p.standardInput = input
+        try p.run()
+        input.fileHandleForWriting.write(Data(#"{"hook_event_name":"Notification","message":"Needs approval"}"#.utf8))
+        input.fileHandleForWriting.closeFile()
+        p.waitUntilExit()
+        XCTAssertEqual(channel.readState()?.state, "waiting")
+        XCTAssertEqual(channel.readState()?.message, "Needs approval")
     }
 
     func testSpeechOffAddsNothingAndResumeWorks() { // V7, S10

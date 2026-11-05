@@ -45,6 +45,9 @@ final class AppModel {
     var hiddenInspectors: Set<String> = []
     var hoveredCard: String?
     var setupTarget: String?
+    var focus = DashFocus(saved: UserDefaults.standard.string(forKey: "dashFocus")) {
+        didSet { UserDefaults.standard.set(focus.rawValue, forKey: "dashFocus") }
+    }
     let voice = VoiceController()
 
     @ObservationIgnored var lastClickHadShift = false
@@ -75,6 +78,7 @@ final class AppModel {
                 let model = AppModel.shared
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
+                model.updateAttention()
             }
         }
     }
@@ -189,6 +193,63 @@ final class AppModel {
                 if out?.status != 0 { self.message = "Setup failed: \(out?.stderr ?? "could not run genlock")" }
                 self.refresh(id)
             }
+        }
+    }
+
+    // MARK: Who needs you
+
+    @ObservationIgnored var openMainWindow: (() -> Void)?
+
+    var needingAttention: [TerminalSession] {
+        sessions.values.filter { $0.attention != nil }.sorted { $0.key < $1.key }
+    }
+
+    func attention(project: String) -> Attention? {
+        let here = sessions.values.filter { $0.projectID == project }.compactMap(\.attention)
+        return here.contains(.waiting) ? .waiting : here.first
+    }
+
+    private func isLooking(at key: String) -> Bool {
+        NSApp.isActive && route == .sessions && visible.contains(key)
+    }
+
+    func updateAttention() {
+        for session in sessions.values where session.isRunning {
+            let report = session.channel.readState()
+            let isNew = (report?.at ?? 0) > session.lastReportAt
+            if let report, isNew {
+                session.lastReportAt = report.at
+                session.phase = report.state
+                session.attentionMessage = report.message
+            }
+            guard let report else { continue }
+            let result = Attention.next(current: session.attention, report: report, isNew: isNew, looking: isLooking(at: session.key))
+            if session.attention != result.attention {
+                withAnimation(.spring(duration: 0.3)) { session.attention = result.attention }
+                if result.attention == nil { Notifier.clear(session.key) }
+            }
+            if result.notify, let attention = result.attention { Notifier.post(session: session, attention: attention) }
+        }
+        let count = needingAttention.count
+        NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
+    }
+
+    /// Where a click on a notification or the menu bar lands.
+    func showSession(_ key: String) {
+        NSApp.activate(ignoringOtherApps: true)
+        if NSApp.windows.first(where: { $0.canBecomeMain && $0.isVisible }) == nil { openMainWindow?() }
+        NSApp.windows.first { $0.canBecomeMain }?.makeKeyAndOrderFront(nil)
+        guard sessions[key] != nil else { route = .dashboard; return }
+        if !visible.contains(key) { visible = [key] }
+        route = .sessions
+        focus(key)
+        updateAttention()
+    }
+
+    func focusDashboard(_ focus: DashFocus) {
+        withAnimation(.spring(duration: 0.32)) {
+            self.focus = focus
+            route = .dashboard
         }
     }
 

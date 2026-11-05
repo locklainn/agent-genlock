@@ -15,6 +15,11 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     private(set) var isRunning = false
     private(set) var exitCode: Int32?
     private(set) var startError: String?
+    var attention: Attention?
+    /// What it last reported: working, done or waiting.
+    var phase: String?
+    var attentionMessage = ""
+    @ObservationIgnored var lastReportAt: Double = 0
     @ObservationIgnored let view: LocalProcessTerminalView
 
     var label: String {
@@ -52,7 +57,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
         let genlockCommand = tools.genlockArgv?.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
         let args = SessionLaunch.arguments(resume: resume, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
-                                           sessionID: spawn?.session, prompt: spawn?.prompt)
+                                           reportsState: true, sessionID: spawn?.session, prompt: spawn?.prompt)
         view.startProcess(executable: claude, args: args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)

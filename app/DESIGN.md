@@ -69,7 +69,7 @@ Dark, vivid and alive: an enterprise product that is exciting to open, rather th
 └─────────────────────────────────────────────────────────────────────────┘
 ```
 
-Three columns, one per tier. `●` means a session is running. Each card leads with the current goal, because that is what you are scanning for.
+Shown here as the All view: three columns, one per tier. By default the dashboard shows only one tier, chosen by tabs (⌘1 to ⌘4), so you can focus on TODAY. `●` means a session is running. Each card leads with the current goal, because that is what you are scanning for.
 
 ### Session
 
@@ -117,10 +117,10 @@ Each one is either true or false once built, and says how it is checked. Checks 
 
 | id | requirement | check |
 |---|---|---|
-| D1 | Every project appears in exactly one of three columns: TODAY, SOON, LATER | auto |
+| D1 | The dashboard shows one tier at a time, opening on TODAY or wherever you left it, with tabs to switch and an All view showing the three as columns. Every project is in exactly one tier | auto, drive |
 | D2 | A card shows the project name, current goal, the goal's first next thing, the last task with its status and age, and counts of what waits on you | drive |
 | D3 | A card updates within 2 seconds of a change made by an agent, with no action from you | auto |
-| D4 | A project moves between tiers by dragging, by context menu, and by pressing 1, 2 or 3 on a hovered card | drive |
+| D4 | A project moves between tiers by dragging it onto a tab or column, by context menu, by pressing 1, 2 or 3 on a hovered card, and from an empty tier's list of projects to pull in | drive |
 | D5 | Dragging reorders cards within a tier, and the order survives a restart | auto, drive |
 | D6 | A new project goes into SOON | auto |
 | D7 | A deadline within 7 days or overdue shows on the card | auto |
@@ -194,6 +194,18 @@ When a rabbit hole comes up, the agent offers to move it to its own session, so 
 | O5 | A full split keeps the session running, reachable from the bar, and says so | read the code |
 | O6 | Outside the app, `genlock spinoff launch` still opens a terminal window | auto |
 
+### Knowing when you are needed
+
+| id | requirement | check |
+|---|---|---|
+| N1 | Each session reports through Claude Code's own hooks whether it is working, done, or waiting on you, with nothing to set up in the project | auto, drive |
+| N2 | When a session finishes or needs you, and you are not looking at it, macOS shows a notification naming the project | drive, eye |
+| N3 | A notification for a session you can already see does not appear | auto |
+| N4 | Clicking the notification brings Genlock forward on that session | eye |
+| N5 | The menu bar icon shows a red dot and a count while any session needs you, and its menu goes straight to them. The Dock icon shows the same count | drive, eye |
+| N6 | A session stops counting once you have seen it or it has resumed, and its notification clears | auto, drive |
+| N7 | Cards and panes show the same state: needs you, done, or working | drive |
+
 ### General
 
 | id | requirement | check |
@@ -244,6 +256,8 @@ The right Option key is the shortcut because it does nothing alone in a terminal
 
 **Spin-offs.** `genlock spinoff launch` runs its safety check and takes the claim as always. It then sees `GENLOCK_APP_CHANNEL` and drops a request in that folder instead of opening a window. The app notices, and starts `claude` with the handoff prompt under the session id that holds the claim, so the guard treats it as the holder. Its pane shares the project's inspector.
 
+**Knowing when you are needed.** Sessions the app starts carry `Stop`, `Notification`, `UserPromptSubmit` and `PostToolUse` hooks, passed at launch. Each runs `genlock session-state`, which writes `state.json` to the session's private channel. The app reads it on its timer and turns it into a notification, the menu bar badge and the state on cards and panes. A dictated turn sent back for not speaking is not reported as done.
+
 **Layout.** `GenlockCore` holds everything that can be tested without a screen: snapshot decoding, the store, selection logic, split layout, and change detection. `Genlock` holds only views and the terminal.
 
 ### Changes to genlock itself
@@ -286,7 +300,6 @@ Editing goals or tasks in the app (ask the agent); viewing files inside the app;
 
 ## Later
 
-- A status signal showing whether a session is working or waiting on you.
 - Answering questions and accepting proposed goals from the inspector.
 - Notifications when a deadline nears or an agent asks for review.
 
