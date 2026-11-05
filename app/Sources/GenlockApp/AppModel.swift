@@ -1,0 +1,335 @@
+import AppKit
+import GenlockCore
+import SwiftUI
+
+/// One project's live state, from `genlock snapshot`.
+@MainActor @Observable
+final class ProjectState {
+    var snapshot: Snapshot?
+    var error: SnapshotError?
+    /// What changed in the last refresh, to point at it briefly.
+    var recentlyChanged: Set<String> = []
+    @ObservationIgnored var watcher: ProjectWatcher?
+    @ObservationIgnored var refreshing = false
+    @ObservationIgnored var refreshAgain = false
+    @ObservationIgnored var clearHighlight: DispatchWorkItem?
+}
+
+enum Route: Equatable { case dashboard, sessions }
+
+@MainActor @Observable
+final class AppModel {
+    static let shared = AppModel()
+
+    // A test can point this elsewhere, so it never sees or changes your real project list.
+    private(set) var store = ProjectStore(file: ProcessInfo.processInfo.environment["GENLOCK_APP_STORE"].map { URL(fileURLWithPath: $0) } ?? ProjectStore.defaultFile)
+    private(set) var tools: ToolEnvironment?
+    private(set) var states: [String: ProjectState] = [:]
+    private(set) var sessions: [String: TerminalSession] = [:]
+    private(set) var selection = DashSelection()
+    var route: Route = .dashboard
+    var visible: [String] = []
+    var message: String? {
+        didSet {
+            messageTimer?.cancel()
+            guard message != nil else { return }
+            let clear = DispatchWorkItem { [weak self] in
+                MainActor.assumeIsolated { withAnimation(.easeOut) { self?.message = nil } }
+            }
+            messageTimer = clear
+            DispatchQueue.main.asyncAfter(deadline: .now() + 14, execute: clear)
+        }
+    }
+    @ObservationIgnored private var messageTimer: DispatchWorkItem?
+    var suggestions: [String] = []
+    var hiddenInspectors: Set<String> = []
+    var hoveredCard: String?
+    var setupTarget: String?
+    let voice = VoiceController()
+
+    @ObservationIgnored var lastClickHadShift = false
+    @ObservationIgnored var cardFrames: [String: CGRect] = [:]
+    @ObservationIgnored private var ticker: Timer?
+    @ObservationIgnored private var voiceTicker: Timer?
+
+    func boot() {
+        // Sessions do not survive a restart, so neither do their channels.
+        try? FileManager.default.removeItem(at: VoiceChannel.defaultBase)
+        suggestions = ProjectStore.discover().filter { store.project($0) == nil }
+        for p in store.projects { state(for: p.id) }
+        Task.detached {
+            let resolved = ToolEnvironment.resolve()
+            await MainActor.run {
+                self.tools = resolved
+                for p in self.store.projects { self.startWatching(p.id); self.refresh(p.id) }
+            }
+        }
+        // What no file event signals: claims lapsing, and days ticking over on deadlines.
+        ticker = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                for p in AppModel.shared.store.projects { AppModel.shared.refresh(p.id) }
+            }
+        }
+        voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
+            MainActor.assumeIsolated {
+                let model = AppModel.shared
+                model.voice.collectReplies(from: Array(model.sessions.values))
+                model.collectSpawns()
+            }
+        }
+    }
+
+    @discardableResult
+    func state(for id: String) -> ProjectState {
+        if let s = states[id] { return s }
+        let s = ProjectState()
+        states[id] = s
+        return s
+    }
+
+    private func startWatching(_ id: String) {
+        guard FileManager.default.fileExists(atPath: id) else { return }
+        state(for: id).watcher = ProjectWatcher(folder: id) { [weak self] in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.refresh(id) }
+            }
+        }
+    }
+
+    /// One snapshot at a time per project. A change during a refresh runs one more afterwards.
+    func refresh(_ id: String) {
+        guard let tools else { return }
+        let s = state(for: id)
+        if s.refreshing { s.refreshAgain = true; return }
+        s.refreshing = true
+        Task.detached(priority: .userInitiated) {
+            let result = GenlockCLI.snapshot(of: id, tools: tools)
+            await MainActor.run { self.apply(result, to: s, id: id) }
+        }
+    }
+
+    private func apply(_ result: Result<Snapshot, SnapshotError>, to s: ProjectState, id: String) {
+        s.refreshing = false
+        switch result {
+        case .success(let snap):
+            s.error = nil
+            if snap != s.snapshot {
+                let changed = SnapshotDiff.changedIDs(old: s.snapshot, new: snap)
+                withAnimation(.easeOut(duration: 0.25)) {
+                    s.snapshot = snap
+                    if !changed.isEmpty { s.recentlyChanged = changed }
+                }
+                if !changed.isEmpty {
+                    s.clearHighlight?.cancel()
+                    let clear = DispatchWorkItem { [weak s] in
+                        MainActor.assumeIsolated {
+                            withAnimation(.easeOut(duration: 0.6)) { s?.recentlyChanged = [] }
+                        }
+                    }
+                    s.clearHighlight = clear
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 4, execute: clear)
+                }
+            }
+        case .failure(let e):
+            s.error = e
+        }
+        if s.refreshAgain {
+            s.refreshAgain = false
+            refresh(id)
+        }
+    }
+
+    // MARK: Projects
+
+    func addProject(path: String, tier: Tier = ProjectStore.defaultTier) {
+        let p = store.add(path: path, tier: tier)
+        persist()
+        suggestions.removeAll { $0 == p.id }
+        state(for: p.id)
+        startWatching(p.id)
+        refresh(p.id)
+    }
+
+    func removeProject(_ id: String) {
+        for key in sessions.values.filter({ $0.projectID == id }).map(\.key) { endSession(key) }
+        states[id]?.watcher?.stop()
+        states[id] = nil
+        store.remove(id)
+        persist()
+    }
+
+    func move(_ id: String, to tier: Tier, before other: String? = nil) {
+        withAnimation(.snappy) { store.move(id, to: tier, before: other) }
+        persist()
+    }
+
+    private func persist() {
+        do { try store.save() } catch { message = "Could not save your projects: \(error.localizedDescription)" }
+    }
+
+    func chooseFolders() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Add"
+        panel.message = "Choose project folders"
+        if panel.runModal() == .OK {
+            for url in panel.urls { addProject(path: url.path) }
+        }
+    }
+
+    /// Writes to the project, so it runs only because someone chose it, on the setup screen.
+    func setUp(_ id: String, flag: String) {
+        setupTarget = nil
+        guard let tools else { return }
+        Task.detached {
+            let out = try? GenlockCLI.run(["init", flag], in: id, tools: tools)
+            await MainActor.run {
+                if out?.status != 0 { self.message = "Setup failed: \(out?.stderr ?? "could not run genlock")" }
+                self.refresh(id)
+            }
+        }
+    }
+
+    // MARK: Clicking cards
+
+    /// Shift comes from the mouse-down event rather than from whatever is held by the time
+    /// SwiftUI's tap fires, which can be after the key has come up.
+    func clickCard(_ id: String) {
+        let shift = lastClickHadShift
+        lastClickHadShift = false
+        if let open = selection.click(id, shift: shift) { openSessions(open) }
+        if selection.overflowed { message = "A split holds up to \(DashSelection.maxPanes) sessions." }
+    }
+
+    func shiftReleased() {
+        guard route == .dashboard, let open = selection.shiftReleased() else { return }
+        openSessions(open)
+    }
+
+    func clearMarks() { selection.clear() }
+    func isMarked(_ id: String) -> Bool { selection.marked.contains(id) }
+    func markOrder(_ id: String) -> Int? { selection.marked.firstIndex(of: id).map { $0 + 1 } }
+    var markedCount: Int { selection.marked.count }
+
+    // MARK: Sessions
+
+    func openSessions(_ ids: [String], resume: Bool = false) {
+        for id in ids { ensureSession(id, resume: resume) }
+        visible = ids
+        route = .sessions
+        focus(ids.first)
+    }
+
+    private func spinoffsAllowed(_ project: String) -> Bool {
+        states[project]?.snapshot?.initialized == true
+    }
+
+    @discardableResult
+    private func ensureSession(_ id: String, resume: Bool) -> TerminalSession {
+        if let existing = sessions[id], existing.isRunning || existing.exitCode != nil { return existing }
+        let session = sessions[id] ?? TerminalSession(projectID: id)
+        sessions[id] = session
+        if let tools { session.start(tools: tools, resume: resume, voice: voice.speakReplies, spinoffs: spinoffsAllowed(id)) }
+        return session
+    }
+
+    func restart(_ key: String, resume: Bool) {
+        let project = sessions[key]?.projectID ?? key
+        let spawn = sessions[key]?.spawn
+        sessions[key]?.channel.remove()
+        let session = TerminalSession(projectID: project, spawn: spawn)
+        sessions[key] = session
+        if let tools { session.start(tools: tools, resume: resume, voice: voice.speakReplies, spinoffs: spinoffsAllowed(project)) }
+    }
+
+    /// An agent's spin-off, which you have already said yes to, joins the split.
+    func collectSpawns() {
+        for session in Array(sessions.values) {
+            for request in session.channel.takeSpawns() { openSpawn(request, beside: session.key) }
+        }
+    }
+
+    private func openSpawn(_ request: SpawnRequest, beside parent: String) {
+        guard let tools else { return }
+        // The parent's id, not the path git reports: they can spell one folder differently (/tmp, /private/tmp).
+        let session = TerminalSession(projectID: sessions[parent]?.projectID ?? request.project, spawn: request)
+        sessions[session.key] = session
+        session.start(tools: tools, resume: false, voice: voice.speakReplies, spinoffs: true)
+        var next = visible
+        if !next.contains(parent) { next.append(parent) }
+        if next.count >= DashSelection.maxPanes {
+            message = "\(request.ticket) is running, but the split is full. Find it in the bar above."
+        } else {
+            next.append(session.key)
+        }
+        withAnimation(.spring(duration: 0.4)) {
+            visible = next
+            route = .sessions
+        }
+    }
+
+    func endSession(_ key: String) {
+        sessions[key]?.end()
+        sessions[key]?.channel.remove()
+        sessions[key] = nil
+        visible.removeAll { $0 == key }
+        if visible.isEmpty { route = .dashboard }
+    }
+
+    func hasRunningSession(project: String) -> Bool {
+        sessions.values.contains { $0.projectID == project && $0.isRunning }
+    }
+
+    /// Showing or hiding a pane leaves its session running.
+    func closePane(_ id: String) {
+        visible.removeAll { $0 == id }
+        if visible.isEmpty { route = .dashboard }
+    }
+
+    func toggleInSplit(_ id: String) {
+        if let i = visible.firstIndex(of: id) {
+            if visible.count > 1 { visible.remove(at: i) }
+        } else if visible.count >= DashSelection.maxPanes {
+            message = "A split holds up to \(DashSelection.maxPanes) sessions."
+        } else {
+            visible.append(id)
+        }
+    }
+
+    func focus(_ id: String?) {
+        guard let id, let view = sessions[id]?.view else { return }
+        DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+    }
+
+    /// The session that dictation goes to: the terminal holding the keyboard, or the first on screen.
+    var focusedProject: String? {
+        let responder = NSApp.keyWindow?.firstResponder
+        if let hit = visible.first(where: { sessions[$0]?.view === responder }) { return hit }
+        return visible.first
+    }
+
+    func pressVoice(for id: String? = nil) {
+        voice.press(target: id ?? (route == .sessions ? focusedProject : nil))
+    }
+
+    // MARK: Reviews
+
+    func open(_ review: Snapshot.Review, in id: String) {
+        guard let s = states[id]?.snapshot, let url = review.url(root: s.root) else { return }
+        if review.exists(root: s.root) { NSWorkspace.shared.open(url) }
+        else { message = "\(review.path) is no longer there." }
+    }
+
+    func markReviewed(_ review: Snapshot.Review, in id: String) {
+        guard let tools else { return }
+        Task.detached {
+            let out = try? GenlockCLI.run(["review", "done", review.id], in: id, tools: tools)
+            await MainActor.run {
+                if out?.status != 0 { self.message = "Could not mark it reviewed: \(out?.stderr ?? "")" }
+                self.refresh(id)
+            }
+        }
+    }
+}

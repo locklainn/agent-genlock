@@ -31,6 +31,7 @@ Each works without the others, except where noted. Install only what you want.
 | `tickets` | Requirements first; `done` refuses without evidence | nothing |
 | `goals` | What the work is for and what is next. Agents propose; only the user sets or closes | nothing |
 | `coordination` | Claims on files and shared resources; questions between sessions | nothing |
+| `reviews` | Files the agent wants you to look at stay on a list until you have | nothing |
 | `continuity` | `orient`, `checkpoint`, `continue` | tickets, goals |
 | `spinoffs` | Move a tangent into its own session once it is shown to be safe and the user says yes | tickets, coordination |
 
@@ -73,6 +74,15 @@ genlock install --check                # say what would change, write nothing
 ```
 
 Other agents (Cursor, Codex, Windsurf, Copilot, Gemini, Cline) get the rules in their own instruction file. Hooks and spin-off windows are Claude Code only.
+
+## The Mac app
+
+`app/` holds a native Mac app: a dashboard of every project sorted into TODAY, SOON and LATER, live Claude Code sessions in split panes, a panel of goals, tasks and files to review that updates as agents work, and voice. See [`app/DESIGN.md`](app/DESIGN.md).
+
+```bash
+npm install -g github:locklainn/agent-genlock   # the app displays what this records
+cd app && ./scripts/install.sh                  # builds it and puts it in /Applications. Needs Xcode
+```
 
 ## There are no handoff documents
 
