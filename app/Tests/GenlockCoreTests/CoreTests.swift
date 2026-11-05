@@ -246,8 +246,43 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(DashFocus(saved: "nonsense"), .today)
         XCTAssertEqual(DashFocus(saved: "later"), .later)
         XCTAssertEqual(DashFocus(saved: "all"), .all)
+        XCTAssertEqual(DashFocus.today.tierForNewProject, .today, "a new project lands where you are looking")
+        XCTAssertEqual(DashFocus.later.tierForNewProject, .later)
+        XCTAssertEqual(DashFocus.all.tierForNewProject, .soon)
         XCTAssertNil(DashFocus.all.tier)
         XCTAssertEqual(DashFocus.soon.tier, .soon)
+    }
+
+    func testProjectIconsSurviveARestartAndOlderFilesStillLoad() throws { // D9
+        let file = root.appendingPathComponent("i/projects.json")
+        try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try #"[{"path":"/old","tier":"today"}]"#.write(to: file, atomically: true, encoding: .utf8)
+        var store = ProjectStore(file: file)
+        XCTAssertEqual(store.project("/old")?.tier, .today, "a list saved before icons existed still loads")
+        XCTAssertNil(store.project("/old")?.icon)
+        XCTAssertEqual(store.project("/old")?.initial, "O")
+        store.setIcon("/old", .emoji("🚀"))
+        store.add(path: "/sym")
+        store.setIcon("/sym", .symbol("bolt.fill"))
+        try store.save()
+        let back = ProjectStore(file: file)
+        XCTAssertEqual(back.project("/old")?.icon, .emoji("🚀"))
+        XCTAssertEqual(back.project("/sym")?.icon, .symbol("bolt.fill"))
+    }
+
+    func testAnImageIconIsAPrivateCopyAndIsCleanedUp() throws { // D9
+        let file = root.appendingPathComponent("j/projects.json")
+        var store = ProjectStore(file: file)
+        store.add(path: repo)
+        let source = root.appendingPathComponent("logo.png")
+        try "fake".write(to: source, atomically: true, encoding: .utf8)
+        try store.setIcon(repo, imageAt: source)
+        guard case .image(let copy)? = store.project(repo)?.icon else { return XCTFail("no image icon") }
+        try FileManager.default.removeItem(at: source)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: copy), "survives the original going away")
+        XCTAssertEqual(try shell("git status --porcelain"), "", "nothing is written to the project")
+        store.setIcon(repo, .emoji("🌿"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: copy), "a replaced image is removed")
     }
 
     func testEveryProjectIsInExactlyOneTier() { // D1
@@ -346,6 +381,14 @@ final class CoreTests: XCTestCase {
         _ = s.click("g", shift: true)
         XCTAssertTrue(s.overflowed)
         XCTAssertEqual(s.shiftReleased()?.count, 6)
+    }
+
+    func testCardsFillTheWidthInRows() { // D11
+        XCTAssertEqual(CardGrid.columns(forWidth: 300), 1)
+        XCTAssertEqual(CardGrid.columns(forWidth: 816), 2)
+        XCTAssertEqual(CardGrid.columns(forWidth: 1272), 3)
+        XCTAssertEqual(CardGrid.rows(["a", "b", "c", "d"], columns: 3), [["a", "b", "c"], ["d"]])
+        XCTAssertEqual(CardGrid.rows([String](), columns: 3), [])
     }
 
     func testSplitLayouts() { // S8
@@ -452,6 +495,12 @@ final class CoreTests: XCTestCase {
         let args = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock", spinoffs: true, sessionID: "uuid-1", prompt: "You are a spin-off")
         XCTAssertEqual(args.first, "You are a spin-off", "ahead of the flags, which would swallow it")
         XCTAssertEqual(args[args.firstIndex(of: "--session-id")! + 1], "uuid-1", "so the guard recognises it as the claim's holder")
+    }
+
+    func testSettingAGoalStartsFromAQuestion() { // D10
+        XCTAssertTrue(SessionLaunch.goalPrompt.contains("genlock goal add"))
+        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", reportsState: true, prompt: SessionLaunch.goalPrompt)
+        XCTAssertEqual(args.first, SessionLaunch.goalPrompt, "ahead of the flags")
     }
 
     func testSpawnRequestsAreReadOnce() throws {

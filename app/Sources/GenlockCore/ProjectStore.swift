@@ -12,15 +12,28 @@ public enum DashFocus: String, CaseIterable, Identifiable {
     public var id: String { rawValue }
     public var title: String { self == .all ? "All" : rawValue.uppercased() }
     public var tier: Tier? { Tier(rawValue: rawValue) }
+    /// A new project lands where you are looking, so adding one is always visible.
+    public var tierForNewProject: Tier { tier ?? ProjectStore.defaultTier }
     /// Opens on what matters now, or wherever you left it.
     public init(saved: String?) { self = saved.flatMap(DashFocus.init(rawValue:)) ?? .today }
+}
+
+/// How a project looks in the app. Stored with your projects, never in the repository.
+public enum ProjectIcon: Codable, Equatable {
+    case emoji(String)
+    case symbol(String)
+    /// A file in the app's own icon folder, so the original can move or go away.
+    case image(String)
 }
 
 public struct Project: Codable, Equatable, Identifiable {
     public var path: String
     public var tier: Tier
+    public var icon: ProjectIcon?
     public var id: String { path }
     public var name: String { URL(fileURLWithPath: path).lastPathComponent }
+    /// What stands in until you choose an icon.
+    public var initial: String { name.first { $0.isLetter || $0.isNumber }.map { String($0).uppercased() } ?? "?" }
     public var exists: Bool {
         var dir: ObjCBool = false
         return FileManager.default.fileExists(atPath: path, isDirectory: &dir) && dir.boolValue
@@ -54,6 +67,25 @@ public struct ProjectStore: Equatable {
         }
     }
 
+    public var iconFolder: URL { file.deletingLastPathComponent().appendingPathComponent("icons") }
+
+    /// Takes a private copy of an image, because the file you picked may later move.
+    public mutating func setIcon(_ id: String, imageAt source: URL) throws {
+        try FileManager.default.createDirectory(at: iconFolder, withIntermediateDirectories: true)
+        let ext = source.pathExtension.isEmpty ? "png" : source.pathExtension
+        let copy = iconFolder.appendingPathComponent("\(UUID().uuidString).\(ext)")
+        try FileManager.default.copyItem(at: source, to: copy)
+        setIcon(id, .image(copy.path))
+    }
+
+    public mutating func setIcon(_ id: String, _ icon: ProjectIcon?) {
+        guard let i = projects.firstIndex(where: { $0.id == id }) else { return }
+        if case .image(let old)? = projects[i].icon, old.hasPrefix(iconFolder.path) {
+            try? FileManager.default.removeItem(atPath: old)
+        }
+        projects[i].icon = icon
+    }
+
     public func save() throws {
         try FileManager.default.createDirectory(at: file.deletingLastPathComponent(), withIntermediateDirectories: true)
         let e = JSONEncoder()
@@ -74,6 +106,7 @@ public struct ProjectStore: Equatable {
     }
 
     public mutating func remove(_ id: String) {
+        setIcon(id, nil)
         projects.removeAll { $0.id == id }
     }
 
@@ -140,6 +173,20 @@ public struct DashSelection: Equatable {
     public mutating func clear() {
         marked = []
         overflowed = false
+    }
+}
+
+/// Rows of cards that fill the width, so every card in a row can share one height.
+public enum CardGrid {
+    public static let minCardWidth: Double = 400
+    public static let spacing: Double = 16
+
+    public static func columns(forWidth width: Double) -> Int {
+        max(1, Int((width + spacing) / (minCardWidth + spacing)))
+    }
+
+    public static func rows<T>(_ items: [T], columns: Int) -> [[T]] {
+        stride(from: 0, to: items.count, by: max(1, columns)).map { Array(items[$0..<min($0 + max(1, columns), items.count)]) }
     }
 }
 

@@ -150,9 +150,11 @@ struct RootView: View {
             }
             .padding(.bottom, 20)
             if let id = model.setupTarget { SetupSheet(projectID: id) }
+            if let id = model.iconTarget { IconPicker(projectID: id) }
         }
         .animation(.spring(duration: 0.34), value: model.route)
         .animation(.spring(duration: 0.3), value: model.setupTarget)
+        .animation(.spring(duration: 0.3), value: model.iconTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)
         .preferredColorScheme(.dark)
         .onAppear { model.openMainWindow = { openWindow(id: "main") } }

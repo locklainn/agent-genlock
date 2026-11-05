@@ -135,13 +135,24 @@ struct FocusedTier: View {
         if projects.isEmpty {
             EmptyTier(tier: tier)
         } else {
-            ScrollView {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 400), spacing: 16, alignment: .top)], alignment: .leading, spacing: 16) {
-                    ForEach(projects) { ProjectCard(project: $0, tier: tier) }
+            GeometryReader { geo in
+                let columns = CardGrid.columns(forWidth: Double(geo.size.width) - 48)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: CGFloat(CardGrid.spacing)) {
+                        ForEach(CardGrid.rows(projects, columns: columns), id: \.first?.id) { row in
+                            HStack(alignment: .top, spacing: CGFloat(CardGrid.spacing)) {
+                                ForEach(row) { ProjectCard(project: $0, tier: tier) }
+                                // Holds a short last row to the same card width.
+                                ForEach(row.count..<columns, id: \.self) { _ in Color.clear.frame(maxWidth: .infinity, maxHeight: 0) }
+                            }
+                            // Each card takes the height of the tallest in its row.
+                            .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 24).padding(.top, 4).padding(.bottom, 24)
                 }
-                .padding(.horizontal, 24).padding(.top, 4).padding(.bottom, 24)
+                .scrollIndicators(.never)
             }
-            .scrollIndicators(.never)
         }
     }
 }
@@ -350,6 +361,9 @@ struct ProjectCard: View {
     @State private var isHovered = false
     @State private var isDropTarget = false
 
+    /// The height of a full card, so a card with little to say still lines up with one that has plenty.
+    private static let minHeight: CGFloat = 184
+
     private var state: ProjectState { model.state(for: project.id) }
     private var isRunning: Bool { model.hasRunningSession(project: project.id) }
 
@@ -358,9 +372,30 @@ struct ProjectCard: View {
         let order = model.markOrder(project.id)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 7) {
-                Image(systemName: "folder.fill").font(.system(size: 10.5)).foregroundStyle(Theme.gradient(tier))
-                Text(project.name).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Button { model.iconTarget = project.id } label: {
+                    ProjectIconView(project: project, size: 30)
+                        .overlay(alignment: .bottomTrailing) {
+                            if isHovered {
+                                Image(systemName: "pencil.circle.fill").font(.system(size: 13))
+                                    .symbolRenderingMode(.palette).foregroundStyle(.white, Color(hex: 0x12141F))
+                                    .offset(x: 4, y: 4)
+                                    .transition(.scale)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .help("Change this project's icon")
+                .accessibilityLabel("Change \(project.name)'s icon")
+                Text(project.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
+                if isHovered && !marked {
+                    HStack(spacing: 3) {
+                        Text("Open").font(.system(size: 11, weight: .semibold))
+                        Image(systemName: "arrow.right").font(.system(size: 9.5, weight: .heavy))
+                    }
+                    .foregroundStyle(Theme.gradient(tier))
+                    .transition(.opacity)
+                }
                 if let need = model.attention(project: project.id) {
                     Pill(text: need == .waiting ? "NEEDS YOU" : "DONE", symbol: "bell.fill", color: need == .waiting ? Theme.red : Theme.amber)
                 } else if isRunning { LiveChip() }
@@ -374,7 +409,7 @@ struct ProjectCard: View {
             content
         }
         .padding(14)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, minHeight: Self.minHeight, maxHeight: .infinity, alignment: .topLeading)
         .background(isHovered ? Theme.surfaceRaised : Color.white.opacity(0.06), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         .overlay {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
@@ -430,8 +465,19 @@ struct ProjectCard: View {
             Text("Not on the signal yet").font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
             Text("Set up genlock to track goals and tasks here. You can still open a session.")
                 .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
-            Button("Set up genlock") { model.setupTarget = project.id }
-                .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
+            Spacer(minLength: 0)
+            if model.settingUp.contains(project.id) {
+                HStack(spacing: 10) {
+                    Waveform(level: 0.6, bars: 12, height: 18, colors: Theme.tint(tier))
+                    Text("Setting up…").font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button("Set up genlock") { model.setupTarget = project.id }
+                        .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
+                    Button("Open session") { model.openSessions([project.id]) }.buttonStyle(GlassButtonStyle())
+                }
+            }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
@@ -449,6 +495,12 @@ struct ProjectCard: View {
                 if let g = s.goal(s.currentGoal), g.progress.total > 0 {
                     ProgressRing(done: g.progress.done, total: g.progress.total, colors: Theme.tint(tier))
                 }
+            }
+            Spacer(minLength: 0)
+            if c.goalTitle == nil {
+                Button { model.setGoal(project.id) } label: { Label("Set a goal", systemImage: "scope") }
+                    .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
+                    .help("Opens a session where the agent asks what you want to get done")
             }
             if let task = c.lastTaskTitle, let status = c.lastTaskStatus {
                 let symbol = Theme.status(status)
@@ -483,7 +535,7 @@ struct ProjectCard: View {
         }
         if c.waitingOnYou > 0 { Pill(text: "\(c.waitingOnYou) for you", symbol: "person.fill.questionmark", color: Theme.violet) }
         if c.toReview > 0 { Pill(text: "\(c.toReview) to review", symbol: "doc.text.fill", color: Theme.cyan) }
-        if c.extraGoals > 0 { Pill(text: "+\(c.extraGoals) goals", symbol: nil, color: Theme.textSecondary) }
+        if c.extraGoals > 0 { Pill(text: "+\(c.extraGoals) \(c.extraGoals == 1 ? "goal" : "goals")", symbol: nil, color: Theme.textSecondary) }
     }
 
     @ViewBuilder private var menu: some View {
@@ -500,6 +552,7 @@ struct ProjectCard: View {
         }
         Divider()
         if state.snapshot?.initialized == false { Button("Set Up genlock…") { model.setupTarget = project.id } }
+        Button("Change Icon…") { model.iconTarget = project.id }
         Button("Reveal in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
         Button("Remove from Genlock") { model.removeProject(project.id) }
     }

@@ -45,6 +45,8 @@ final class AppModel {
     var hiddenInspectors: Set<String> = []
     var hoveredCard: String?
     var setupTarget: String?
+    var iconTarget: String?
+    var settingUp: Set<String> = []
     var focus = DashFocus(saved: UserDefaults.standard.string(forKey: "dashFocus")) {
         didSet { UserDefaults.standard.set(focus.rawValue, forKey: "dashFocus") }
     }
@@ -65,6 +67,10 @@ final class AppModel {
             await MainActor.run {
                 self.tools = resolved
                 for p in self.store.projects { self.startWatching(p.id); self.refresh(p.id) }
+                // Anything clicked while the tools were being found starts now.
+                for session in self.sessions.values where !session.isRunning && session.exitCode == nil {
+                    session.start(tools: resolved, resume: false, voice: self.voice.speakReplies, spinoffs: self.spinoffsAllowed(session.projectID))
+                }
             }
         }
         // What no file event signals: claims lapsing, and days ticking over on deadlines.
@@ -119,9 +125,16 @@ final class AppModel {
             s.error = nil
             if snap != s.snapshot {
                 let changed = SnapshotDiff.changedIDs(old: s.snapshot, new: snap)
-                withAnimation(.easeOut(duration: 0.25)) {
-                    s.snapshot = snap
-                    if !changed.isEmpty { s.recentlyChanged = changed }
+                if s.snapshot == nil {
+                    // The first load is not a change, and animating it spills text out of the growing card.
+                    var instant = Transaction()
+                    instant.disablesAnimations = true
+                    withTransaction(instant) { s.snapshot = snap }
+                } else {
+                    withAnimation(.easeOut(duration: 0.25)) {
+                        s.snapshot = snap
+                        if !changed.isEmpty { s.recentlyChanged = changed }
+                    }
                 }
                 if !changed.isEmpty {
                     s.clearHighlight?.cancel()
@@ -145,9 +158,18 @@ final class AppModel {
 
     // MARK: Projects
 
-    func addProject(path: String, tier: Tier = ProjectStore.defaultTier) {
-        let p = store.add(path: path, tier: tier)
+    func addProject(path: String) {
+        let clean = URL(fileURLWithPath: path).standardizedFileURL.path
+        if let existing = store.project(clean) {
+            // Already here, so go and show it rather than appear to do nothing.
+            focusDashboard(focus == .all ? .all : DashFocus(saved: existing.tier.rawValue))
+            message = "\(existing.name) is already in \(existing.tier.title)."
+            return
+        }
+        let p = withAnimation(.spring(duration: 0.35)) { store.add(path: path, tier: focus.tierForNewProject) }
         persist()
+        route = .dashboard
+        message = "Added \(p.name) to \(p.tier.title)."
         suggestions.removeAll { $0 == p.id }
         state(for: p.id)
         startWatching(p.id)
@@ -160,6 +182,27 @@ final class AppModel {
         states[id] = nil
         store.remove(id)
         persist()
+    }
+
+    func setIcon(_ id: String, _ icon: ProjectIcon?) {
+        withAnimation(.spring(duration: 0.3)) { store.setIcon(id, icon) }
+        persist()
+        iconTarget = nil
+    }
+
+    func chooseIconImage(for id: String) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.prompt = "Use Image"
+        panel.message = "Choose an image for this project"
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        do {
+            try store.setIcon(id, imageAt: url)
+            persist()
+            iconTarget = nil
+        } catch {
+            message = "Could not use that image: \(error.localizedDescription)"
+        }
     }
 
     func move(_ id: String, to tier: Tier, before other: String? = nil) {
@@ -186,14 +229,34 @@ final class AppModel {
     /// Writes to the project, so it runs only because someone chose it, on the setup screen.
     func setUp(_ id: String, flag: String) {
         setupTarget = nil
-        guard let tools else { return }
-        Task.detached {
-            let out = try? GenlockCLI.run(["init", flag], in: id, tools: tools)
-            await MainActor.run {
-                if out?.status != 0 { self.message = "Setup failed: \(out?.stderr ?? "could not run genlock")" }
-                self.refresh(id)
-            }
+        let name = URL(fileURLWithPath: id).lastPathComponent
+        settingUp.insert(id)
+        Task {
+            while self.tools == nil { try? await Task.sleep(nanoseconds: 100_000_000) }
+            let tools = self.tools!
+            await self.runSetUp(id, name: name, flag: flag, tools: tools)
         }
+    }
+
+    private func runSetUp(_ id: String, name: String, flag: String, tools: ToolEnvironment) async {
+        await Task.detached {
+            let out = try? GenlockCLI.run(["init", flag], in: id, tools: tools)
+            let check = GenlockCLI.snapshot(of: id, tools: tools)
+            await MainActor.run {
+                self.settingUp.remove(id)
+                self.refresh(id)
+                if out?.status != 0 {
+                    self.message = "Could not set up \(name): \(out?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? "genlock did not run")"
+                } else if case .success(let snap) = check, snap.initialized {
+                    let running = self.sessions[id]?.isRunning == true
+                    self.message = running
+                        ? "\(name) is on the signal. End and restart its session to load the new rules."
+                        : "\(name) is on the signal. Open its session and the agent will ask what you want to get done."
+                } else {
+                    self.message = "Setup ran in \(name), but genlock still does not see it as set up. Run genlock doctor there."
+                }
+            }
+        }.value
     }
 
     // MARK: Who needs you
@@ -276,6 +339,22 @@ final class AppModel {
 
     // MARK: Sessions
 
+    /// Opens the project with the agent asking what you want to get done.
+    func setGoal(_ id: String) {
+        if let running = sessions[id], running.isRunning {
+            running.submit(SessionLaunch.goalPrompt)
+            openSessions([id])
+            return
+        }
+        // Set before starting, including when the tools are still being found.
+        sessions[id]?.channel.remove()
+        let session = TerminalSession(projectID: id)
+        session.firstMessage = SessionLaunch.goalPrompt
+        sessions[id] = session
+        if let tools { session.start(tools: tools, resume: false, voice: voice.speakReplies, spinoffs: spinoffsAllowed(id)) }
+        openSessions([id])
+    }
+
     func openSessions(_ ids: [String], resume: Bool = false) {
         for id in ids { ensureSession(id, resume: resume) }
         visible = ids
@@ -283,8 +362,9 @@ final class AppModel {
         focus(ids.first)
     }
 
+    /// Read from disk rather than the snapshot, which may not have loaded when a session starts.
     private func spinoffsAllowed(_ project: String) -> Bool {
-        states[project]?.snapshot?.initialized == true
+        FileManager.default.fileExists(atPath: "\(project)/.genlock/records")
     }
 
     @discardableResult

@@ -111,7 +111,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | P4 | The project list and tiers are stored in `~/Library/Application Support/Genlock/` and survive a restart | auto |
 | P5 | Removing a project removes it from the app and changes nothing on disk in the project | auto |
 | P6 | A project whose folder has gone shows as missing instead of disappearing or crashing | auto |
-| P7 | A card for a project with no `.genlock/` offers Set Up, which asks private or shared, then runs `genlock init` | drive |
+| P7 | A card for a project with no `.genlock/` offers Set Up, which asks private or shared, runs `genlock init`, shows it working, and on finishing the card changes and a message says what happened and what to do next | auto, drive |
 
 ### Dashboard
 
@@ -122,9 +122,12 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | D3 | A card updates within 2 seconds of a change made by an agent, with no action from you | auto |
 | D4 | A project moves between tiers by dragging it onto a tab or column, by context menu, by pressing 1, 2 or 3 on a hovered card, and from an empty tier's list of projects to pull in | drive |
 | D5 | Dragging reorders cards within a tier, and the order survives a restart | auto, drive |
-| D6 | A new project goes into SOON | auto |
+| D6 | A new project goes into the tier you are looking at, or SOON in the All view, and the app says where it went. Adding one already here shows it instead | auto, drive |
 | D7 | A deadline within 7 days or overdue shows on the card | auto |
 | D8 | A card shows when a session is running in that project | drive |
+| D10 | A card always says what to do next. With no goal it offers Set a goal, which opens the session with the agent asking what you want to get done. Without genlock it offers Set up and Open session. Hovering any card shows Open | auto, drive |
+| D11 | In a focused tier, every card in a row is the same height and width, a sparse card matches a full one, and its button sits at the bottom | auto, drive |
+| D9 | Each project can have its own icon, chosen from emoji, symbols or an image, shown on its card, session tab and pane. Until then it shows its first letter. Icons live with your projects on this Mac, never in the repository | auto, drive |
 
 ### Sessions
 
@@ -277,7 +280,7 @@ Each is what I chose, and what would change if you disagree.
 | 1 | **Releasing Shift opens the split.** Nothing extra to click, but letting go between clicks opens early | An "Open 3" button, which is one more step but cannot fire early |
 | 2 | **One main session per project, plus spin-offs.** A click always returns to the same place | Several freely-opened sessions per project |
 | 3 | **A click starts a new session, unless one is running.** genlock's orient gives it the context, and resuming is in the context menu | Always resume the last conversation |
-| 4 | **New projects go to SOON** | LATER, so TODAY and SOON stay intentional |
+| 4 | **New projects go to the tier on screen.** Always visible the moment you add one | Always SOON, which hides them while you focus on TODAY |
 | 5 | **Tiers are per-Mac, not in the repo** | Committed, so they would follow you across machines |
 | 6 | **Three fixed tiers** | Renameable or more |
 | 8 | **Right Option taps to talk.** Hold-free, as you asked, and on-screen button too | Another key, or a configurable one |

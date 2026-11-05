@@ -173,6 +173,20 @@ if (has('--skill')) {
   }
 }
 
+// `init` means this repository now uses genlock, so the store exists from that moment, with its
+// merge rule in place before the first record and tools able to see that it is set up.
+if (has('--next-steps') && !check) {
+  const top = spawnSync('git', ['rev-parse', '--show-toplevel'], { encoding: 'utf8' });
+  const root = top.status === 0 ? top.stdout.trim() : process.cwd();
+  fs.mkdirSync(path.join(root, '.genlock', 'records'), { recursive: true });
+  const write = (name, text) => {
+    const f = path.join(root, '.genlock', name);
+    if (!fs.existsSync(f)) fs.writeFileSync(f, text);
+  };
+  write('.gitattributes', "# Written by genlock. Records are append-only; a merge keeps both sides' lines.\nrecords/*.jsonl merge=union\n");
+  write('.gitignore', 'live/\n');
+}
+
 if (has('--private')) {
   const r = spawnSync('git', ['rev-parse', '--git-path', 'info/exclude'], { encoding: 'utf8' });
   if (r.status !== 0) {

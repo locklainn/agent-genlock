@@ -59,6 +59,12 @@ enum Driver {
             postFlags([], keyCode: 61)
         }
         if step["dashboard"] != nil { model.route = .dashboard }
+        if let args = step["icon"] as? [String], let id = projectID(named: args[0]) {
+            model.setIcon(id, args[1].hasPrefix("sym:") ? .symbol(String(args[1].dropFirst(4))) : .emoji(args[1]))
+        }
+        if let args = step["setup"] as? [String], let id = projectID(named: args[0]) { model.setUp(id, flag: args[1]) }
+        if let name = step["setGoal"] as? String, let id = projectID(named: name) { model.setGoal(id) }
+        if let name = step["iconPicker"] as? String { model.iconTarget = projectID(named: name) }
         if let name = step["open"] as? String, let id = projectID(named: name) { model.openSessions([id]) }
         if let name = step["focus"] as? String, let focus = DashFocus(rawValue: name) { model.focusDashboard(focus) }
         if let path = step["addProject"] as? String { model.addProject(path: path) }
@@ -132,6 +138,11 @@ enum Driver {
             "visible": model.visible.map { URL(fileURLWithPath: $0).lastPathComponent },
             "running": model.sessions.filter(\.value.isRunning).keys.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted(),
             "marked": model.markedCount,
+            "cardFrames": Dictionary(uniqueKeysWithValues: model.store.projects.map { p in
+                (p.name, model.cardFrames[p.id].map { [Int($0.minX), Int($0.minY), Int($0.width), Int($0.height)] } ?? [])
+            }),
+            "message": model.message ?? "",
+            "initialized": Dictionary(uniqueKeysWithValues: model.store.projects.map { ($0.name, model.state(for: $0.id).snapshot?.initialized ?? false) }),
             "needing": model.needingAttention.map(\.label),
             "dockBadge": NSApp.dockTile.badgeLabel ?? "",
             "active": NSApp.isActive,

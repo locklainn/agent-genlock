@@ -812,6 +812,8 @@ check('...sets up rules, hooks, server and skills', /BEGIN genlock/.test(fs.read
   && fs.existsSync(path.join(SETUP, '.claude', 'settings.json')) && fs.existsSync(path.join(SETUP, '.mcp.json'))
   && fs.existsSync(path.join(SETUP, '.claude', 'skills', 'goals', 'SKILL.md')), r.all);
 check('...says what to do next', /genlock doctor/.test(r.out), r.out);
+check('...and tools can see it is set up, before any record exists', JSON.parse(sx('snapshot').out).initialized === true, sx('snapshot').out);
+check('...with the merge rule already in place', /merge=union/.test(fs.readFileSync(path.join(SETUP, '.genlock', '.gitattributes'), 'utf8')));
 r = sx('doctor');
 check('doctor passes after init', r.code === 0, r.all);
 const initOnce = fs.readFileSync(path.join(SETUP, 'CLAUDE.md'), 'utf8');

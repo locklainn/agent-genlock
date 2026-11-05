@@ -50,6 +50,9 @@ struct SessionBar: View {
                                 let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (running ? Theme.green : Theme.textTertiary))
                                 Circle().fill(dot).frame(width: 7, height: 7)
                                     .shadow(color: running || need != nil ? dot : .clear, radius: 4)
+                                if let p = model.sessions[id].flatMap({ model.store.project($0.projectID) }) {
+                                    ProjectIconView(project: p, size: 16)
+                                }
                                 Text(model.sessions[id]?.label ?? id).lineLimit(1)
                             }
                         }
@@ -132,6 +135,7 @@ struct PaneView: View {
         let listeningHere = voice.isListening && voice.target == sessionKey
         let snap = model.state(for: projectID).snapshot
         return HStack(spacing: 10) {
+            if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 20) }
             Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
             if let spawn {
                 Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
@@ -173,7 +177,7 @@ struct PaneView: View {
         if let session = model.sessions[sessionKey] {
             ZStack {
                 TerminalHost(session: session)
-                if !session.isRunning { SessionEndedOverlay(session: session, projectID: sessionKey) }
+                if !session.isRunning && model.tools != nil { SessionEndedOverlay(session: session, projectID: sessionKey) }
             }
         } else {
             VStack(spacing: 12) {

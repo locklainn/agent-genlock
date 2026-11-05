@@ -55,6 +55,11 @@ public enum SessionLaunch {
     If NOT SAFE, do not offer a launch. Say the ticket is recorded and why it has to wait.
     """
 
+    /// What the agent is told when you press Set a goal, so you are asked rather than left at a blank prompt.
+    public static let goalPrompt = """
+    No goals are recorded for this project yet. Look around just enough to ask well, then ask me in one or two sentences what I want to get done here. When I answer, record it in my words with genlock goal add, and add what comes next with genlock goal next. Do not start any work until then.
+    """
+
     /// `prompt` opens a spin-off with its handoff. Flags come after it, because --allowedTools
     /// would otherwise swallow it as another tool name.
     public static func arguments(resume: Bool, voice: Bool, genlockCommand: String?, spinoffs: Bool = false,
