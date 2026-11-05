@@ -51,7 +51,7 @@ struct DashboardHeader: View {
                 .buttonStyle(GlassButtonStyle())
             }
             Button { model.chooseFolders() } label: { Label("Add project", systemImage: "plus") }
-                .buttonStyle(GlowButtonStyle())
+                .buttonStyle(GlassButtonStyle())
         }
         .padding(.leading, 86).padding(.trailing, 24).padding(.top, 14).padding(.bottom, 16)
         .animation(.spring(duration: 0.3), value: model.markedCount)
@@ -64,7 +64,7 @@ struct FocusTabs: View {
     @Namespace private var selection
 
     var body: some View {
-        HStack(spacing: 6) {
+        HStack(spacing: 18) {
             ForEach(DashFocus.allCases) { FocusTab(focus: $0, namespace: selection) }
             Spacer()
         }
@@ -87,34 +87,26 @@ struct FocusTab: View {
         Button {
             withAnimation(.spring(duration: 0.32)) { model.focus = focus }
         } label: {
-            HStack(spacing: 8) {
-                Text(focus.title).font(.system(size: 13.5, weight: .heavy, design: .rounded)).tracking(focus == .all ? 0.2 : 1.3)
-                    .foregroundStyle(selected ? AnyShapeStyle(.white) : AnyShapeStyle(hovering || isTargeted ? gradient : LinearGradient(colors: [Theme.textSecondary], startPoint: .leading, endPoint: .trailing)))
-                Text("\(count)").font(.system(size: 11, weight: .bold, design: .rounded)).monospacedDigit()
-                    .foregroundStyle(selected ? Color.white : Theme.textSecondary)
-                    .padding(.horizontal, 7).padding(.vertical, 2)
-                    .background(selected ? Color.white.opacity(0.24) : Color.white.opacity(0.08), in: Capsule())
+            HStack(spacing: 6) {
+                Text(focus.title).font(.system(size: 14, weight: selected ? .semibold : .medium))
+                    .foregroundStyle(selected || hovering || isTargeted ? Theme.textPrimary : Theme.textSecondary)
+                Text("\(count)").font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    .foregroundStyle(Theme.textTertiary)
                     .contentTransition(.numericText())
             }
-            .padding(.horizontal, 16).padding(.vertical, 9)
-            .background {
+            .padding(.horizontal, 4).padding(.vertical, 8)
+            .overlay(alignment: .bottom) {
                 if selected {
-                    Capsule().fill(gradient)
-                        .shadow(color: colors[0].opacity(0.6), radius: 14, y: 3)
+                    Rectangle().fill(gradient).frame(height: 2)
                         .matchedGeometryEffect(id: "selected", in: namespace)
-                } else if hovering || isTargeted {
-                    Capsule().fill(Theme.surfaceRaised)
+                } else if isTargeted {
+                    Rectangle().fill(gradient).frame(height: 2)
                 }
             }
-            .overlay {
-                if isTargeted { Capsule().strokeBorder(gradient, lineWidth: 2) }
-            }
-            .scaleEffect(isTargeted ? 1.08 : 1)
-            .contentShape(Capsule())
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .onHover { hovering = $0 }
-        .animation(.spring(duration: 0.25), value: isTargeted)
         .animation(.spring(duration: 0.3), value: count)
         .dropDestination(for: String.self) { ids, _ in
             guard let tier = focus.tier, let id = ids.first else { return false }
@@ -419,7 +411,7 @@ struct ProjectCard: View {
         .overlay(alignment: .top) {
             if isDropTarget { Capsule().fill(Theme.gradient(tier)).frame(height: 3).offset(y: -8) }
         }
-        .shadow(color: (marked ? Color(hex: 0x6D5BFF) : Theme.tint(tier)[0]).opacity(marked ? 0.55 : (isHovered ? 0.4 : 0)), radius: 18, y: 5)
+        .shadow(color: (marked ? Color(hex: 0x6D5BFF) : Theme.tint(tier)[0]).opacity(marked ? 0.45 : (isHovered ? 0.22 : 0)), radius: 14, y: 4)
         .scaleEffect(isHovered ? 1.018 : 1)
         .animation(.spring(duration: 0.26), value: isHovered)
         .animation(.spring(duration: 0.26), value: marked)
@@ -462,9 +454,7 @@ struct ProjectCard: View {
     @ViewBuilder private func summary(_ s: Snapshot) -> some View {
         let c = CardSummary(s)
         if c.needsSetup {
-            Text("Not on the signal yet").font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
-            Text("Set up genlock to track goals and tasks here. You can still open a session.")
-                .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            Text("Goals and tasks are off").font(.system(size: 17, weight: .semibold, design: .rounded)).foregroundStyle(Theme.textSecondary)
             Spacer(minLength: 0)
             if model.settingUp.contains(project.id) {
                 HStack(spacing: 10) {
@@ -472,16 +462,12 @@ struct ProjectCard: View {
                     Text("Setting up…").font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 }
             } else {
-                HStack(spacing: 8) {
-                    Button("Set up genlock") { model.setupTarget = project.id }
-                        .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
-                    Button("Open session") { model.openSessions([project.id]) }.buttonStyle(GlassButtonStyle())
-                }
+                Button("Set up genlock") { model.setupTarget = project.id }.buttonStyle(LinkButtonStyle())
             }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(c.goalTitle ?? "Ready when you are").font(.system(size: 17, weight: .bold, design: .rounded))
+                    Text(c.goalTitle ?? "No goal yet").font(.system(size: 17, weight: c.goalTitle == nil ? .semibold : .bold, design: .rounded))
                         .foregroundStyle(c.goalTitle == nil ? Theme.textSecondary : Theme.textPrimary)
                         .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                     if let next = c.nextThing {
@@ -497,11 +483,6 @@ struct ProjectCard: View {
                 }
             }
             Spacer(minLength: 0)
-            if c.goalTitle == nil {
-                Button { model.openSessions([project.id]) } label: { Label("Start working", systemImage: "arrow.right") }
-                    .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
-                    .help("Opens a Claude Code session here. Claude tracks goals as you go")
-            }
             if let task = c.lastTaskTitle, let status = c.lastTaskStatus {
                 let symbol = Theme.status(status)
                 HStack(spacing: 7) {

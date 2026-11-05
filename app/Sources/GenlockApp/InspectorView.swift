@@ -20,9 +20,8 @@ struct InspectorView: View {
                 if let snap = state.snapshot {
                     if !snap.initialized {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Not on the signal yet").font(.system(size: 16, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
                             Text("Set up genlock here to see goals and tasks live.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
-                            Button("Set up genlock") { model.setupTarget = projectID }.buttonStyle(GlowButtonStyle())
+                            Button("Set up genlock") { model.setupTarget = projectID }.buttonStyle(LinkButtonStyle())
                         }
                     } else {
                         content(snap, changed: state.recentlyChanged)

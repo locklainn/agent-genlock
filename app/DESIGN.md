@@ -46,6 +46,7 @@ Dark, vivid and alive: an enterprise product that is exciting to open, rather th
 - **Depth.** A near-black canvas with slow colour moving behind it, and glass surfaces on top.
 - **Tiers have identity.** TODAY is hot coral to amber, SOON cyan to blue, LATER violet. That colour follows a project into its pane.
 - **Numbers lead.** The dashboard opens with live sessions, waiting on you, to review and due this week.
+- **One thing to press.** Visual hierarchy: if everything shouts, nothing does. The dashboard has no filled buttons, because its main action is the card itself. The selected tab is an underline, Add project is quiet, and secondary steps are text links. A filled button appears only when it is the one real choice in view, such as first run or a pop-up. Decided 5 November 2026.
 - **Things move because something happened.** Cards lift on hover, a running session pulses, progress rings animate, and a change by an agent glows briefly. All of it respects Reduce Motion.
 - **No stock controls** on app screens. Buttons, pills, rings and the setup screen are custom; only menus and the system file picker stay native.
 
@@ -125,7 +126,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | D6 | A new project goes into the tier you are looking at, or SOON in the All view, and the app says where it went. Adding one already here shows it instead | auto, drive |
 | D7 | A deadline within 7 days or overdue shows on the card | auto |
 | D8 | A card shows when a session is running in that project | drive |
-| D10 | A card always offers a next step, and goals are never required first. With no goal it offers Start working, which opens the session ready for typing. Without genlock it offers Set up and Open session. Hovering any card shows Open | auto, drive |
+| D10 | The card is the dashboard's main action: clicking it opens the session, and hovering shows Open. Nothing has to be done first, so a card with no goal has no button at all. Setting up genlock is a quiet text link | auto, drive |
 | D11 | In a focused tier, every card in a row is the same height and width, a sparse card matches a full one, and its button sits at the bottom | auto, drive |
 | D9 | Each project can have its own icon, chosen from emoji, symbols or an image, shown on its card, session tab and pane. Until then it shows its first letter. Icons live with your projects on this Mac, never in the repository | auto, drive |
 

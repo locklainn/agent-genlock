@@ -221,7 +221,23 @@ struct Pill: View {
     }
 }
 
-/// Filled, glowing, and the one thing on screen to press.
+/// Words that act, for a secondary step inside something bigger. Its own click target, and quiet.
+struct LinkButtonStyle: ButtonStyle {
+    @State private var hovering = false
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 12.5, weight: .medium))
+            .foregroundStyle(hovering ? Theme.textPrimary : Theme.textSecondary)
+            .underline(hovering)
+            .opacity(configuration.isPressed ? 0.6 : 1)
+            .onHover { hovering = $0 }
+            .contentShape(Rectangle())
+    }
+}
+
+/// Filled and glowing. At most one on a screen, and never on the dashboard, whose main action is
+/// the card itself. For when it is the only real choice in view: first run, and pop-ups.
 struct GlowButtonStyle: ButtonStyle {
     var gradient: LinearGradient = Theme.brand
     var glow: Color = Color(hex: 0x6D5BFF)
