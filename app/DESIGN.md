@@ -125,7 +125,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | D6 | A new project goes into the tier you are looking at, or SOON in the All view, and the app says where it went. Adding one already here shows it instead | auto, drive |
 | D7 | A deadline within 7 days or overdue shows on the card | auto |
 | D8 | A card shows when a session is running in that project | drive |
-| D10 | A card always says what to do next. With no goal it offers Set a goal, which opens the session with the agent asking what you want to get done. Without genlock it offers Set up and Open session. Hovering any card shows Open | auto, drive |
+| D10 | A card always offers a next step, and goals are never required first. With no goal it offers Start working, which opens the session ready for typing. Without genlock it offers Set up and Open session. Hovering any card shows Open | auto, drive |
 | D11 | In a focused tier, every card in a row is the same height and width, a sparse card matches a full one, and its button sits at the bottom | auto, drive |
 | D9 | Each project can have its own icon, chosen from emoji, symbols or an image, shown on its card, session tab and pane. Until then it shows its first letter. Icons live with your projects on this Mac, never in the repository | auto, drive |
 
@@ -133,7 +133,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 
 | id | requirement | check |
 |---|---|---|
-| S1 | Clicking a card opens that project's session, running real `claude` in its folder | drive |
+| S1 | Clicking a card opens that project's session, running real `claude` in its folder, visible and ready to type into immediately | auto, drive, eye |
 | S2 | Shift-clicking several cards marks them, and releasing Shift opens all of them in a split | auto, drive |
 | S3 | Returning to the dashboard leaves sessions running, and opening one shows it exactly as you left it | drive |
 | S4 | A project has at most one main session, plus any spin-offs | auto |
@@ -182,6 +182,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | V8 | With several sessions, replies queue rather than overlap, and each names its project | auto |
 | V9 | Voice works in any folder without setting anything up or writing anything to the project | auto, drive |
 | V11 | Replies are read by Ava, in the best quality installed, picked up automatically if you download a better one. If she is missing, the app falls back to American English and says how to get her | auto, eye |
+| V12 | Any failure says what is wrong straight away, with a way to fix it: dictation turned off, permission denied, or nothing heard. It never just goes quiet | auto, drive |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |
 
 ### Spin-offs
@@ -293,6 +294,7 @@ Each is what I chose, and what would change if you disagree.
 - **The review list depends on agents following the rule.** Nothing can reliably detect "please look at this file" in free text. R6 tells them to register; an agent that forgets leaves the panel empty, and the fix is asking it to. If this proves unreliable, a hook could scan replies for it.
 - **The app reads what genlock records.** A project whose agent does not keep tickets and goals current shows a stale card. The app makes that visible; it cannot fix it.
 - **Unsigned.** Built on your Mac it runs fine. Giving it to someone else needs an Apple Developer ID and notarization.
+- **Dictation needs macOS Dictation turned on** in System Settings, Keyboard. Without it, recognition refuses, and the app says so.
 - **Dictation accuracy** is Apple's speech recognition, which can stumble on code and names. The agent is told to read a dictated message charitably, and the words stay visible in the terminal.
 - **The spoken reply depends on the agent's judgement of what matters.** The rule and the Stop hook make it speak; nothing can check that it chose well.
 - **Claude's usage.** Each open session draws on the same limits, and a split of six is six at once. The app does not meter this.
@@ -309,6 +311,8 @@ Editing goals or tasks in the app (ask the agent); viewing files inside the app;
 ## Verification
 
 **Run in the built app, with real Claude Code, 5 November 2026:** real events for Shift-click marking and opening a split; sessions surviving a return to the dashboard; an agent's change reaching the inspector; a dictated message answered aloud ("Four, mate."); and a rabbit hole moved to a spin-off, opening beside its parent and holding its own paths.
+
+**A lesson in that list's limits:** a real click on a card opened a terminal positioned off screen, and no test noticed, because the app's own screenshots cannot draw the terminal and an earlier split happened to reposition it. Terminal placement now has its own measured check, but only a person's eyes have confirmed a real one on a real screen.
 
 **Not yet exercised by anything:** speaking into the microphone, and the right Option key, because the first use asks your permission; dragging cards; clicking a review to open its file; typing and pasting in the terminal by hand; the session-ended and quit screens; and Ava in premium quality, which is an Apple download.
 

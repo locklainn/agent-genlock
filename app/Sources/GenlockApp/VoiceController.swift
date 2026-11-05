@@ -1,3 +1,4 @@
+import AppKit
 import AVFoundation
 import GenlockCore
 import Speech
@@ -12,6 +13,7 @@ final class VoiceController: NSObject {
     private(set) var level = 0.0
     private(set) var target: String?
     var problem: String?
+    var needsDictationSetting = false
     var speakReplies: Bool {
         didSet { UserDefaults.standard.set(speakReplies, forKey: "speakReplies") }
     }
@@ -33,6 +35,12 @@ final class VoiceController: NSObject {
 
     var isListening: Bool { machine.state == .listening }
 
+    var recognizerReport: String {
+        guard let recognizer else { return "no recognizer for \(Locale.current.identifier)" }
+        return "locale=\(recognizer.locale.identifier) available=\(recognizer.isAvailable) onDevice=\(recognizer.supportsOnDeviceRecognition) lastError=\(lastRecognitionError)"
+    }
+    @ObservationIgnored private var lastRecognitionError = "none"
+
     /// The button and the key both come here: press to start, press again to send.
     func press(target project: String?) {
         stopSpeaking()
@@ -46,6 +54,7 @@ final class VoiceController: NSObject {
             target = project
             partial = ""
             problem = nil
+            needsDictationSetting = false
             didSend = false
             requestAccessThenListen()
         case .finishListening:
@@ -83,6 +92,10 @@ final class VoiceController: NSObject {
                 }
             }
         }
+    }
+
+    func openDictationSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Keyboard-Settings.extension") { NSWorkspace.shared.open(url) }
     }
 
     private func deny(_ message: String) {
@@ -130,6 +143,18 @@ final class VoiceController: NSObject {
                 MainActor.assumeIsolated {
                     guard let self else { return }
                     if let result { self.partial = result.bestTranscription.formattedString }
+                    if let error {
+                        self.lastRecognitionError = "\(error)"
+                        // Say so at once, rather than listen on while nothing can come of it.
+                        if self.isListening, self.partial.isEmpty,
+                           let why = VoiceMachine.explain(recognitionError: "\(error)") {
+                            self.needsDictationSetting = why.needsDictationSetting
+                            self.teardown()
+                            self.didSend = true
+                            self.deny(why.message)
+                            return
+                        }
+                    }
                     if result?.isFinal == true || error != nil, self.machine.state == .sending { self.send() }
                 }
             }
@@ -151,6 +176,9 @@ final class VoiceController: NSObject {
     private func send() {
         guard !didSend else { return }
         didSend = true
+        if VoiceMachine.message(from: partial) == nil {
+            problem = "Nothing was heard, so nothing was sent."
+        }
         submit(partial, to: target)
         teardown()
         machine.reset()

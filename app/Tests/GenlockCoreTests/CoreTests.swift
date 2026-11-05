@@ -414,6 +414,14 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(v.press(), .startListening)
     }
 
+    func testRecognitionFailuresAreExplained() { // V12
+        let off = VoiceMachine.explain(recognitionError: #"Error Domain=kLSRErrorDomain Code=201 "Siri and Dictation are disabled""#)
+        XCTAssertEqual(off?.needsDictationSetting, true)
+        XCTAssertTrue(off?.message.contains("Keyboard") == true)
+        XCTAssertNil(VoiceMachine.explain(recognitionError: "No speech detected"), "stopping with nothing said is not a failure")
+        XCTAssertEqual(VoiceMachine.explain(recognitionError: "Something else")?.needsDictationSetting, false)
+    }
+
     func testSayingNothingSendsNothing() { // V3
         XCTAssertNil(VoiceMachine.message(from: ""))
         XCTAssertNil(VoiceMachine.message(from: "  \n "))
@@ -495,12 +503,6 @@ final class CoreTests: XCTestCase {
         let args = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock", spinoffs: true, sessionID: "uuid-1", prompt: "You are a spin-off")
         XCTAssertEqual(args.first, "You are a spin-off", "ahead of the flags, which would swallow it")
         XCTAssertEqual(args[args.firstIndex(of: "--session-id")! + 1], "uuid-1", "so the guard recognises it as the claim's holder")
-    }
-
-    func testSettingAGoalStartsFromAQuestion() { // D10
-        XCTAssertTrue(SessionLaunch.goalPrompt.contains("genlock goal add"))
-        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", reportsState: true, prompt: SessionLaunch.goalPrompt)
-        XCTAssertEqual(args.first, SessionLaunch.goalPrompt, "ahead of the flags")
     }
 
     func testSpawnRequestsAreReadOnce() throws {

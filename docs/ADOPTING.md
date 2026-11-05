@@ -17,9 +17,9 @@ Rules go into whichever agent files exist (`CLAUDE.md`, `AGENTS.md`, `.cursorrul
 
 **Does anything here need a clean working tree?** Scheduled jobs, deploy scripts and checks that refuse a dirty tree will see `.genlock/` files. Check before the first record is written. Also check anything that fails on a new top-level folder.
 
-## 2. Ask for the goals
+## 2. Let goals emerge
 
-Run `genlock orient`. If no goals are known, ask the owner what they are trying to get done and record it in their words:
+There is nothing to fill in first. Run `genlock orient` and get on with the work. When it makes a goal clear, record it in the owner's words:
 
     genlock goal add "THE GOAL" --user-said "THEIR WORDS"
 

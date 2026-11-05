@@ -211,7 +211,12 @@ struct VoiceBanner: View {
             .shadow(color: Color(hex: 0xFF4D6D).opacity(0.45), radius: 26, y: 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if let problem = voice.problem {
-            MessageBanner(text: problem) { voice.problem = nil }
+            VStack(spacing: 8) {
+                MessageBanner(text: problem) { voice.problem = nil }
+                if voice.needsDictationSetting {
+                    Button("Open Keyboard Settings") { voice.openDictationSettings() }.buttonStyle(GlowButtonStyle())
+                }
+            }
         }
     }
 }

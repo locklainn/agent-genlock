@@ -481,8 +481,8 @@ struct ProjectCard: View {
         } else {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(c.goalTitle ?? "No goal yet").font(.system(size: 17, weight: .bold, design: .rounded))
-                        .foregroundStyle(c.goalTitle == nil ? Theme.textTertiary : Theme.textPrimary)
+                    Text(c.goalTitle ?? "Ready when you are").font(.system(size: 17, weight: .bold, design: .rounded))
+                        .foregroundStyle(c.goalTitle == nil ? Theme.textSecondary : Theme.textPrimary)
                         .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                     if let next = c.nextThing {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -498,9 +498,9 @@ struct ProjectCard: View {
             }
             Spacer(minLength: 0)
             if c.goalTitle == nil {
-                Button { model.setGoal(project.id) } label: { Label("Set a goal", systemImage: "scope") }
+                Button { model.openSessions([project.id]) } label: { Label("Start working", systemImage: "arrow.right") }
                     .buttonStyle(GlowButtonStyle(gradient: Theme.gradient(tier), glow: Theme.tint(tier)[0]))
-                    .help("Opens a session where the agent asks what you want to get done")
+                    .help("Opens a Claude Code session here. Claude tracks goals as you go")
             }
             if let task = c.lastTaskTitle, let status = c.lastTaskStatus {
                 let symbol = Theme.status(status)

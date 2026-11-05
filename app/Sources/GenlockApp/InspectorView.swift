@@ -62,7 +62,7 @@ struct InspectorView: View {
             if let current {
                 GoalBlock(goal: current, changed: changed, tier: tier)
             } else {
-                Text(s.goalsDeclined == true ? "No goals for this project." : "No goal yet. The agent will ask.")
+                Text(s.goalsDeclined == true ? "No goals for this project." : "None yet. Claude will pick one up as you work.")
                     .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
         }

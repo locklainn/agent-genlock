@@ -1,5 +1,7 @@
 import AppKit
 import GenlockCore
+import AVFoundation
+import Speech
 import UserNotifications
 
 /// Runs the built app from a script of real input events, for testing. It posts events into
@@ -63,7 +65,6 @@ enum Driver {
             model.setIcon(id, args[1].hasPrefix("sym:") ? .symbol(String(args[1].dropFirst(4))) : .emoji(args[1]))
         }
         if let args = step["setup"] as? [String], let id = projectID(named: args[0]) { model.setUp(id, flag: args[1]) }
-        if let name = step["setGoal"] as? String, let id = projectID(named: name) { model.setGoal(id) }
         if let name = step["iconPicker"] as? String { model.iconTarget = projectID(named: name) }
         if let name = step["open"] as? String, let id = projectID(named: name) { model.openSessions([id]) }
         if let name = step["focus"] as? String, let focus = DashFocus(rawValue: name) { model.focusDashboard(focus) }
@@ -138,6 +139,9 @@ enum Driver {
             "visible": model.visible.map { URL(fileURLWithPath: $0).lastPathComponent },
             "running": model.sessions.filter(\.value.isRunning).keys.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted(),
             "marked": model.markedCount,
+            "terminalFrames": Dictionary(uniqueKeysWithValues: model.sessions.values.map { s in
+                (s.label, ["\(s.view.frame)", "inWindow=\(s.view.window != nil)", "isFirstResponder=\(s.view.window?.firstResponder === s.view)", "grid=\(s.cols)x\(s.rows)"])
+            }),
             "cardFrames": Dictionary(uniqueKeysWithValues: model.store.projects.map { p in
                 (p.name, model.cardFrames[p.id].map { [Int($0.minX), Int($0.minY), Int($0.width), Int($0.height)] } ?? [])
             }),
@@ -150,6 +154,13 @@ enum Driver {
             "spoken": model.voice.lastSpoken ?? "",
             "voice": model.voice.chosenVoice?.name ?? "",
             "voiceState": "\(model.voice.machine.state)",
+            "voiceTarget": model.voice.target ?? "",
+            "voicePartial": model.voice.partial,
+            "voiceLevel": model.voice.level,
+            "voiceProblem": model.voice.problem ?? "",
+            "speechAuth": SFSpeechRecognizer.authorizationStatus().rawValue,
+            "micAuth": AVCaptureDevice.authorizationStatus(for: .audio).rawValue,
+            "recognizer": model.voice.recognizerReport,
         ]
         if let data = try? JSONSerialization.data(withJSONObject: out, options: [.prettyPrinted, .sortedKeys]) {
             try? data.write(to: URL(fileURLWithPath: path))

@@ -46,7 +46,7 @@ genlock init --private                          # or --shared; rules, hooks, MCP
 genlock doctor                                  # confirms it took
 ```
 
-Then restart your agent session. That is all. From then on, just talk to your agent: it asks for your goals if it does not know them.
+Then restart your agent session. That is all. From then on, just talk to your agent: it picks up goals as the work makes them clear.
 
 **`--private` or `--shared`?** Records are permanent logs that can quote people. `--private` keeps them out of git, on your machine only: use it for a public or sensitive repository. `--shared` commits them with your work, so they have history and reach other machines.
 

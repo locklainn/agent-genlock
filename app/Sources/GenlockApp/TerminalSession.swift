@@ -19,9 +19,9 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     /// What it last reported: working, done or waiting.
     var phase: String?
     var attentionMessage = ""
-    /// Sent as the first message when the session starts.
-    @ObservationIgnored var firstMessage: String?
     @ObservationIgnored var lastReportAt: Double = 0
+    @ObservationIgnored var cols = 0
+    @ObservationIgnored var rows = 0
     @ObservationIgnored let view: LocalProcessTerminalView
 
     var label: String {
@@ -59,7 +59,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
         let genlockCommand = tools.genlockArgv?.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
         let args = SessionLaunch.arguments(resume: resume, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
-                                           reportsState: true, sessionID: spawn?.session, prompt: spawn?.prompt ?? firstMessage)
+                                           reportsState: true, sessionID: spawn?.session, prompt: spawn?.prompt)
         view.startProcess(executable: claude, args: args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)
@@ -82,7 +82,14 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
 
     // MARK: LocalProcessTerminalViewDelegate
 
-    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
+    nonisolated func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                self?.cols = newCols
+                self?.rows = newRows
+            }
+        }
+    }
     nonisolated func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
     nonisolated func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {}
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {

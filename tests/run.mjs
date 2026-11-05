@@ -288,7 +288,7 @@ const deliver2 = (who) => run(FRESH, null, ['deliver'], JSON.stringify({ session
 const fAs = (s, ...args) => run(FRESH, s, args);
 
 r = f('orient');
-check('orient tells the agent to ask when no goals are known', /NO GOALS KNOWN/.test(r.out), r.out);
+check('orient tells the agent not to stop for a goal', /Do not stop to ask/.test(r.out) && /goal add/.test(r.out), r.out);
 r = f('goal', 'add', 'Ship the search rewrite');
 check('setting a goal without the user\'s words is refused', r.code === 1 && /--user-said/.test(r.err), r.all);
 r = f('goal', 'propose', 'Ship the docs');
@@ -298,13 +298,13 @@ r = f('goal', 'propose', 'Ship the docs', '--why', 'three tickets touched them')
 const PG = goalOf(r);
 check('a proposal prints the question to ask', /Want me to track it/.test(r.out), r.out);
 r = f('orient');
-check('...stays out of active goals but is surfaced', /NO GOALS KNOWN/.test(r.out) && /Proposed goals/.test(r.out), r.out);
+check('...stays out of active goals but is surfaced', /No goals recorded/.test(r.out) && /Proposed goals/.test(r.out), r.out);
 r = f('goal', 'accept', PG);
 check('...and cannot be accepted without the user\'s words', r.code === 1, r.all);
 f('goal', 'reject', PG, '--user-said', 'not now');
 
 f('goal', 'none', '--user-said', 'no goals for this repo');
-check('after "none", orient stops asking', !/NO GOALS KNOWN/.test(f('orient').out));
+check('after "none", orient stops asking', !/No goals recorded/.test(f('orient').out));
 
 r = f('goal', 'add', 'Ship the search rewrite', '--user-said', 'get search done');
 const G1 = goalOf(r);

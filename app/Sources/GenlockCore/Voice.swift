@@ -18,6 +18,18 @@ public struct VoiceMachine: Equatable {
 
     public mutating func reset() { state = .idle }
 
+    /// What to tell the user when recognition fails. Nil for what is normal: stopping with nothing said.
+    public static func explain(recognitionError text: String) -> (message: String, needsDictationSetting: Bool)? {
+        let lower = text.lowercased()
+        if lower.contains("siri and dictation are disabled") || lower.contains("dictation is disabled") {
+            return ("Dictation is turned off on this Mac. Turn it on in System Settings, Keyboard, Dictation, then press Talk again.", true)
+        }
+        if lower.contains("no speech") || lower.contains("code=1110") || lower.contains("canceled") || lower.contains("cancelled") {
+            return nil
+        }
+        return ("Speech recognition stopped: \(text)", false)
+    }
+
     /// What to type into the terminal, or nil if nothing was said.
     public static func message(from transcript: String) -> String? {
         let t = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -53,11 +65,6 @@ public enum SessionLaunch {
     4. Only on the user's yes: genlock spinoff launch ID --user-said "THEIR WORDS". It opens in a new pane beside you. Carry on with your own work.
 
     If NOT SAFE, do not offer a launch. Say the ticket is recorded and why it has to wait.
-    """
-
-    /// What the agent is told when you press Set a goal, so you are asked rather than left at a blank prompt.
-    public static let goalPrompt = """
-    No goals are recorded for this project yet. Look around just enough to ask well, then ask me in one or two sentences what I want to get done here. When I answer, record it in my words with genlock goal add, and add what comes next with genlock goal next. Do not start any work until then.
     """
 
     /// `prompt` opens a spin-off with its handoff. Flags come after it, because --allowedTools

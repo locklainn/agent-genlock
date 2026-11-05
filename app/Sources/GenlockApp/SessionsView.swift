@@ -244,22 +244,42 @@ struct SessionEndedOverlay: View {
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
 
-    func makeNSView(context: Context) -> NSView {
-        let container = NSView()
+    func makeNSView(context: Context) -> TerminalContainer {
+        let container = TerminalContainer()
         container.wantsLayer = true
         container.layer?.backgroundColor = Theme.terminal.cgColor
-        attach(to: container)
+        container.show(session.view)
         return container
     }
 
-    func updateNSView(_ container: NSView, context: Context) {
-        if session.view.superview !== container { attach(to: container) }
+    func updateNSView(_ container: TerminalContainer, context: Context) {
+        container.show(session.view)
+    }
+}
+
+/// Keeps the terminal inside its pane at every size. It places the terminal whenever its own size
+/// changes, because it is first created with no size at all, and an inset of an empty rectangle is
+/// a null one, whose origin is far off screen.
+final class TerminalContainer: NSView {
+    private static let inset = (x: CGFloat(6), y: CGFloat(4))
+    private weak var terminal: NSView?
+
+    func show(_ view: NSView) {
+        if view.superview !== self {
+            view.removeFromSuperview()
+            addSubview(view)
+        }
+        terminal = view
+        place()
     }
 
-    private func attach(to container: NSView) {
-        session.view.removeFromSuperview()
-        session.view.frame = container.bounds.insetBy(dx: 6, dy: 4)
-        session.view.autoresizingMask = [.width, .height]
-        container.addSubview(session.view)
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        place()
+    }
+
+    private func place() {
+        guard let terminal, bounds.width > Self.inset.x * 2, bounds.height > Self.inset.y * 2 else { return }
+        terminal.frame = bounds.insetBy(dx: Self.inset.x, dy: Self.inset.y)
     }
 }

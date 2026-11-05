@@ -251,7 +251,7 @@ final class AppModel {
                     let running = self.sessions[id]?.isRunning == true
                     self.message = running
                         ? "\(name) is on the signal. End and restart its session to load the new rules."
-                        : "\(name) is on the signal. Open its session and the agent will ask what you want to get done."
+                        : "\(name) is on the signal. Open its session and start working. Claude will track goals as you go."
                 } else {
                     self.message = "Setup ran in \(name), but genlock still does not see it as set up. Run genlock doctor there."
                 }
@@ -338,22 +338,6 @@ final class AppModel {
     var markedCount: Int { selection.marked.count }
 
     // MARK: Sessions
-
-    /// Opens the project with the agent asking what you want to get done.
-    func setGoal(_ id: String) {
-        if let running = sessions[id], running.isRunning {
-            running.submit(SessionLaunch.goalPrompt)
-            openSessions([id])
-            return
-        }
-        // Set before starting, including when the tools are still being found.
-        sessions[id]?.channel.remove()
-        let session = TerminalSession(projectID: id)
-        session.firstMessage = SessionLaunch.goalPrompt
-        sessions[id] = session
-        if let tools { session.start(tools: tools, resume: false, voice: voice.speakReplies, spinoffs: spinoffsAllowed(id)) }
-        openSessions([id])
-    }
 
     func openSessions(_ ids: [String], resume: Bool = false) {
         for id in ids { ensureSession(id, resume: resume) }
