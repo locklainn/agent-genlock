@@ -3,6 +3,10 @@ import Foundation
 /// Which sessions were open and which conversation each one was in, so a restart picks up where
 /// you left off. Kept beside your project list, on this Mac and never in a repository.
 public struct SessionMemory: Codable, Equatable {
+    /// Only a session that actually ended is closed. One that could not start yet, or could not be
+    /// reached, may still be running, and forgetting it is how a running session gets lost.
+    public static func stillOpen(isRunning: Bool, exitCode: Int32?) -> Bool { isRunning || exitCode == nil }
+
     public struct Open: Codable, Equatable {
         public var project: String
         public var spawn: SpawnRequest?

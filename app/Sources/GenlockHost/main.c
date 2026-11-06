@@ -15,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/file.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
@@ -23,6 +24,8 @@
 #include <time.h>
 #include <unistd.h>
 #include <util.h>
+
+#define LOCK_NAME "host.lock"
 
 enum { F_DATA = 1, F_REPLAY_END = 2, F_EXIT = 3, F_ATTACH = 10, F_INPUT = 11, F_RESIZE = 12, F_KILL = 13 };
 enum { HEADER = 5, CHUNK = 65536, RING = 4 << 20, INPUT = 1 << 20, MAX_MODES = 64 };
@@ -335,12 +338,12 @@ static void host_loop(int listener, int master, pid_t child, const char *socket_
     }
 }
 
-static void become_host(int listener, const char *socket_name, const char *folder, char **command, struct winsize ws, mode_t old_umask) {
+static void become_host(int listener, int lock, const char *socket_name, const char *folder, char **command, struct winsize ws, mode_t old_umask) {
     setsid();
     if (fork() != 0) _exit(0);
     signal(SIGHUP, SIG_IGN);
     signal(SIGPIPE, SIG_IGN);
-    for (int fd = 3; fd < 256; fd++) if (fd != listener) close(fd);
+    for (int fd = 3; fd < 256; fd++) if (fd != listener && fd != lock) close(fd);
     int null = open("/dev/null", O_RDWR);
     if (null >= 0) { dup2(null, 0); dup2(null, 1); dup2(null, 2); if (null > 2) close(null); }
 
@@ -437,9 +440,16 @@ int main(int argc, char **argv) {
 
     if (strcmp(verb, "probe") == 0) {
         int fd = connect_to(name);
-        if (fd < 0) return 1;
-        close(fd);
-        return 0;
+        if (fd >= 0) {
+            close(fd);
+            return 0;
+        }
+        // Not answering is not the same as gone: a host holds this lock for as long as it lives.
+        int lock = open(LOCK_NAME, O_RDWR | O_CLOEXEC);
+        if (lock < 0) return 1;
+        int held = flock(lock, LOCK_EX | LOCK_NB) != 0;
+        close(lock);
+        return held ? 0 : 1;
     }
     if (strcmp(verb, "kill") == 0) {
         int fd = connect_to(name);
@@ -455,6 +465,20 @@ int main(int argc, char **argv) {
 
     int fd = connect_to(name);
     if (fd < 0) {
+        // One host per session, ever. If one holds the lock it only failed to answer, and replacing
+        // it would leave a session running that nothing can reach.
+        int lock = open(LOCK_NAME, O_CREAT | O_RDWR | O_CLOEXEC, 0600);
+        if (lock < 0 || flock(lock, LOCK_EX | LOCK_NB) != 0) {
+            for (int i = 0; i < 50 && fd < 0; i++) {
+                usleep(100000);
+                fd = connect_to(name);
+            }
+            if (fd < 0) {
+                fprintf(stderr, "genlock-host: this session is running but not answering\r\n");
+                return 1;
+            }
+            return attach(fd);
+        }
         unlink(name);
         mode_t old_umask = umask(077);
         int listener = socket(AF_UNIX, SOCK_STREAM, 0);
@@ -468,9 +492,10 @@ int main(int argc, char **argv) {
         ioctl(0, TIOCGWINSZ, &ws);
         pid_t first = fork();
         if (first < 0) return 1;
-        if (first == 0) become_host(listener, name, argv[3], argv + 5, ws, old_umask);
+        if (first == 0) become_host(listener, lock, name, argv[3], argv + 5, ws, old_umask);
         waitpid(first, NULL, 0);
         close(listener);
+        close(lock);
         umask(old_umask);
         fd = connect_to(name);
         if (fd < 0) {

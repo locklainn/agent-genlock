@@ -159,6 +159,7 @@ struct PaneView: View {
     /// Narrower in a tight pane, so the terminal keeps enough columns to read.
     private func inspectorWidth(_ pane: CGFloat) -> CGFloat { pane < 860 ? 250 : 320 }
 
+    private var isSplit: Bool { model.visible.count > 1 }
     private var inspectorHidden: Bool { model.hiddenInspectors.contains(sessionKey) }
     private var name: String { projectID == model.assistantFolder ? model.assistantName : URL(fileURLWithPath: projectID).lastPathComponent }
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
@@ -167,21 +168,26 @@ struct PaneView: View {
         VStack(spacing: 0) {
             Rectangle().fill(Theme.gradient(tier)).frame(height: 2)
             header
+            if isSplit, projectID != model.assistantFolder, let session = model.sessions[sessionKey] {
+                SessionStrip(session: session, tier: tier, openPanel: toggleInspector)
+            }
             GeometryReader { geo in
                 // A narrow pane cannot give up the room, so there it slides over the terminal, closed until asked.
-                let roomy = geo.size.width >= Self.pushBelow
+                // Side by side, the strip above says what this session is on and the panel waits to be asked.
+                let roomy = !isSplit && geo.size.width >= Self.pushBelow
                 let showInspector = projectID != model.assistantFolder
-                    && (roomy ? !inspectorHidden : model.hiddenInspectors.contains("\(sessionKey)#open"))
+                    && (isSplit ? model.hiddenInspectors.contains("\(sessionKey)#split")
+                        : roomy ? !inspectorHidden : model.hiddenInspectors.contains("\(sessionKey)#open"))
                 HStack(spacing: 0) {
                     terminal
                     if roomy && showInspector {
-                        InspectorView(projectID: projectID).frame(width: inspectorWidth(geo.size.width))
+                        InspectorView(projectID: projectID, sessionKey: sessionKey).frame(width: inspectorWidth(geo.size.width))
                             .transition(.move(edge: .trailing))
                     }
                 }
                 .overlay(alignment: .trailing) {
                     if !roomy && showInspector {
-                        InspectorView(projectID: projectID)
+                        InspectorView(projectID: projectID, sessionKey: sessionKey)
                             .frame(width: min(inspectorWidth(geo.size.width), geo.size.width - 24))
                             .shadow(color: .black.opacity(0.6), radius: 20)
                             .transition(.move(edge: .trailing))
@@ -207,8 +213,8 @@ struct PaneView: View {
             }
             if let spawn {
                 Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
-                Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
-            } else if let goal = snap?.goal(snap?.currentGoal) {
+                if !isSplit { Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1) }
+            } else if !isSplit, let goal = snap.flatMap({ s in model.sessions[sessionKey]?.focus(in: s).goal ?? s.goal(s.currentGoal) }) {
                 Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
@@ -229,7 +235,7 @@ struct PaneView: View {
     private func toggleInspector() {
         // Both flags flip together, so whichever applies at this width changes.
         withAnimation(.spring(duration: 0.32)) {
-            for key in [sessionKey, "\(sessionKey)#open"] {
+            for key in isSplit ? ["\(sessionKey)#split"] : [sessionKey, "\(sessionKey)#open"] {
                 if model.hiddenInspectors.contains(key) { model.hiddenInspectors.remove(key) }
                 else { model.hiddenInspectors.insert(key) }
             }

@@ -1130,6 +1130,41 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('tell refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err), r.all);
 }
 
+/* ---- completing goals ---------------------------------------------------------- */
+
+{
+  const repo = path.join(ROOT, 'completing');
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q');
+  const f = (...args) => run(repo, 'parent', args);
+  f('init', '--with-agents-md');
+  let r = f('goal', 'completed');
+  check('no completed goals says so', r.code === 0 && /no completed goals/.test(r.out), r.all);
+  const add = (title) => (/\b(G-[0-9A-Z]{5})\b/.exec(f('goal', 'add', title, '--user-said', 'yes').all) || [])[1];
+  const first = add('Ship the billing page');
+  const second = add('Rewrite the importer');
+  check('completing needs evidence', f('goal', 'done', first, '--user-said', 'y').code !== 0);
+  r = f('goal', 'done', first, '--evidence', 'it is live', '--user-said', 'finished');
+  check('a goal completes', r.code === 0, r.all);
+  check('completing twice is refused', f('goal', 'done', first, '--evidence', 'x', '--user-said', 'y').code !== 0);
+  f('goal', 'done', second, '--evidence', 'merged', '--user-said', 'finished');
+  r = f('goal', 'completed');
+  check('completed lists when and what showed it', /\d{4}-\d\d-\d\d .*billing/i.test(r.out) && /evidence: it is live/.test(r.out), r.all);
+  check('completed is newest first', r.out.indexOf('importer') < r.out.indexOf('billing'), r.out);
+  let snap = JSON.parse(f('snapshot').out);
+  let goal = snap.goals.find((x) => x.id === first);
+  check('snapshot carries the finish', goal.status === 'done' && !!goal.completed_at && goal.evidence === 'it is live' && goal.rank === null, JSON.stringify(goal));
+  check('reopening needs the user', f('goal', 'reopen', first).code !== 0);
+  r = f('goal', 'reopen', first, '--user-said', 'not finished after all');
+  check('a completed goal reopens', r.code === 0, r.all);
+  snap = JSON.parse(f('snapshot').out);
+  goal = snap.goals.find((x) => x.id === first);
+  check('reopened goal is active and ranked again', goal.status === 'active' && goal.completed_at === null && goal.evidence === null && goal.rank === 1, JSON.stringify(goal));
+  check('reopening an active goal is refused', f('goal', 'reopen', first, '--user-said', 'y').code !== 0);
+  r = f('goal', 'done', 'billing page', '--evidence', 'live now', '--user-said', 'done');
+  check('reopened goal completes by its name', r.code === 0, r.all);
+}
+
 /* ---- report ------------------------------------------------------------------- */
 
 fs.rmSync(ROOT, { recursive: true, force: true });

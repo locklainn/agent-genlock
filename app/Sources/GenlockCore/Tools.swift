@@ -18,15 +18,23 @@ public struct ToolEnvironment: Equatable {
                                         "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_PID", "CLAUDE_CODE_EXECPATH", "CLAUDE_CODE_SESSION_ATTENDED",
                                         "CLAUDE_CODE_MESSAGING_SOCKET", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_EFFORT", "__CFBundleIdentifier", "XPC_SERVICE_NAME"]
 
+    /// The genlock inside an installed app, if this app has one.
+    public static var bundledGenlock: String? {
+        Bundle.main.resourceURL.map { $0.appendingPathComponent("genlock/run/genlock").path }
+            .flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+    }
+
     public static func resolve(base: [String: String] = ProcessInfo.processInfo.environment,
-                               shell: String? = nil) -> ToolEnvironment {
+                               shell: String? = nil, bundled: String? = ToolEnvironment.bundledGenlock) -> ToolEnvironment {
         let loginShell = shell ?? base["SHELL"] ?? "/bin/zsh"
         var env = captureLoginEnvironment(shell: loginShell) ?? base
         for key in scrubbed { env[key] = nil }
         // A shell that printed no PATH still leaves the usual places to look.
         let fallback = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"]
         let existing = (env["PATH"] ?? "").split(separator: ":").map(String.init)
-        env["PATH"] = (existing + fallback.filter { !existing.contains($0) }).joined(separator: ":")
+        // First, so the agents in its sessions run the genlock this app was built with.
+        let ownTools = bundled.map { [URL(fileURLWithPath: $0).deletingLastPathComponent().path] } ?? []
+        env["PATH"] = (ownTools + existing + fallback.filter { !existing.contains($0) }).joined(separator: ":")
         env["TERM"] = "xterm-256color"
         env["COLORTERM"] = "truecolor"
         env["LANG"] = env["LANG"] ?? "en_US.UTF-8"
@@ -35,6 +43,8 @@ public struct ToolEnvironment: Equatable {
         var genlock: [String]?
         if let override = base["GENLOCK_APP_CLI"] {
             genlock = override.hasSuffix(".mjs") ? [which("node", path: env["PATH"]) ?? "node", override] : [override]
+        } else if let bundled {
+            genlock = [bundled]
         } else if let found = which("genlock", path: env["PATH"]) {
             genlock = [found]
         }
@@ -85,12 +95,10 @@ public enum SnapshotError: Error, Equatable, CustomStringConvertible {
     case folderMissing
     case failed(String)
 
-    public static let upgradeCommand = "npm install -g github:locklainn/agent-genlock"
-
     public var description: String {
         switch self {
-        case .genlockMissing: return "genlock is not installed. Run: \(Self.upgradeCommand)"
-        case .genlockTooOld: return "This version of genlock is too old for the app. Run: \(Self.upgradeCommand)"
+        case .genlockMissing: return "This copy of Genlock is missing a part it needs. Install Genlock again."
+        case .genlockTooOld: return "The genlock this app is using is too old for it. Install Genlock again."
         case .folderMissing: return "This folder no longer exists."
         case .failed(let message): return message
         }

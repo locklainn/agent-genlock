@@ -113,6 +113,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         case .keyDown:
             commandTap.interrupted()
+            // Whatever was being typed should not land in a session unseen behind the celebration.
+            if CelebrationPresenter.isShowing {
+                CelebrationPresenter.dismiss()
+                return nil
+            }
             // While it talks the right arrow speeds it up, instead of reaching the terminal.
             if event.keyCode == Self.rightArrowKey && (model.voice.isSpeaking || model.voice.speedHeld) {
                 model.voice.holdSpeed(true)
@@ -179,6 +184,8 @@ struct RootView: View {
             }
             .padding(.bottom, 20)
             if let id = model.setupTarget { SetupSheet(projectID: id) }
+            if let completing = model.completingGoal { CompleteGoalSheet(completing: completing) }
+            if model.showingCompleted { CompletedGoalsSheet() }
             if model.askingAssistantName { NameAssistantSheet() }
             if let id = model.iconTarget { IconPicker(projectID: id) }
         }

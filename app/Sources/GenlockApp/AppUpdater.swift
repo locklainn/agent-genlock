@@ -90,9 +90,14 @@ final class AppUpdater {
             newest = max(newest ?? 0, date.timeIntervalSince1970)
         }
         for name in ["Package.swift", "Package.resolved", "scripts/build.sh"] { note(folder.appendingPathComponent(name)) }
-        if let files = fm.enumerator(at: folder.appendingPathComponent("Sources"), includingPropertiesForKeys: [.contentModificationDateKey]) {
+        // The app carries genlock, so a change to genlock is a change to the app.
+        let repo = folder.deletingLastPathComponent()
+        let watched = [folder.appendingPathComponent("Sources")] + ["bin", "lib", "agent", "skills", "docs"].map { repo.appendingPathComponent($0) }
+        for root in watched {
+            guard let files = fm.enumerator(at: root, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
             for case let url as URL in files { note(url) }
         }
+        note(repo.appendingPathComponent("install.mjs"))
         return newest
     }
 }

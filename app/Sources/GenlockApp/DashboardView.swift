@@ -45,6 +45,11 @@ struct DashboardHeader: View {
             }
             Spacer()
             UpdatePill()
+            if model.completedGoalCount > 0 {
+                Button { model.showingCompleted = true } label: { Label("\(model.completedGoalCount) completed", systemImage: "checkmark.seal.fill") }
+                    .buttonStyle(GlassButtonStyle())
+                    .help("Every goal you have finished")
+            }
             Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects. Right ⌥ from here talks to it.")

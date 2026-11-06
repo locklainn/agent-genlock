@@ -478,6 +478,16 @@ public struct VoiceChannel {
 
     public func remove() { try? FileManager.default.removeItem(at: folder) }
 
+    /// Whose session this is, kept with it, so a session still running can always be found again.
+    public func recordOwner(_ open: SessionMemory.Open) {
+        guard let data = try? JSONEncoder().encode(open) else { return }
+        try? data.write(to: folder.appendingPathComponent("session.json"))
+    }
+
+    public var owner: SessionMemory.Open? {
+        (try? Data(contentsOf: folder.appendingPathComponent("session.json"))).flatMap { try? JSONDecoder().decode(SessionMemory.Open.self, from: $0) }
+    }
+
     /// With several sessions open, a reply has to say whose it is.
     public static func spoken(_ text: String, project: String, sessionsOpen: Int) -> String {
         sessionsOpen > 1 ? "\(project). \(text)" : text

@@ -21,7 +21,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     var attentionMessage = ""
     @ObservationIgnored var lastReportAt: Double = 0
     /// The conversation it is in, once known. Nil while continuing the folder's latest.
-    @ObservationIgnored var conversation: String?
+    var conversation: String?
     /// A cleared Assistant waits to be spoken to, rather than opening with a status report.
     @ObservationIgnored var startsQuietly = false
     /// Its first message, when it has been started in order to deal with something.
@@ -62,18 +62,27 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeForegroundColor = NSColor(white: 0.92, alpha: 1)
     }
 
+    static let claudeMissing = "Claude Code was not found. Genlock keeps looking, and this session starts as soon as it is there."
+    var isWaitingForClaude: Bool { startError == Self.claudeMissing && !isRunning }
+
     func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil) {
-        guard let claude = tools.claudePath else {
-            startError = "Claude Code was not found. Install it, then try again."
-            return
-        }
         guard let host = SessionHost.executable else {
             startError = "Genlock is missing its session host. Reinstall the app."
+            return
+        }
+        // Already running from before a restart, this attaches and the arguments go unused, so it
+        // needs no Claude Code at all. Otherwise the file has to be there now: it updates itself.
+        let socket = SessionHost.socket(in: channel.folder)
+        let reattaching = SessionHost.isAlive(socket: socket)
+        let found = tools.claudePath.flatMap { FileManager.default.isExecutableFile(atPath: $0) ? $0 : nil }
+        guard let claude = found ?? (reattaching ? "claude" : nil) else {
+            startError = Self.claudeMissing
             return
         }
         startError = nil
         exitCode = nil
         try? channel.prepare()
+        channel.recordOwner(SessionMemory.Open(project: projectID, spawn: spawn, token: voiceToken))
         var env = tools.environment
         env["GENLOCK_APP_CHANNEL"] = channel.folder.path
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
@@ -90,9 +99,6 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         case .resume(let id): resumeID = id
         case .latest: break
         }
-        // Already running from before a restart, this attaches and the arguments go unused.
-        let socket = SessionHost.socket(in: channel.folder)
-        let reattaching = SessionHost.isAlive(socket: socket)
         conversation = reattaching ? resumeID : newID ?? resumeID
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,

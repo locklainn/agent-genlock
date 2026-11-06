@@ -18,6 +18,24 @@ for bundle in "$BIN"/*.bundle; do
   [ -e "$bundle" ] && cp -R "$bundle" "$APP/Contents/Resources/"
 done
 
+# The command-line tool and the node to run it travel with the app, so they always match it and
+# nobody has to install anything. See ToolEnvironment.
+CLI="$APP/Contents/Resources/genlock"
+mkdir -p "$CLI"
+for item in bin lib agent skills docs install.mjs package.json LICENSE; do cp -R "../$item" "$CLI/"; done
+mkdir -p "$CLI/run"
+cat > "$CLI/run/genlock" <<'SHIM'
+#!/bin/sh
+# Runs the genlock inside this app, with its own node when it has one.
+here=$(cd "$(dirname "$0")" && pwd)
+node="$here/../../../MacOS/node"
+[ -x "$node" ] || node=node
+exec "$node" "$here/../bin/genlock.mjs" "$@"
+SHIM
+chmod +x "$CLI/run/genlock"
+NODE=$(command -v node || true)
+if [ -n "$NODE" ]; then cp -L "$NODE" "$APP/Contents/MacOS/node"; fi
+
 swift scripts/make-icon.swift build/Genlock.iconset >/dev/null
 iconutil -c icns build/Genlock.iconset -o "$APP/Contents/Resources/Genlock.icns"
 rm -rf build/Genlock.iconset
@@ -45,7 +63,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 PLIST
 
 # Where this build came from, so the app can rebuild itself when its source changes.
-/usr/libexec/PlistBuddy -c "Add :GenlockSourceRoot string $(pwd)" -c "Add :GenlockBuiltAt real $BUILT_AT" "$APP/Contents/Info.plist"
+# An integer, because a plist real holds this few digits only to the nearest 128 seconds.
+/usr/libexec/PlistBuddy -c "Add :GenlockSourceRoot string $(pwd)" -c "Add :GenlockBuiltAt integer $BUILT_AT" "$APP/Contents/Info.plist"
 
 # macOS ties granted permissions to the signature. Ad hoc changes with every build and asks again,
 # so use a real identity when this Mac has one.

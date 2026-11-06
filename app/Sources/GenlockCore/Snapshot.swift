@@ -31,6 +31,10 @@ public struct Snapshot: Decodable, Equatable {
         public var doneWhen: String?
         public var waitingOn: String?
         public var lastActivity: String?
+        public var created: String?
+        /// When it was finished, and what showed it. Nil until then.
+        public var completedAt: String?
+        public var evidence: String?
         public var progress: Progress
         public var next: [NextThing]
         public var forbids: [Forbid]
@@ -69,6 +73,8 @@ public struct Snapshot: Decodable, Equatable {
     }
 
     public struct Ticket: Decodable, Equatable, Identifiable {
+        /// The session working on it.
+        public var owner: String?
         /// Its place in the strict order, from 1. Nil once closed.
         public var rank: Int?
         public var due: String?
@@ -190,6 +196,35 @@ public struct Snapshot: Decodable, Equatable {
 
     /// Open tasks, most important first.
     public var rankedTasks: [Ticket] { activeTickets.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) } }
+
+    /// What one session is on, out of everything in its project. A spin-off's own ticket is its own
+    /// from the start, even before its agent takes it.
+    public struct SessionFocus: Equatable {
+        public var goal: Goal?
+        public var mine: [Ticket]
+        public var working: Ticket? { mine.first }
+
+        public init(goal: Goal?, mine: [Ticket]) {
+            self.goal = goal
+            self.mine = mine
+        }
+    }
+
+    public func sessionFocus(agents: Set<String>, ticket: String? = nil) -> SessionFocus {
+        let order = ["in_progress": 0, "blocked": 1]
+        let mine = rankedTasks
+            .filter { $0.id == ticket || $0.owner.map(agents.contains) == true }
+            .sorted { (($0.id == ticket ? 0 : 1), order[$0.status] ?? 2, $0.rank ?? .max) < (($1.id == ticket ? 0 : 1), order[$1.status] ?? 2, $1.rank ?? .max) }
+        return SessionFocus(goal: goal(mine.first?.goal) ?? goal(currentGoal), mine: mine)
+    }
+
+    /// Finished goals, newest first.
+    public var completedGoals: [Goal] {
+        goals.filter { $0.status == "done" }.sorted { ($0.completedAt ?? "") > ($1.completedAt ?? "") }
+    }
+
+    /// What has to close before this goal can.
+    public func openTasks(of goal: Goal) -> [Ticket] { activeTickets.filter { $0.goal == goal.id } }
 
     /// Open goals, most important first.
     public var rankedGoals: [Goal] { goals.filter { $0.rank != nil }.sorted { $0.rank! < $1.rank! } }

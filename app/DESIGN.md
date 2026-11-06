@@ -156,6 +156,8 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | S21 | A goal or task can have a due date, set and removed in place, and counted among a card's deadlines | auto, drive, eye |
 | S23 | The panel shows what is going on now: tasks started, stuck or touched in the last day, plus up to 3 just finished, with started ones first. The rest of the tasks and other goals sit in a collapsed Backlog. Waiting on you shows 2 questions, clipped, until you ask for all of them | auto, drive, eye |
 | S24 | A goal or task reads at a glance: a short bold name and at most one small line. Its full wording, next things, requirements and history are a click away, and "Add due date" appears only on hover | auto, eye |
+| S25 | Nothing but you ends a session. A launch that cannot find Claude Code still reconnects to what is running and starts the rest when it appears; cleanup never ends anything; a session running with nothing remembering it comes back; and a host that is slow to answer cannot be replaced, because each session has one lock and one host | drive, auto |
+| S26 | Each session shows its own work. A task belongs to the session that owns it, and a spin-off owns its ticket. Side by side, a thin strip above each terminal gives its goal and its task, glowing while it works, and the full panel opens on request. A single pane keeps the panel, with this session's goal and tasks first | auto, drive, eye |
 | S18 | The pane's status (Working, Needs you, Done) sits beside its name, away from the mic | eye |
 | S19 | A changed source tree rebuilds itself in the background and offers "Restart to update". A failed build says why and retries on the next change | auto, drive |
 | S12 | The conversation is the session's own, by id, so a spin-off or a Terminal session in the same folder cannot take its place, and `/clear` is followed | auto, drive |
@@ -237,12 +239,21 @@ When a rabbit hole comes up, the agent offers to move it to its own session, so 
 | N6 | A session stops counting once you have seen it or it has resumed, and its notification clears | auto, drive |
 | N7 | Cards and panes show the same state: needs you, done, or working | drive |
 
+### Completing goals
+
+| id | requirement | check |
+|---|---|---|
+| C1 | A goal can be completed from the panel. It asks what shows it is done, and refuses while tasks on it are open, naming them. A goal with everything finished offers this without being opened | auto, drive |
+| C2 | Completed goals stay listed newest first with their date and what they took: per project in the panel, across projects from the dashboard, and with `genlock goal completed`. Each can be reopened | auto, drive |
+| C3 | Finishing a goal covers the screen with a celebration, whoever finished it, once per finish, including one finished while the app was closed. Goals already finished when a project is first seen do not celebrate | auto, drive, eye |
+| C4 | The celebration ends on a click or a key, or by itself after 8 seconds, and never takes the keyboard from another app. Several finished together show one at a time | drive |
+
 ### General
 
 | id | requirement | check |
 |---|---|---|
 | G1 | Viewing a project writes nothing to it: `git status` is unchanged and no `.git/genlock/` appears | auto |
-| G2 | If `genlock` is missing or too old, the app says so and gives the exact command to fix it | auto |
+| G2 | The app carries `genlock` and the node to run it, and uses them for itself and its sessions, so nobody installs anything and the two always match. A change to genlock's source rebuilds the app | auto, drive |
 | G3 | A project's `snapshot` failing shows an error on that card only, and other cards keep working | auto |
 | G4 | Watching a large repository stays light: refreshes are debounced and only record changes trigger them | auto |
 | G5 | The app is dark by design, whatever the system setting, with text that stays readable on it | eye |
@@ -324,6 +335,7 @@ Each is what I chose, and what would change if you disagree.
 
 - **The review list depends on agents following the rule.** Nothing can reliably detect "please look at this file" in free text. R6 tells them to register; an agent that forgets leaves the panel empty, and the fix is asking it to. If this proves unreliable, a hook could scan replies for it.
 - **The app reads what genlock records.** A project whose agent does not keep tickets and goals current shows a stale card. The app makes that visible; it cannot fix it.
+- **Only sessions opened in the app get the bundled `genlock`.** Running `claude` from a plain terminal in a set-up project needs `genlock` on that terminal's PATH, because the hooks call it by name.
 - **Unsigned.** Built on your Mac it runs fine. Giving it to someone else needs an Apple Developer ID and notarization.
 - **Dictation needs macOS Dictation turned on** in System Settings, Keyboard. Without it, recognition refuses, and the app says so.
 - **Dictation accuracy** is Apple's speech recognition, which can stumble on code and names. The agent is told to read a dictated message charitably, and the words stay visible in the terminal.

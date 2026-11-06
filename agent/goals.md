@@ -17,6 +17,7 @@ Goals are the one layer the user sees, because only the user can say what they a
     genlock ask user "QUESTION" --about G  |  genlock answer Q "ANSWER" --user-said ".."
     genlock link TICKET G
     genlock goal done G --evidence ".." --user-said ".."
+    genlock goal completed  |  genlock goal reopen G --user-said ".."
 
 - **Never make the user set a goal first.** Get on with what they ask. Goals are something you notice as the work goes, not a form to fill in.
 - **When the work makes a goal clear, record it in their words,** using what they actually asked for as `--user-said`, and mention it in one line so they can correct it. If it is your own idea rather than something they asked for, `goal propose` it and ask.
@@ -27,4 +28,5 @@ Goals are the one layer the user sees, because only the user can say what they a
 - **Anything with a date gets a due date,** with `--due` or `genlock due`. A date in prose is one nobody is reminded of.
 - **Goals and tasks have one strict order: `genlock rank`.** No two share a place. Work from the top unless told otherwise, and when the user says what matters most, move it there rather than noting it in prose.
 - **Link every ticket to a goal** when one fits.
+- **When a goal looks reached, ask the user whether it is complete, once,** and close it on their yes. Only they can finish a goal, and finishing one is worth marking: the Mac app celebrates it. If they say it was not finished after all, `goal reopen`.
 - **Status questions are answered from the records**, not from memory: `goal list`, `goal show G`. Progress is counted from tickets, never typed.

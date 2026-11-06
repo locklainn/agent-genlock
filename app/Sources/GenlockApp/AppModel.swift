@@ -49,6 +49,9 @@ final class AppModel {
     var hiddenInspectors: Set<String> = []
     var hoveredCard: String?
     var setupTarget: String?
+    var completingGoal: CompletingGoal?
+    @ObservationIgnored private var lookingForClaude = false
+    var showingCompleted = false
     var iconTarget: String?
     var settingUp: Set<String> = []
     var focus = DashFocus(saved: UserDefaults.standard.string(forKey: "dashFocus")) {
@@ -61,6 +64,7 @@ final class AppModel {
     let updater = AppUpdater()
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var voiceTicker: Timer?
+    @ObservationIgnored private var claudeTicker: Timer?
 
     func boot() {
         suggestions = ProjectStore.discover().filter { store.project($0) == nil }
@@ -84,6 +88,9 @@ final class AppModel {
             MainActor.assumeIsolated {
                 for p in AppModel.shared.store.projects { AppModel.shared.refresh(p.id) }
             }
+        }
+        claudeTicker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
+            MainActor.assumeIsolated { AppModel.shared.lookForClaude() }
         }
         voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
             MainActor.assumeIsolated {
@@ -142,6 +149,7 @@ final class AppModel {
         switch result {
         case .success(let snap):
             s.error = nil
+            noteFinishedGoals(snap, in: id)
             if snap != s.snapshot {
                 let changed = SnapshotDiff.changedIDs(old: s.snapshot, new: snap)
                 if s.snapshot == nil {
@@ -416,6 +424,37 @@ final class AppModel {
         }
         visible = back.visible
         if !visible.isEmpty { route = .sessions }
+        adoptRunningSessions()
+    }
+
+    /// Whatever the memory says, a session still running comes back. Otherwise it would carry on
+    /// working where nobody can see or reach it.
+    private func adoptRunningSessions() {
+        let known = Set(sessions.values.map(\.voiceToken))
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: VoiceChannel.defaultBase.path)) ?? [] where !known.contains(name) {
+            let channel = VoiceChannel(session: name)
+            guard let owner = channel.owner, owner.token == name,
+                  owner.project == assistantFolder || store.project(owner.project)?.exists == true,
+                  SessionHost.isAlive(socket: SessionHost.socket(in: channel.folder)) else { continue }
+            let session = TerminalSession(projectID: owner.project, spawn: owner.spawn, token: name)
+            if sessions[session.key] == nil { sessions[session.key] = session }
+        }
+    }
+
+    /// Claude Code replaces itself when it updates, so missing can just mean not yet. Sessions
+    /// waiting for it start once it is back.
+    private func lookForClaude() {
+        guard !lookingForClaude, tools != nil, sessions.values.contains(where: \.isWaitingForClaude) else { return }
+        lookingForClaude = true
+        Task.detached {
+            let resolved = ToolEnvironment.resolve()
+            await MainActor.run {
+                self.lookingForClaude = false
+                guard let claude = resolved.claudePath, FileManager.default.isExecutableFile(atPath: claude) else { return }
+                self.tools = resolved
+                for session in self.sessions.values where session.isWaitingForClaude { self.launch(session, tools: resolved) }
+            }
+        }
     }
 
     /// Sessions outlive the app, so their channels do too. Only one nothing remembers can go.
@@ -424,15 +463,15 @@ final class AppModel {
         let base = VoiceChannel.defaultBase
         for name in (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? [] where !keep.contains(name) {
             let folder = base.appendingPathComponent(name)
-            SessionHost.end(socket: SessionHost.socket(in: folder))
-            try? FileManager.default.removeItem(at: folder)
+            // Cleaning up never ends anything. Only you do, by ending the session.
+            if !SessionHost.isAlive(socket: SessionHost.socket(in: folder)) { try? FileManager.default.removeItem(at: folder) }
         }
     }
 
     /// A session you ended, or that exited, is not reopened. Its conversation is still remembered.
     func rememberSessions() {
         var next = memory
-        let open = sessions.values.filter { $0.isRunning || ($0.exitCode == nil && $0.startError == nil) }
+        let open = sessions.values.filter { SessionMemory.stillOpen(isRunning: $0.isRunning, exitCode: $0.exitCode) }
         next.open = open.map { SessionMemory.Open(project: $0.projectID, spawn: $0.spawn, token: $0.voiceToken) }.sorted { $0.key < $1.key }
         next.visible = visible
         for session in open { if let id = session.conversation { next.conversations[session.key] = id } }
@@ -444,6 +483,14 @@ final class AppModel {
     func restart(_ key: String, fresh: Bool) {
         let project = sessions[key]?.projectID ?? key
         let spawn = sessions[key]?.spawn
+        // Not attached does not mean not running. Resuming a session that is still going is attaching to it.
+        if let current = sessions[key], !current.isRunning, SessionHost.isAlive(socket: SessionHost.socket(in: current.channel.folder)) {
+            if !fresh, let tools {
+                launch(current, tools: tools)
+                return
+            }
+            current.end()
+        }
         if sessions[key]?.isRunning == true { sessions[key]?.end() }
         sessions[key]?.channel.remove()
         if fresh && spawn == nil { memory.conversations[key] = nil }
@@ -673,6 +720,30 @@ final class AppModel {
                 self.refresh(project)
             }
         }
+    }
+
+    func completeGoal(_ goal: Snapshot.Goal, evidence: String, in project: String) {
+        runCLI(["goal", "done", goal.id, "--evidence", evidence, "--user-said", "Marked complete in the Genlock app"],
+               in: project, failure: "Could not complete it")
+    }
+
+    func reopenGoal(_ goal: Snapshot.Goal, in project: String) {
+        runCLI(["goal", "reopen", goal.id, "--user-said", "Reopened in the Genlock app"], in: project, failure: "Could not reopen it")
+    }
+
+    /// Celebrates each goal once, whoever finished it and even if the app was closed at the time.
+    private func noteFinishedGoals(_ snap: Snapshot, in id: String) {
+        guard snap.initialized else { return }
+        var saved = UserDefaults.standard.dictionary(forKey: "celebratedGoals") as? [String: [String]] ?? [:]
+        let keys = GoalCompletion.keys(snap.goals)
+        let seen = saved[id].map(Set.init)
+        guard seen != keys else { return }
+        for goal in GoalCompletion.newlyFinished(snap.goals, seen: seen) {
+            let project = store.project(id)
+            CelebrationPresenter.show(Celebration(goal: goal, project: project?.name ?? URL(fileURLWithPath: id).lastPathComponent, tier: project?.tier ?? .soon))
+        }
+        saved[id] = Array(keys)
+        UserDefaults.standard.set(saved, forKey: "celebratedGoals")
     }
 
     func markReviewed(_ review: Snapshot.Review, in id: String) {

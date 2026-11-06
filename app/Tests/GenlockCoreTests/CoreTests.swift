@@ -134,7 +134,7 @@ final class CoreTests: XCTestCase {
         var none = tools
         none.genlockArgv = nil
         XCTAssertEqual(GenlockCLI.snapshot(of: repo, tools: none), .failure(.genlockMissing))
-        XCTAssertTrue(SnapshotError.genlockMissing.description.contains("npm install -g"))
+        XCTAssertFalse(SnapshotError.genlockMissing.description.contains("npm"), "the app carries genlock, so nobody is told to install it")
 
         XCTAssertEqual(GenlockCLI.snapshot(of: repo + "/gone", tools: tools), .failure(.folderMissing))
 
@@ -1056,6 +1056,88 @@ final class CoreTests: XCTestCase {
         XCTAssertNotNil(VoiceOption.upgradeHint(for: ava))
         XCTAssertNotNil(VoiceOption.upgradeHint(for: samantha))
         XCTAssertNil(VoiceOption.upgradeHint(for: avaPremium))
+    }
+
+    func testTheAppPrefersTheGenlockItCarries() { // G2
+        let env = ToolEnvironment.resolve(base: ["PATH": "/usr/bin:/bin"], shell: "/nonexistent", bundled: "/Own.app/Contents/Resources/genlock/run/genlock")
+        XCTAssertEqual(env.genlockArgv, ["/Own.app/Contents/Resources/genlock/run/genlock"])
+        XCTAssertTrue(env.environment["PATH"]!.hasPrefix("/Own.app/Contents/Resources/genlock/run:"), "agents in its sessions get the same one")
+        let tested = ToolEnvironment.resolve(base: ["PATH": "/usr/bin:/bin", "GENLOCK_APP_CLI": "/x/genlock"], shell: "/nonexistent", bundled: "/Own.app/genlock")
+        XCTAssertEqual(tested.genlockArgv, ["/x/genlock"], "an explicit override still wins")
+    }
+
+    func testEachSessionSeesItsOwnWork() throws { // S26
+        func ticket(_ id: String, _ owner: String, _ status: String, _ rank: Int, goal: String) -> String {
+            #"{"rank":\#(rank),"id":"\#(id)","title":"\#(id) title","status":"\#(status)","goal":"\#(goal)","owner":"\#(owner)","created":"2026-01-01T00:00:00Z","updated":"2026-01-01T00:00:00Z","summary":"none","requirements":[],"hazards":[],"forbids":[],"decisions":[],"refs":[],"log":[]}"#
+        }
+        let real = try XCTUnwrap(GenlockCLI.snapshot(of: repo, tools: tools).get())
+        var s = real
+        s.goals = [finishedGoal("G-MINE1", at: nil, status: "active"), finishedGoal("G-OTHER", at: nil, status: "active")]
+        s.currentGoal = "G-OTHER"
+        s.openTickets = ["T-A", "T-B", "T-C", "T-D"]
+        let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase
+        s.tickets = try [ticket("T-A", "one", "open", 1, goal: "G-MINE1"), ticket("T-B", "one", "in_progress", 2, goal: "G-MINE1"),
+                         ticket("T-C", "two", "in_progress", 3, goal: "G-OTHER"), ticket("T-D", "gone", "open", 4, goal: "G-OTHER")]
+            .map { try d.decode(Snapshot.Ticket.self, from: Data($0.utf8)) }
+        let one = s.sessionFocus(agents: ["one"])
+        XCTAssertEqual(one.mine.map(\.id), ["T-B", "T-A"], "what is under way comes first, whatever its rank")
+        XCTAssertEqual(one.goal?.id, "G-MINE1", "its own goal, not the project's latest")
+        XCTAssertEqual(s.sessionFocus(agents: ["two"]).working?.id, "T-C", "two panes, two answers")
+        XCTAssertEqual(s.sessionFocus(agents: ["three"], ticket: "T-D").working?.id, "T-D", "a spin-off's ticket is its own before its agent takes it")
+        let none = s.sessionFocus(agents: ["nobody"])
+        XCTAssertNil(none.working)
+        XCTAssertEqual(none.goal?.id, "G-OTHER", "with nothing of its own it shows the project's goal")
+    }
+
+    func testOnlyASessionThatEndedCountsAsClosed() { // S25
+        XCTAssertTrue(SessionMemory.stillOpen(isRunning: true, exitCode: nil))
+        XCTAssertTrue(SessionMemory.stillOpen(isRunning: false, exitCode: nil), "could not start or reach it yet, which does not make it over")
+        XCTAssertFalse(SessionMemory.stillOpen(isRunning: false, exitCode: 0))
+    }
+
+    func testASessionSaysWhoseItIs() throws { // S25
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let channel = VoiceChannel(session: "tok", base: base)
+        XCTAssertNil(channel.owner)
+        try channel.prepare()
+        channel.recordOwner(SessionMemory.Open(project: "/p", token: "tok"))
+        XCTAssertEqual(channel.owner, SessionMemory.Open(project: "/p", token: "tok"))
+    }
+
+    func testABuildBeforeALateTouchIsStillOffered() { // the stamp is exact, so this order holds
+        XCTAssertEqual(AppUpdate.next(running: 100, available: 951, newestSource: 931, lastAttempt: 951, now: 1200), .offerRestart)
+    }
+
+    private func finishedGoal(_ id: String = "G-AAAAA", at: String? = "2026-11-06T10:00:00.000Z", status: String = "done", done: Int = 12, total: Int = 12, created: String? = "2026-10-28T10:00:00.000Z", next: [Snapshot.NextThing] = []) -> Snapshot.Goal {
+        Snapshot.Goal(id: id, title: "Ship it", status: status, created: created, completedAt: at, progress: .init(done: done, total: total, blocked: 0), next: next, forbids: [], decisions: [], refs: [])
+    }
+
+    func testEachFinishedGoalIsCelebratedOnce() { // C3
+        let goal = finishedGoal()
+        XCTAssertEqual(GoalCompletion.newlyFinished([goal], seen: nil), [], "a project seen for the first time has history, not news")
+        XCTAssertEqual(GoalCompletion.newlyFinished([goal], seen: []), [goal], "finished since last look, even with the app closed")
+        XCTAssertEqual(GoalCompletion.newlyFinished([goal], seen: GoalCompletion.keys([goal])), [], "not twice")
+        XCTAssertEqual(GoalCompletion.newlyFinished([finishedGoal(at: nil, status: "active")], seen: []), [], "active is not finished")
+        let again = finishedGoal(at: "2026-11-07T10:00:00.000Z")
+        XCTAssertEqual(GoalCompletion.newlyFinished([again], seen: GoalCompletion.keys([goal])), [again], "reopened and finished again is new")
+        let earlier = finishedGoal("G-BBBBB", at: "2026-11-01T10:00:00.000Z")
+        XCTAssertEqual(GoalCompletion.newlyFinished([goal, earlier], seen: []).map(\.id), ["G-BBBBB", "G-AAAAA"], "in the order they happened")
+    }
+
+    func testAFinishedGoalSaysWhatItTook() { // C2
+        XCTAssertEqual(GoalCompletion.summary(finishedGoal()), "12 tasks over 9 days")
+        XCTAssertEqual(GoalCompletion.summary(finishedGoal(done: 1, created: "2026-11-06T09:00:00.000Z")), "1 task")
+        XCTAssertEqual(GoalCompletion.summary(finishedGoal(done: 0, total: 0, created: nil)), "")
+        XCTAssertEqual(GoalCompletion.defaultEvidence(finishedGoal()), "12 of 12 tasks done")
+    }
+
+    func testAGoalLooksReachedOnlyWhenNothingIsLeft() { // C1
+        let next = Snapshot.NextThing(n: 1, text: "more", due: nil, daysUntil: nil)
+        XCTAssertTrue(GoalCompletion.looksReached(finishedGoal(at: nil, status: "active")))
+        XCTAssertFalse(GoalCompletion.looksReached(finishedGoal(at: nil, status: "active", done: 2, total: 3)))
+        XCTAssertFalse(GoalCompletion.looksReached(finishedGoal(at: nil, status: "active", done: 0, total: 0)))
+        XCTAssertFalse(GoalCompletion.looksReached(finishedGoal(at: nil, status: "active", next: [next])))
     }
 
     func testRulesTellAgentsToRegisterReviews() throws { // R6

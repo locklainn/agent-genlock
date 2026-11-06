@@ -22,7 +22,7 @@ enum Driver {
 
     private static var pasteResults: [Bool] = []
 
-    private static var window: NSWindow? { NSApp.windows.first { $0.isVisible && $0.contentView != nil } }
+    private static var window: NSWindow? { NSApp.windows.first { $0.isVisible && $0.contentView != nil && !($0 is CelebrationPanel) } }
 
     private static func projectID(named name: String) -> String? {
         AppModel.shared.store.projects.first { $0.name == name }?.id
@@ -115,6 +115,15 @@ enum Driver {
         if let args = step["rank"] as? [String], let id = projectID(named: args[0]), let place = Int(args[2]) { model.rank(args[1], to: place, in: id) }
         if let args = step["due"] as? [String], let id = projectID(named: args[0]) { model.setDue(args[1], to: args[2].isEmpty ? nil : args[2], in: id) }
         if let text = step["speakSilently"] as? String { model.voice.speak(text, volume: 0) }
+        if let args = step["askToComplete"] as? [String], let id = projectID(named: args[0]),
+           let goal = model.state(for: id).snapshot?.goal(args[1]) { model.completingGoal = CompletingGoal(goal: goal, projectID: id) }
+        if step["confirmComplete"] != nil, let c = model.completingGoal {
+            model.completeGoal(c.goal, evidence: GoalCompletion.defaultEvidence(c.goal), in: c.projectID)
+            model.completingGoal = nil
+        }
+        if let v = step["showCompleted"] as? Bool { model.showingCompleted = v }
+        if step["clickCelebration"] != nil { CelebrationPresenter.clickForTest() }
+        if let path = step["celebrationCapture"] as? String { CelebrationPresenter.capture(to: path) }
         if let cmd = step["shell"] as? String {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -126,7 +135,8 @@ enum Driver {
             terminalImage(of: view, to: args[1])
         }
         if let args = step["writeState"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id] {
-            let body = #"{"state":"\#(args[1])","message":"\#(args[2])","at":\#(Date().timeIntervalSince1970 * 1000)}"#
+            let session = args.count > 3 ? #","session":"\#(args[3])""# : ""
+            let body = #"{"state":"\#(args[1])","message":"\#(args[2])","at":\#(Date().timeIntervalSince1970 * 1000)"# + session + "}"
             try? body.write(to: s.channel.folder.appendingPathComponent("state.json"), atomically: true, encoding: .utf8)
         }
         if let name = step["notificationClick"] as? String, let id = projectID(named: name) { model.showSession(id) }
@@ -222,6 +232,13 @@ enum Driver {
             "voice": model.voice.chosenVoice?.name ?? "",
             "pasteResults": pasteResults,
             "assistantName": model.assistantName,
+            "genlockTool": model.tools?.genlockArgv ?? [],
+            "sessionPathStart": model.tools?.environment["PATH"]?.split(separator: ":").first.map(String.init) ?? "",
+            "celebrating": CelebrationPresenter.current?.title ?? "",
+            "celebrationsShown": CelebrationPresenter.shownTitles,
+            "celebrationFrame": CelebrationPresenter.frameDescription,
+            "screenFrame": "\(NSScreen.main?.frame ?? .zero)",
+            "completedGoals": model.completedGoalCount,
             "voiceReached": model.voice.reached,
             "replyTo": model.voice.replyTo.map { URL(fileURLWithPath: $0.session).lastPathComponent } ?? "",
             "focused": model.focusedProject.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",

@@ -6,6 +6,8 @@ import SwiftUI
 struct InspectorView: View {
     @Environment(AppModel.self) private var model
     let projectID: String
+    /// The session it sits beside, whose work it puts first.
+    var sessionKey: String?
 
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
 
@@ -39,12 +41,40 @@ struct InspectorView: View {
     }
 
     @ViewBuilder private func content(_ s: Snapshot, changed: Set<String>) -> some View {
-        let current = s.goal(s.currentGoal)
-        let others = s.rankedGoals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != s.currentGoal }
+        let session = sessionKey.flatMap { model.sessions[$0] }
+        let own = session?.focus(in: s) ?? Snapshot.SessionFocus(goal: s.goal(s.currentGoal), mine: [])
+        let mine = Set(own.mine.map(\.id))
+        let current = own.goal
+        let others = s.rankedGoals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != current?.id }
         let focus = s.taskFocus()
         let open = s.rankedTasks
         let reviews = s.openReviews
+        let elsewhere = focus.active.filter { !mine.contains($0.id) }
 
+        InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
+            if let current {
+                RankedRow(id: current.id, title: current.title, rank: current.rank, due: current.due, daysUntil: current.daysUntil, projectID: projectID) {
+                    GoalBlock(goal: current, projectID: projectID, changed: changed, tier: tier)
+                }
+            } else {
+                Text(s.goalsDeclined == true ? "No goals for this project." : "None yet. Claude will pick one up as you work.")
+                    .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
+            }
+        }
+        if !own.mine.isEmpty {
+            InspectorCard(title: "This session", symbol: "bolt.fill", count: own.mine.count, color: Theme.tint(tier)[0]) {
+                ForEach(own.mine) { t in
+                    let row = RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
+                        TaskRow(ticket: t, changed: changed.contains(t.id))
+                    }
+                    if t.id == own.working?.id {
+                        row.padding(6).modifier(WorkingGlow(active: session?.phase == "working", tier: tier))
+                    } else {
+                        row
+                    }
+                }
+            }
+        }
         if !reviews.isEmpty {
             InspectorCard(title: "To review", symbol: "doc.text.magnifyingglass", count: reviews.count, color: Theme.cyan) {
                 ForEach(reviews) { ReviewRow(review: $0, projectID: projectID, root: s.root, changed: changed.contains($0.id)) }
@@ -55,21 +85,11 @@ struct InspectorView: View {
                 WaitingList(questions: s.questionsForUser, changed: changed)
             }
         }
-        InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
-            if let current {
-                RankedRow(id: current.id, title: current.title, rank: current.rank, due: current.due, daysUntil: current.daysUntil, projectID: projectID) {
-                    GoalBlock(goal: current, changed: changed, tier: tier)
-                }
-            } else {
-                Text(s.goalsDeclined == true ? "No goals for this project." : "None yet. Claude will pick one up as you work.")
-                    .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
-            }
-        }
-        InspectorCard(title: "Now", symbol: "bolt.fill", count: focus.active.isEmpty ? nil : focus.active.count, color: Theme.cyan) {
-            if focus.active.isEmpty && focus.justFinished.isEmpty {
+        InspectorCard(title: own.mine.isEmpty ? "Now" : "Rest of the project", symbol: own.mine.isEmpty ? "bolt.fill" : "square.stack.3d.up", count: elsewhere.isEmpty ? nil : elsewhere.count, color: Theme.cyan) {
+            if elsewhere.isEmpty && focus.justFinished.isEmpty {
                 Text(open.isEmpty ? "Nothing going on." : "Nothing going on right now.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(focus.active) { t in
+            ForEach(elsewhere) { t in
                 RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
                     TaskRow(ticket: t, changed: changed.contains(t.id))
                 }
@@ -92,8 +112,11 @@ struct InspectorView: View {
                 }
             }
         }
-        if !focus.backlog.isEmpty || !others.isEmpty {
-            BacklogCard(tasks: focus.backlog, goals: others, changed: changed, tier: tier, projectID: projectID)
+        if focus.backlog.contains(where: { !mine.contains($0.id) }) || !others.isEmpty {
+            BacklogCard(tasks: focus.backlog.filter { !mine.contains($0.id) }, goals: others, changed: changed, tier: tier, projectID: projectID)
+        }
+        if !s.completedGoals.isEmpty {
+            CompletedCard(goals: s.completedGoals, projectID: projectID)
         }
     }
 }
@@ -235,7 +258,7 @@ struct BacklogCard: View {
                 }
                 ForEach(goals) { g in
                     RankedRow(id: g.id, title: g.title, rank: g.rank, due: g.due, daysUntil: g.daysUntil, projectID: projectID) {
-                        OtherGoal(goal: g, changed: changed, tier: tier)
+                        OtherGoal(goal: g, projectID: projectID, changed: changed, tier: tier)
                     }
                 }
             }
@@ -301,6 +324,7 @@ struct InspectorCard<Content: View>: View {
 /// A goal at a glance: its name and what is next. Everything else is a click away.
 struct GoalBlock: View {
     let goal: Snapshot.Goal
+    let projectID: String
     let changed: Set<String>
     let tier: Tier
     @State private var expanded = false
@@ -332,7 +356,12 @@ struct GoalBlock: View {
             if goal.progress.blocked > 0 {
                 Pill(text: "\(goal.progress.blocked) blocked", symbol: "exclamationmark.octagon.fill", color: Theme.red)
             }
-            if expanded { GoalDetail(goal: goal, changed: changed, tier: tier) }
+            if expanded {
+                GoalDetail(goal: goal, changed: changed, tier: tier)
+                CompleteGoalButton(goal: goal, projectID: projectID)
+            } else if GoalCompletion.looksReached(goal) {
+                CompleteGoalButton(goal: goal, projectID: projectID)
+            }
         }
     }
 }
@@ -371,6 +400,7 @@ struct GoalDetail: View {
 
 struct OtherGoal: View {
     let goal: Snapshot.Goal
+    let projectID: String
     let changed: Set<String>
     let tier: Tier
     @State private var expanded = false
@@ -388,7 +418,10 @@ struct OtherGoal: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if expanded { GoalDetail(goal: goal, changed: changed, tier: tier).padding(.leading, 12) }
+            if expanded {
+                GoalDetail(goal: goal, changed: changed, tier: tier).padding(.leading, 12)
+                CompleteGoalButton(goal: goal, projectID: projectID).padding(.leading, 12)
+            }
         }
     }
 }
