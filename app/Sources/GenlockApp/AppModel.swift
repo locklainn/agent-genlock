@@ -281,6 +281,7 @@ final class AppModel {
     var alertCount: Int { needingAttention.count + voice.waitingReplies }
 
     func hearReplies() { voice.hearReplies(from: Array(sessions.values)) }
+    func dismissReplies() { voice.dismissReplies(from: Array(sessions.values)) }
 
     var needingAttention: [TerminalSession] {
         sessions.values.filter { $0.attention != nil }.sorted { $0.key < $1.key }

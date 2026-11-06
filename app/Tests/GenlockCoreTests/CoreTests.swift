@@ -613,6 +613,21 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(focus.backlog.map(\.id), ["old-top", "old-bottom"], "the rest, still in rank order")
     }
 
+    func testHeadingsAreShort() { // S24
+        XCTAssertEqual(Snapshot.heading(short: "site-stays-current", title: "The site stays current by itself: every refresh commits"), "Site stays current")
+        XCTAssertEqual(Snapshot.heading(short: nil, title: "The long title"), "The long title", "an older genlock has no short names")
+        XCTAssertEqual(Snapshot.heading(short: "", title: "The long title"), "The long title")
+    }
+
+    func testEscClosesWhatIsShowing() { // V15
+        typealias V = VoiceMachine
+        XCTAssertEqual(V.escapeAction(state: .listening, isSpeaking: false, waiting: 1, hasReply: true), .cancelDictation)
+        XCTAssertEqual(V.escapeAction(state: .idle, isSpeaking: true, waiting: 1, hasReply: true), .stopSpeaking)
+        XCTAssertEqual(V.escapeAction(state: .idle, isSpeaking: false, waiting: 1, hasReply: true), .dismissWaiting)
+        XCTAssertEqual(V.escapeAction(state: .idle, isSpeaking: false, waiting: 0, hasReply: true), .dismissReply)
+        XCTAssertEqual(V.escapeAction(state: .idle, isSpeaking: false, waiting: 0, hasReply: false), .none, "otherwise it is the terminal's")
+    }
+
     func testPassedMessagesArriveOnce() throws { // A1
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-tell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: base) }

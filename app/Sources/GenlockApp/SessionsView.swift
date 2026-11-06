@@ -209,7 +209,7 @@ struct PaneView: View {
                 Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
                 Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             } else if let goal = snap?.goal(snap?.currentGoal) {
-                Text(goal.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }

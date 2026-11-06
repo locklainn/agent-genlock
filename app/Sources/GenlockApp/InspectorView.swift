@@ -110,6 +110,7 @@ struct RankedRow<Content: View>: View {
     let projectID: String
     @ViewBuilder let content: Content
     @State private var targeted = false
+    @State private var hovering = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
@@ -127,10 +128,11 @@ struct RankedRow<Content: View>: View {
             }
             VStack(alignment: .leading, spacing: 4) {
                 content
-                DueControl(id: id, due: due, daysUntil: daysUntil, projectID: projectID)
+                DueControl(id: id, due: due, daysUntil: daysUntil, projectID: projectID, offerAdding: hovering)
             }
             Spacer(minLength: 0)
         }
+        .onHover { hovering = $0 }
         .overlay(alignment: .top) {
             if targeted { Rectangle().fill(Theme.cyan).frame(height: 2).offset(y: -4) }
         }
@@ -149,6 +151,8 @@ struct DueControl: View {
     let due: String?
     let daysUntil: Int?
     let projectID: String
+    /// Without a date this stays out of the way until the row is hovered.
+    var offerAdding = true
     @State private var picking = false
     @State private var day = Date()
 
@@ -159,7 +163,11 @@ struct DueControl: View {
         return f
     }()
 
-    var body: some View {
+    @ViewBuilder var body: some View {
+        if due != nil || offerAdding || picking { control }
+    }
+
+    private var control: some View {
         Button {
             day = due.flatMap { Self.format.date(from: $0) } ?? Date()
             picking = true
@@ -290,41 +298,68 @@ struct InspectorCard<Content: View>: View {
     }
 }
 
+/// A goal at a glance: its name and what is next. Everything else is a click away.
 struct GoalBlock: View {
+    let goal: Snapshot.Goal
+    let changed: Set<String>
+    let tier: Tier
+    @State private var expanded = false
+
+    private var heading: String { Snapshot.heading(short: goal.short, title: goal.title) }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { withAnimation(.spring(duration: 0.28)) { expanded.toggle() } } label: {
+                HStack(alignment: .center, spacing: 10) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(heading).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
+                            .multilineTextAlignment(.leading).lineLimit(2)
+                        if !expanded, let next = goal.next.first {
+                            Text(next.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                        }
+                    }
+                    Spacer(minLength: 0)
+                    if goal.progress.total > 0 {
+                        ProgressRing(done: goal.progress.done, total: goal.progress.total, colors: Theme.tint(tier), size: 34)
+                    }
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(expanded ? "Show less" : "Show details")
+            .accessibilityHint(expanded ? "Shows less" : "Shows details")
+            .livePulse(changed.contains(goal.id) || goal.next.contains { changed.contains("\(goal.id)/next/\($0.text)") })
+            if goal.progress.blocked > 0 {
+                Pill(text: "\(goal.progress.blocked) blocked", symbol: "exclamationmark.octagon.fill", color: Theme.red)
+            }
+            if expanded { GoalDetail(goal: goal, changed: changed, tier: tier) }
+        }
+    }
+}
+
+/// The full wording of a goal and everything next on it.
+struct GoalDetail: View {
     let goal: Snapshot.Goal
     let changed: Set<String>
     let tier: Tier
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .top, spacing: 10) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(goal.title).font(.system(size: 15, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if goal.progress.blocked > 0 {
-                        Pill(text: "\(goal.progress.blocked) blocked", symbol: "exclamationmark.octagon.fill", color: Theme.red)
-                    }
-                    if let waiting = goal.waitingOn, !waiting.isEmpty {
-                        Text("Waiting on: \(waiting)").font(.system(size: 11.5)).foregroundStyle(Theme.amber)
-                    }
-                }
-                Spacer(minLength: 0)
-                if goal.progress.total > 0 {
-                    ProgressRing(done: goal.progress.done, total: goal.progress.total, colors: Theme.tint(tier), size: 40)
-                }
+        VStack(alignment: .leading, spacing: 8) {
+            Text(goal.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            if let waiting = goal.waitingOn, !waiting.isEmpty {
+                Text("Waiting on: \(waiting)").font(.system(size: 11.5)).foregroundStyle(Theme.amber).fixedSize(horizontal: false, vertical: true)
             }
-            .livePulse(changed.contains(goal.id))
             ForEach(goal.next) { n in
-                HStack(alignment: .top, spacing: 8) {
-                    Text("\(n.n)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(.white)
-                        .frame(width: 18, height: 18)
+                HStack(alignment: .top, spacing: 7) {
+                    Text("\(n.n)").font(.system(size: 9.5, weight: .bold, design: .rounded)).foregroundStyle(.white)
+                        .frame(width: 15, height: 15)
                         .background(n.n == 1 ? AnyShapeStyle(Theme.gradient(tier)) : AnyShapeStyle(Color.white.opacity(0.12)), in: Circle())
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(n.text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary.opacity(0.92))
+                        Text(n.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
                             .fixedSize(horizontal: false, vertical: true)
                         if let days = n.daysUntil {
                             let d = CardSummary.Deadline(text: n.text, daysUntil: days)
-                            Text(d.label).font(.system(size: 11, weight: .semibold)).foregroundStyle(days <= 1 ? Theme.red : Theme.amber)
+                            Text(d.label).font(.system(size: 10.5, weight: .semibold)).foregroundStyle(days <= 1 ? Theme.red : Theme.amber)
                         }
                     }
                 }
@@ -346,16 +381,19 @@ struct OtherGoal: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    Text(goal.title).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textPrimary).multilineTextAlignment(.leading)
+                    Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                        .multilineTextAlignment(.leading).lineLimit(2)
                     if goal.status == "parked" { Text("parked").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            if expanded { GoalBlock(goal: goal, changed: changed, tier: tier).padding(.leading, 12) }
+            if expanded { GoalDetail(goal: goal, changed: changed, tier: tier).padding(.leading, 12) }
         }
     }
 }
 
+/// A task at a glance: its name, and one line of where it stands. The rest is a click away.
 struct TaskRow: View {
     let ticket: Snapshot.Ticket
     let changed: Bool
@@ -370,31 +408,43 @@ struct TaskRow: View {
                         .shadow(color: ticket.status == "in_progress" ? symbol.color : .clear, radius: 5)
                         .accessibilityLabel(Status.label(ticket.status))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(ticket.title).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                            .multilineTextAlignment(.leading).fixedSize(horizontal: false, vertical: true)
-                        Text(ticket.summary == "none" ? "Requirements not written yet" : ticket.summary)
-                            .font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                        Text(Snapshot.heading(short: ticket.short, title: ticket.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                            .multilineTextAlignment(.leading).lineLimit(2)
+                        if !expanded, let line = ticket.blockedReason ?? ticket.latest?.text {
+                            Text(line).font(.system(size: 11)).foregroundStyle(ticket.blockedReason != nil ? Theme.red : Theme.textSecondary).lineLimit(1)
+                        }
                     }
+                    Spacer(minLength: 0)
                 }
+                .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .accessibilityHint("Shows requirements")
-            if let blocked = ticket.blockedReason {
-                Text(blocked).font(.system(size: 11.5)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
-            }
-            if let latest = ticket.latest {
-                Text(latest.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
-            }
-            ForEach(ticket.hazards.indices, id: \.self) { i in
-                Label(ticket.hazards[i].what, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11.5)).foregroundStyle(Theme.amber).fixedSize(horizontal: false, vertical: true).padding(.leading, 20)
+            .accessibilityHint(expanded ? "Shows less" : "Shows details")
+            if !expanded && !ticket.hazards.isEmpty {
+                Label(ticket.hazards.count == 1 ? "1 hazard" : "\(ticket.hazards.count) hazards", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(Theme.amber).padding(.leading, 20)
             }
             if expanded {
-                ForEach(ticket.requirements) { r in
-                    HStack(alignment: .top, spacing: 6) {
-                        Image(systemName: r.state == "met" ? "checkmark.square.fill" : r.state == "failed" ? "xmark.square.fill" : r.state == "waived" ? "minus.square" : "square")
-                            .font(.system(size: 11)).foregroundStyle(r.state == "met" ? Theme.green : r.state == "failed" ? Theme.red : Theme.textTertiary)
-                        Text(r.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                VStack(alignment: .leading, spacing: 5) {
+                    Text(ticket.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    Text(ticket.summary == "none" ? "Requirements not written yet" : ticket.summary)
+                        .font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                    if let blocked = ticket.blockedReason {
+                        Text(blocked).font(.system(size: 11.5)).foregroundStyle(Theme.red).fixedSize(horizontal: false, vertical: true)
+                    }
+                    if let latest = ticket.latest {
+                        Text(latest.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(ticket.hazards.indices, id: \.self) { i in
+                        Label(ticket.hazards[i].what, systemImage: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11.5)).foregroundStyle(Theme.amber).fixedSize(horizontal: false, vertical: true)
+                    }
+                    ForEach(ticket.requirements) { r in
+                        HStack(alignment: .top, spacing: 6) {
+                            Image(systemName: r.state == "met" ? "checkmark.square.fill" : r.state == "failed" ? "xmark.square.fill" : r.state == "waived" ? "minus.square" : "square")
+                                .font(.system(size: 11)).foregroundStyle(r.state == "met" ? Theme.green : r.state == "failed" ? Theme.red : Theme.textTertiary)
+                            Text(r.text).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                        }
                     }
                 }
                 .padding(.leading, 20)

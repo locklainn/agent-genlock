@@ -102,6 +102,8 @@ enum Driver {
         if step["restartToUpdate"] != nil { model.updater.restart() }
         if step["openAssistant"] != nil { model.openAssistant() }
         if step["pressRightArrow"] != nil { postKey(.keyDown) }
+        if step["dismissUpdate"] != nil { model.dismissReplies() }
+        if let p = step["clickAt"] as? [Double] { postClick(at: CGRect(x: p[0], y: p[1], width: 0, height: 0), shift: false) }
         if let text = step["sendReply"] as? String { model.voice.sendReply(text) }
         if step["talkKey"] != nil { model.pressVoice() }
         if step["escapeKey"] != nil, let w = window, let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) { NSApp.postEvent(e, atStart: false) }

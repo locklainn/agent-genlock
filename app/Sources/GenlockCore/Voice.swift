@@ -43,6 +43,16 @@ public struct VoiceMachine: Equatable {
 
     public enum TapAction: Equatable { case hear, stop, replay, none }
 
+    /// What Esc closes, nearest first. With nothing of voice's showing it belongs to the terminal.
+    public static func escapeAction(state: State, isSpeaking: Bool, waiting: Int, hasReply: Bool) -> EscapeAction {
+        if state != .idle { return .cancelDictation }
+        if isSpeaking { return .stopSpeaking }
+        if waiting > 0 { return .dismissWaiting }
+        return hasReply ? .dismissReply : .none
+    }
+
+    public enum EscapeAction: Equatable { case cancelDictation, stopSpeaking, dismissWaiting, dismissReply, none }
+
     /// The notice for replies waiting: short enough to take in at a glance.
     public static func updateNotice(from labels: [String], count: Int) -> String {
         count > 1 ? "\(count) updates" : "\(labels.first ?? "Agent") update"

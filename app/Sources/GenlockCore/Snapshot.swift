@@ -23,6 +23,7 @@ public struct Snapshot: Decodable, Equatable {
         public var rank: Int?
         public var due: String?
         public var daysUntil: Int?
+        public var short: String?
         public var id: String
         public var title: String
         public var status: String
@@ -72,6 +73,7 @@ public struct Snapshot: Decodable, Equatable {
         public var rank: Int?
         public var due: String?
         public var daysUntil: Int?
+        public var short: String?
         public var id: String
         public var title: String
         public var status: String
@@ -153,6 +155,13 @@ public struct Snapshot: Decodable, Equatable {
     public func goal(_ id: String?) -> Goal? { goals.first { $0.id == id } }
     public func ticket(_ id: String?) -> Ticket? { tickets.first { $0.id == id } }
     public var activeTickets: [Ticket] { tickets.filter { openTickets.contains($0.id) } }
+
+    /// A heading to read at a glance: the short name in plain words, or the title if it has none.
+    public static func heading(short: String?, title: String) -> String {
+        guard let short, !short.isEmpty else { return title }
+        let words = short.replacingOccurrences(of: "-", with: " ")
+        return words.prefix(1).uppercased() + words.dropFirst()
+    }
 
     /// What the panel shows by default: what is going on now, with the rest a level down.
     public struct TaskFocus: Equatable {

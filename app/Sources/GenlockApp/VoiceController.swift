@@ -264,18 +264,27 @@ final class VoiceController: NSObject {
 
     /// You said yes: read everything waiting, oldest first within each session.
     func hearReplies(from sessions: [TerminalSession]) {
+        for item in takeWaiting(from: sessions) { speak(item.text, volume: Driver.isActive ? 0 : 1, from: item.from) }
+    }
+
+    /// You would rather not hear it now. It goes quiet, and right Command can still replay it.
+    func dismissReplies(from sessions: [TerminalSession]) {
+        _ = takeWaiting(from: sessions)
+    }
+
+    private func takeWaiting(from sessions: [TerminalSession]) -> [(text: String, from: String)] {
         let open = sessions.count
-        let heard = sessions.flatMap { session in
+        let waiting = sessions.flatMap { session in
             session.channel.takeMessages().map { (text: VoiceChannel.spoken($0, project: session.label, sessionsOpen: open), from: session.key) }
         }
         waitingReplies = 0
         waitingFrom = []
-        guard !heard.isEmpty else { return }
-        lastHeard = heard.map(\.text)
-        lastHeardFrom = heard.map(\.from)
+        guard !waiting.isEmpty else { return [] }
+        lastHeard = waiting.map(\.text)
+        lastHeardFrom = waiting.map(\.from)
         UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
         UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
-        for item in heard { speak(item.text, volume: Driver.isActive ? 0 : 1, from: item.from) }
+        return waiting
     }
 
     func replayLast() {

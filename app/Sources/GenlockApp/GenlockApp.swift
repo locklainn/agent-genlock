@@ -119,7 +119,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                 return nil
             }
             if event.keyCode == 53 { // Esc
-                if model.voice.machine.state != .idle { model.voice.cancel(); return nil }
+                switch VoiceMachine.escapeAction(state: model.voice.machine.state, isSpeaking: model.voice.isSpeaking,
+                                                 waiting: model.voice.waitingReplies, hasReply: model.voice.replyTo != nil) {
+                case .cancelDictation: model.voice.cancel(); return nil
+                case .stopSpeaking: model.voice.stopSpeaking(); return nil
+                case .dismissWaiting: model.dismissReplies(); return nil
+                case .dismissReply: model.voice.dismissReply(); return nil
+                case .none: break
+                }
                 if model.route == .dashboard && model.markedCount > 0 { model.clearMarks(); return nil }
             }
             if model.route == .dashboard, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
@@ -246,7 +253,7 @@ struct ReplyBanner: View {
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(Color.white.opacity(0.07), in: Capsule())
                     .onSubmit { send() }
-                Text(voice.isSpeaking ? (voice.speedHeld ? "Faster" : "Hold → for faster") : "Right ⌘ to replay")
+                Text(voice.isSpeaking ? (voice.speedHeld ? "Faster" : "Esc to stop · Hold → for faster") : "Right ⌘ to replay · Esc to close")
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(voice.speedHeld ? Theme.cyan : Theme.textSecondary).fixedSize()
             }
         }
@@ -275,7 +282,7 @@ struct VoiceBanner: View {
                 .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
             Spacer(minLength: 8)
             VStack(alignment: .trailing, spacing: 2) {
-                Text("Right ⌘ to stop").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Text("Right ⌘ or Esc to stop").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
                 Text(voice.speedHeld ? "Faster" : "Hold → for faster").font(.system(size: 11)).foregroundStyle(voice.speedHeld ? Theme.cyan : Theme.textTertiary)
             }
             .fixedSize()
@@ -339,11 +346,15 @@ struct VoiceBanner: View {
                 Image(systemName: "bell.badge.fill").font(.system(size: 16)).foregroundStyle(Theme.cyan)
                 Text(VoiceMachine.updateNotice(from: voice.waitingFrom, count: voice.waitingReplies))
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
-                Text("Right ⌘ to hear").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary).fixedSize()
+                Text("Right ⌘ to hear · Esc to dismiss").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary).fixedSize()
                 Button { model.hearReplies() } label: { Image(systemName: "play.fill") }
                     .buttonStyle(IconButtonStyle())
                     .help("Hear it")
                     .accessibilityLabel("Hear the update")
+                Button { model.dismissReplies() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Dismiss without hearing it (Esc). Right ⌘ can still replay it.")
+                    .accessibilityLabel("Dismiss the update")
             }
             .padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
             .background(Color(hex: 0x14162A).opacity(0.97), in: Capsule())
