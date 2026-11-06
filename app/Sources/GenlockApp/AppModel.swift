@@ -273,6 +273,11 @@ final class AppModel {
 
     @ObservationIgnored var openMainWindow: (() -> Void)?
 
+    /// What the Dock and menu bar count: sessions that need you, and replies waiting to be heard.
+    var alertCount: Int { needingAttention.count + voice.waitingReplies }
+
+    func hearReplies() { voice.hearReplies(from: Array(sessions.values)) }
+
     var needingAttention: [TerminalSession] {
         sessions.values.filter { $0.attention != nil }.sorted { $0.key < $1.key }
     }
@@ -304,7 +309,7 @@ final class AppModel {
             }
             if result.notify, let attention = result.attention { Notifier.post(session: session, attention: attention) }
         }
-        let count = needingAttention.count
+        let count = alertCount
         NSApp.dockTile.badgeLabel = count > 0 ? "\(count)" : nil
     }
 

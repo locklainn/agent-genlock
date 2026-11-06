@@ -482,6 +482,36 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(CardSummary(s).deadline?.text, "A", "a task's own date counts, and the nearest wins")
     }
 
+    func testACleanTapOfRightCommandAsksForReplies() { // V15
+        typealias V = VoiceMachine
+        XCTAssertEqual(V.tapAction(waiting: 2, isSpeaking: false), .hear)
+        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: true), .stop)
+        XCTAssertEqual(V.tapAction(waiting: 1, isSpeaking: true), .stop, "stopping comes first")
+        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: false), .none, "otherwise an ordinary key")
+
+        var tap = CleanTap()
+        tap.down()
+        XCTAssertTrue(tap.up(), "pressed and released alone")
+        XCTAssertFalse(tap.up(), "only once")
+        tap.down()
+        tap.interrupted() // as in right Command + C
+        XCTAssertFalse(tap.up(), "a shortcut is not a tap")
+    }
+
+    func testRepliesWaitOnDiskUntilHeard() throws { // V15
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-wait-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let channel = VoiceChannel(session: "s", base: base)
+        try channel.prepare()
+        XCTAssertEqual(channel.waitingCount, 0)
+        try #"{"text":"one"}"#.write(to: channel.folder.appendingPathComponent("say-1.json"), atomically: true, encoding: .utf8)
+        try #"{"text":"two"}"#.write(to: channel.folder.appendingPathComponent("say-2.json"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(channel.waitingCount, 2, "counting does not use them up")
+        XCTAssertEqual(VoiceChannel(session: "s", base: base).waitingCount, 2, "a new app finds them")
+        XCTAssertEqual(channel.takeMessages(), ["one", "two"])
+        XCTAssertEqual(channel.waitingCount, 0)
+    }
+
     func testRevisionsReplaceTheCurrentUtterance() { // V13
         var t = VoiceTranscript()
         t.receive("Nothing was her", endsUtterance: false)

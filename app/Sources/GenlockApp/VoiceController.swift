@@ -12,6 +12,10 @@ final class VoiceController: NSObject {
     private(set) var isSpeaking = false
     /// The reply being read now, shown where your eyes already are.
     private(set) var speakingText: String?
+    /// Replies that have arrived and wait for you to ask for them.
+    private(set) var waitingReplies = 0
+    private(set) var waitingFrom: [String] = []
+    @ObservationIgnored private(set) var dings = 0
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
     private(set) var target: String?
@@ -213,14 +217,35 @@ final class VoiceController: NSObject {
 
     // MARK: Speaking
 
-    /// Called on a timer, to pick up anything agents have handed over.
+    /// Called on a timer. An agent never just starts talking, because you may not be there: its
+    /// reply waits, with a ding and a notice, until you ask for it.
     func collectReplies(from sessions: [TerminalSession]) {
+        guard speakReplies else {
+            for session in sessions { _ = session.channel.takeMessages() }
+            waitingReplies = 0
+            waitingFrom = []
+            return
+        }
+        let waiting = sessions.filter { $0.channel.waitingCount > 0 }
+        let total = waiting.reduce(0) { $0 + $1.channel.waitingCount }
+        if total > waitingReplies && machine.state == .idle {
+            dings += 1
+            if !Driver.isActive { NSSound(named: "Glass")?.play() }
+        }
+        waitingReplies = total
+        waitingFrom = waiting.map(\.label).sorted()
+    }
+
+    /// You said yes: read everything waiting, oldest first within each session.
+    func hearReplies(from sessions: [TerminalSession]) {
         let open = sessions.count
         for session in sessions {
-            for text in session.channel.takeMessages() where speakReplies {
-                speak(VoiceChannel.spoken(text, project: session.label, sessionsOpen: open))
+            for text in session.channel.takeMessages() {
+                speak(VoiceChannel.spoken(text, project: session.label, sessionsOpen: open), volume: Driver.isActive ? 0 : 1)
             }
         }
+        waitingReplies = 0
+        waitingFrom = []
     }
 
     /// AVSpeechSynthesizer queues on its own, so replies from several sessions never overlap.

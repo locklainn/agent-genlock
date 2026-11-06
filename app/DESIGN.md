@@ -187,7 +187,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | id | requirement | check |
 |---|---|---|
 | V1 | Pressing the mic button or tapping the right Option key starts listening to the focused pane; pressing either again sends what was said, as a message, with no further step | auto, eye |
-| V2 | While listening, the words appear live on screen. Right ⌘, right beside right Option, cancels without sending anything, as do Esc and a button on screen. Right ⌘ is an ordinary key otherwise | auto, drive, eye |
+| V2 | While listening, the words appear live on screen. Right ⌘, right beside right Option, cancels without sending anything, as do Esc and a button on screen. Right ⌘ is an ordinary key otherwise, apart from V15 | auto, drive, eye |
 | V3 | Saying nothing sends nothing | auto |
 | V4 | After a dictated message, the agent speaks a short version of its reply. It is told: only the important details, one to three spoken sentences, no paths, code or lists, and ask if it should go into more depth | drive |
 | V5 | If the agent tries to finish a dictated turn without speaking, it is sent back once and only once, so a session can never be trapped | auto, drive |
@@ -198,6 +198,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | V11 | Replies are read by Ava, in the best quality installed, picked up automatically if you download a better one. If she is missing, the app falls back to American English and says how to get her | auto, eye |
 | V12 | Any failure says what is wrong straight away, with a way to fix it: dictation turned off, permission denied, or nothing heard. It never just goes quiet | auto, drive |
 | V13 | Pausing loses nothing. Words said before a pause stay on screen and are sent, however long the pause and whether or not you speak again | auto |
+| V15 | An agent never just starts talking. Its reply waits with a ding, a notice at the bottom, and a Dock and menu bar count. A clean tap of right ⌘ plays everything waiting and another stops it, with no mouse needed. Replies outlast a restart, and right ⌘ in a shortcut does nothing | auto, drive, eye |
 | V14 | A long dictation shows its newest words. A spoken reply shows its words in the same place, at the bottom, with a way to stop it | auto, drive, eye |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |
 

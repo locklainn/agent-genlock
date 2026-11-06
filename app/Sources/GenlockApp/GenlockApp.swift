@@ -38,7 +38,7 @@ struct GenlockApp: App {
         MenuBarExtra {
             MenuBarMenu().environment(model)
         } label: {
-            let count = model.needingAttention.count
+            let count = model.alertCount
             HStack(spacing: 3) {
                 Image(nsImage: MenuBarIcon.image(alert: count > 0))
                 if count > 0 { Text("\(count)") }
@@ -51,6 +51,7 @@ struct GenlockApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var monitor: Any?
     private var shiftWasDown = false
+    private var commandTap = CleanTap()
 
     @MainActor func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -72,6 +73,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         let model = AppModel.shared
         switch event.type {
         case .leftMouseDown:
+            commandTap.interrupted()
             model.lastClickHadShift = event.modifierFlags.contains(.shift)
         case .flagsChanged:
             let shift = event.modifierFlags.contains(.shift)
@@ -84,7 +86,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             case .cancel: model.voice.cancel()
             case .none: break
             }
+            if event.keyCode == VoiceMachine.rightCommandKey {
+                if event.modifierFlags.contains(.command) {
+                    // Pressed to cancel dictation, it has done its job.
+                    if model.voice.machine.state == .idle { commandTap.down() } else { commandTap.interrupted() }
+                } else if commandTap.up() {
+                    switch VoiceMachine.tapAction(waiting: model.voice.waitingReplies, isSpeaking: model.voice.isSpeaking) {
+                    case .hear: model.hearReplies()
+                    case .stop: model.voice.stopSpeaking()
+                    case .none: break
+                    }
+                }
+            } else {
+                commandTap.interrupted()
+            }
         case .keyDown:
+            commandTap.interrupted()
             if event.keyCode == 53 { // Esc
                 if model.voice.machine.state != .idle { model.voice.cancel(); return nil }
                 if model.route == .dashboard && model.markedCount > 0 { model.clearMarks(); return nil }
@@ -146,6 +163,7 @@ struct RootView: View {
         .animation(.spring(duration: 0.3), value: model.iconTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)
         .animation(.spring(duration: 0.3), value: model.voice.speakingText)
+        .animation(.spring(duration: 0.3), value: model.voice.waitingReplies)
         .preferredColorScheme(.dark)
         .onAppear { model.openMainWindow = { openWindow(id: "main") } }
         .dropDestination(for: URL.self) { urls, _ in
@@ -210,6 +228,10 @@ struct VoiceBanner: View {
                 Text(spoken).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 Spacer(minLength: 8)
+                VStack(alignment: .trailing, spacing: 2) {
+                    Text("Right ⌘ to stop").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                }
+                .fixedSize()
                 Button { voice.stopSpeaking() } label: { Image(systemName: "stop.fill") }
                     .buttonStyle(IconButtonStyle())
                     .help("Stop speaking")
@@ -220,6 +242,22 @@ struct VoiceBanner: View {
             .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.cyan, lineWidth: 1.5))
             .shadow(color: Theme.cyan.opacity(0.35), radius: 26, y: 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if voice.waitingReplies > 0 {
+            HStack(spacing: 12) {
+                Image(systemName: "bell.badge.fill").font(.system(size: 16)).foregroundStyle(Theme.cyan)
+                Text(voice.waitingReplies == 1 ? "\(voice.waitingFrom.first ?? "An agent") has an update" : "\(voice.waitingReplies) updates waiting")
+                    .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                Text("Right ⌘ to hear").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary).fixedSize()
+                Button { model.hearReplies() } label: { Image(systemName: "play.fill") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Hear it")
+                    .accessibilityLabel("Hear the update")
+            }
+            .padding(.leading, 18).padding(.trailing, 8).padding(.vertical, 8)
+            .background(Color(hex: 0x14162A).opacity(0.97), in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.cyan.opacity(0.8), lineWidth: 1.5))
+            .shadow(color: Theme.cyan.opacity(0.3), radius: 18, y: 4)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if let problem = voice.problem {
             VStack(spacing: 8) {

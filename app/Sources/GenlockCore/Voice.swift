@@ -34,6 +34,14 @@ public struct VoiceMachine: Equatable {
 
     public enum KeyAction: Equatable { case press, cancel, none }
 
+    /// What a clean tap of right Command means once dictation is out of the way.
+    public static func tapAction(waiting: Int, isSpeaking: Bool) -> TapAction {
+        if isSpeaking { return .stop }
+        return waiting > 0 ? .hear : .none
+    }
+
+    public enum TapAction: Equatable { case hear, stop, none }
+
     /// What to tell the user when recognition fails. Nil for what is normal: stopping with nothing said.
     public static func explain(recognitionError text: String) -> (message: String, needsDictationSetting: Bool)? {
         let lower = text.lowercased()
@@ -50,6 +58,18 @@ public struct VoiceMachine: Equatable {
     public static func message(from transcript: String) -> String? {
         let t = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : "[voice] \(t.replacingOccurrences(of: "\n", with: " "))"
+    }
+}
+
+/// A modifier pressed and released on its own, so right Command used in a shortcut never counts.
+public struct CleanTap: Equatable {
+    private var armed = false
+    public init() {}
+    public mutating func down() { armed = true }
+    public mutating func interrupted() { armed = false }
+    public mutating func up() -> Bool {
+        defer { armed = false }
+        return armed
     }
 }
 
@@ -215,6 +235,12 @@ public struct VoiceChannel {
 
     public func clearPending() {
         try? FileManager.default.removeItem(at: folder.appendingPathComponent("pending"))
+    }
+
+    /// How many replies are waiting to be heard. They stay on disk until then, so they outlast a restart.
+    public var waitingCount: Int {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: folder.path)) ?? []
+        return names.filter { $0.hasPrefix("say-") && $0.hasSuffix(".json") }.count
     }
 
     /// Everything waiting to be spoken, oldest first, removed as it is read.
