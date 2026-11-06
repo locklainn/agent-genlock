@@ -86,8 +86,6 @@ final class VoiceController: NSObject {
             problem = nil
             needsDictationSetting = false
             didSend = false
-            // Dictating answers the update, so it has done its job.
-            if replyTo?.session == project { replyTo = nil }
             requestAccessThenListen()
         case .finishListening:
             finish()
@@ -213,6 +211,9 @@ final class VoiceController: NSObject {
         didSend = true
         if VoiceMachine.message(from: partial) == nil {
             problem = "Nothing was heard, so nothing was sent."
+        } else if replyTo?.session == target {
+            // Answered, so it has done its job. Cancelling or saying nothing leaves it to try again.
+            replyTo = nil
         }
         submit(partial, to: target)
         teardown()

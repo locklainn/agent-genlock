@@ -112,7 +112,7 @@ public struct ReplyTarget: Equatable {
 /// linear, so this maps through timings measured on Ava reading a 200-character reply.
 public enum SpeechSpeed {
     public static let options: [Double] = [1, 1.25, 1.5, 1.75, 2, 2.5, 3]
-    public static let standard = 1.5
+    public static let standard = 1.25
     /// Holding the right arrow multiplies by this.
     public static let holdBoost = 1.75
     public static let fastest = 4.0

@@ -59,7 +59,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
         NSApp.activate(ignoringOtherApps: true)
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown, .keyUp]) { [weak self] event in
             nonisolated(unsafe) let event = event
-            return MainActor.assumeIsolated { self?.handle(event) ?? event }
+            // A nil from handle means the event was used up, so it must not fall back to the event.
+            return MainActor.assumeIsolated {
+                guard let self else { return event }
+                return self.handle(event)
+            }
         }
         AppModel.shared.boot()
         // Only an app bundle can post notifications, and the center throws outside one.
@@ -291,6 +295,17 @@ struct VoiceBanner: View {
     var body: some View {
         let voice = model.voice
         if voice.machine.state != .idle {
+            VStack(alignment: .leading, spacing: 10) {
+            if let reply = voice.replyTo, reply.session == voice.target {
+                let from = model.sessions[reply.session]?.label ?? "That session"
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(from).font(.system(size: 11.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.cyan)
+                    Text(reply.text.hasPrefix("\(from). ") ? String(reply.text.dropFirst(from.count + 2)) : reply.text)
+                        .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+                Rectangle().fill(Theme.hairline).frame(height: 1)
+            }
             HStack(spacing: 16) {
                 Waveform(level: voice.isListening ? voice.level : 0.2, bars: 20, height: 34)
                 if let target = voice.target, target != model.focusedProject, let label = model.sessions[target]?.label {
@@ -309,6 +324,7 @@ struct VoiceBanner: View {
                     .buttonStyle(IconButtonStyle())
                     .help("Cancel without sending (right ⌘ or Esc)")
                     .accessibilityLabel("Cancel dictation")
+            }
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
             .frame(maxWidth: 760)

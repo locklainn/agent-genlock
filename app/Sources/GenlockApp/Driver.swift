@@ -104,6 +104,7 @@ enum Driver {
         if step["pressRightArrow"] != nil { postKey(.keyDown) }
         if let text = step["sendReply"] as? String { model.voice.sendReply(text) }
         if step["talkKey"] != nil { model.pressVoice() }
+        if step["escapeKey"] != nil, let w = window, let e = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: w.windowNumber, context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) { NSApp.postEvent(e, atStart: false) }
         if step["releaseRightArrow"] != nil { postKey(.keyUp) }
         if let speed = step["speechSpeed"] as? Double { model.voice.speechSpeed = speed }
         if let name = step["nameAssistant"] as? String { model.nameAssistant(name.isEmpty ? nil : name) }
