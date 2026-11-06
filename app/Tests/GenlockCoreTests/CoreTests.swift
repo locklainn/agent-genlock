@@ -650,6 +650,13 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(b.contains(#"billing said: "Done. Tests green.""#))
     }
 
+    func testOldUpdatesStopReplaying() { // V15
+        typealias V = VoiceMachine
+        XCTAssertTrue(V.isReplayable(heardAt: 1000, now: 1000 + V.replaySeconds - 1))
+        XCTAssertFalse(V.isReplayable(heardAt: 1000, now: 1000 + V.replaySeconds), "too old to be relevant")
+        XCTAssertFalse(V.isReplayable(heardAt: nil, now: 1000), "from before this was recorded")
+    }
+
     func testPassedMessagesArriveOnce() throws { // A1
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-tell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: base) }

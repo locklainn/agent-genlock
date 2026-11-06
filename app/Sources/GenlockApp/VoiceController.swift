@@ -37,7 +37,8 @@ final class VoiceController: NSObject {
     }
     /// What you last heard, kept so a stray press never costs you an update.
     @ObservationIgnored private var lastHeard = UserDefaults.standard.stringArray(forKey: "lastHeard") ?? []
-    var canReplay: Bool { !lastHeard.isEmpty }
+    @ObservationIgnored private var lastHeardAt = UserDefaults.standard.object(forKey: "lastHeardAt") as? TimeInterval
+    var canReplay: Bool { !lastHeard.isEmpty && VoiceMachine.isReplayable(heardAt: lastHeardAt, now: Date().timeIntervalSince1970) }
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
     private(set) var target: String?
@@ -281,10 +282,7 @@ final class VoiceController: NSObject {
         waitingReplies = 0
         waitingFrom = []
         guard !waiting.isEmpty else { return [] }
-        lastHeard = waiting.map(\.text)
-        lastHeardFrom = waiting.map(\.from)
-        UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
-        UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
+        keepForReplay(waiting)
         return waiting
     }
 
@@ -294,6 +292,8 @@ final class VoiceController: NSObject {
         lastHeardFrom = items.map(\.from)
         UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
         UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
+        lastHeardAt = Date().timeIntervalSince1970
+        UserDefaults.standard.set(lastHeardAt, forKey: "lastHeardAt")
     }
 
     func replayLast() {

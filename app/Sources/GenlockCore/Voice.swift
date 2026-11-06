@@ -53,6 +53,13 @@ public struct VoiceMachine: Equatable {
 
     public enum EscapeAction: Equatable { case cancelDictation, stopSpeaking, dismissWaiting, dismissReply, none }
 
+    /// After this long an update has probably stopped being relevant, so right Command leaves it alone.
+    public static let replaySeconds: TimeInterval = 600
+
+    public static func isReplayable(heardAt: TimeInterval?, now: TimeInterval) -> Bool {
+        heardAt.map { now - $0 < replaySeconds } ?? false
+    }
+
     /// The notice for replies waiting: short enough to take in at a glance.
     public static func updateNotice(from labels: [String], count: Int) -> String {
         count > 1 ? "\(count) updates" : "\(labels.first ?? "Agent") update"
