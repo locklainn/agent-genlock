@@ -18,6 +18,9 @@ fs.mkdirSync(CWD);
 let pass = 0; const fails = [];
 
 const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT };
+// Run from a session inside the app, these would reach the live app and open real spin-offs in it.
+delete baseEnv.GENLOCK_APP_CHANNEL;
+delete baseEnv.GENLOCK_SESSION;
 delete baseEnv.CLAUDE_CODE_SESSION_ID;
 
 function run(cwd, session, args, input) {
@@ -752,6 +755,8 @@ check('voice writes nothing to the repository', git(RV, 'status', '--porcelain')
 const stateOf = () => JSON.parse(fs.readFileSync(path.join(VOICE, 'state.json'), 'utf8'));
 r = voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 check('a prompt means working', r.code === 0 && stateOf().state === 'working', r.err);
+voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit","session_id":"conv-1"}');
+check('a report names the conversation, so the app can resume it', stateOf().session === 'conv-1', JSON.stringify(stateOf()));
 r = voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}');
 check('a Claude Code notification means waiting, with its message', stateOf().state === 'waiting' && /permission/.test(stateOf().message), r.err);
 voiceRun(['session-state'], '{"hook_event_name":"PostToolUse"}');
