@@ -53,11 +53,18 @@ public struct VoiceMachine: Equatable {
 
     public enum EscapeAction: Equatable { case cancelDictation, stopSpeaking, dismissWaiting, dismissReply, none }
 
-    /// After this long an update has probably stopped being relevant, so right Command leaves it alone.
-    public static let replaySeconds: TimeInterval = 600
+    /// How long an update can still be replayed once it has been closed.
+    public static let replaySeconds: TimeInterval = 60
 
-    public static func isReplayable(heardAt: TimeInterval?, now: TimeInterval) -> Bool {
-        heardAt.map { now - $0 < replaySeconds } ?? false
+    /// An update can be replayed while it is on screen, and briefly after. The thread moving on is
+    /// handled by forgetting the update, so anything old never comes back.
+    public static func isReplayable(isOpen: Bool, closedAt: TimeInterval?, now: TimeInterval) -> Bool {
+        isOpen || closedAt.map { now - $0 < replaySeconds } ?? false
+    }
+
+    /// Whether a session starting work means the thread has moved on from the update.
+    public static func hasMovedOn(sources: [String], working: Set<String>) -> Bool {
+        sources.contains(where: working.contains)
     }
 
     /// The notice for replies waiting: short enough to take in at a glance.

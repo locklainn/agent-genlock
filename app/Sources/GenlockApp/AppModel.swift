@@ -88,6 +88,7 @@ final class AppModel {
         voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
             MainActor.assumeIsolated {
                 let model = AppModel.shared
+                model.voice.replayMovedOn(working: Set(model.sessions.values.filter { $0.phase == "working" }.map(\.key)))
                 model.routeUpdates()
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
@@ -614,7 +615,7 @@ final class AppModel {
             .sorted { tierOrder($0.projectID) < tierOrder($1.projectID) }
         guard UpdateRouting.handToAssistant(projectsReady: ready.count, listening: voice.machine.state != .idle, speaking: voice.isSpeaking) else { return }
         let updates = ready.flatMap { session in session.channel.takeMessages().map { (session: session, text: $0) } }
-        voice.keepForReplay(updates.map { (text: $0.text, from: $0.session.key) })
+        voice.keepForReplay(updates.map { (text: $0.text, from: $0.session.key) }, handedTo: assistantFolder)
         let briefing = UpdateRouting.briefing(updates.map { (project: $0.session.label, text: $0.text) })
         if let assistant = sessions[assistantFolder], assistant.isRunning {
             assistant.channel.markPending()

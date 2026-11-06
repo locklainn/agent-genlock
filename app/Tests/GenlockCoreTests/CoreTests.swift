@@ -650,11 +650,16 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(b.contains(#"billing said: "Done. Tests green.""#))
     }
 
-    func testOldUpdatesStopReplaying() { // V15
+    func testAnUpdateStopsReplayingWhenItIsNoLongerRelevant() { // V15
         typealias V = VoiceMachine
-        XCTAssertTrue(V.isReplayable(heardAt: 1000, now: 1000 + V.replaySeconds - 1))
-        XCTAssertFalse(V.isReplayable(heardAt: 1000, now: 1000 + V.replaySeconds), "too old to be relevant")
-        XCTAssertFalse(V.isReplayable(heardAt: nil, now: 1000), "from before this was recorded")
+        XCTAssertTrue(V.isReplayable(isOpen: true, closedAt: nil, now: 1000), "still on screen")
+        XCTAssertTrue(V.isReplayable(isOpen: false, closedAt: 1000, now: 1000 + V.replaySeconds - 1), "just closed")
+        XCTAssertFalse(V.isReplayable(isOpen: false, closedAt: 1000, now: 1000 + V.replaySeconds), "closed a while ago")
+        XCTAssertFalse(V.isReplayable(isOpen: false, closedAt: nil, now: 1000), "nothing to go on, as after a restart")
+
+        XCTAssertTrue(V.hasMovedOn(sources: ["/a"], working: ["/a"]), "the agent started something else")
+        XCTAssertFalse(V.hasMovedOn(sources: ["/a"], working: ["/b"]), "another project working changes nothing")
+        XCTAssertTrue(V.hasMovedOn(sources: ["/a", "/b", "/assistant"], working: ["/assistant"]), "the Assistant took it")
     }
 
     func testPassedMessagesArriveOnce() throws { // A1

@@ -37,8 +37,26 @@ final class VoiceController: NSObject {
     }
     /// What you last heard, kept so a stray press never costs you an update.
     @ObservationIgnored private var lastHeard = UserDefaults.standard.stringArray(forKey: "lastHeard") ?? []
-    @ObservationIgnored private var lastHeardAt = UserDefaults.standard.object(forKey: "lastHeardAt") as? TimeInterval
-    var canReplay: Bool { !lastHeard.isEmpty && VoiceMachine.isReplayable(heardAt: lastHeardAt, now: Date().timeIntervalSince1970) }
+    /// When the update was closed. Nil while it is still on screen or never was.
+    @ObservationIgnored private var closedAt: TimeInterval?
+    /// Sessions whose starting work means the thread has moved on from what you last heard.
+    @ObservationIgnored private var replaySources: [String] = []
+    var canReplay: Bool {
+        !lastHeard.isEmpty && VoiceMachine.isReplayable(isOpen: replyTo != nil, closedAt: closedAt, now: Date().timeIntervalSince1970)
+    }
+
+    /// The thread moved on, so what you last heard is no longer worth repeating.
+    func replayMovedOn(working: Set<String>) {
+        guard !lastHeard.isEmpty, VoiceMachine.hasMovedOn(sources: replaySources, working: working) else { return }
+        lastHeard = []
+        lastHeardFrom = []
+        replaySources = []
+        closedAt = nil
+        UserDefaults.standard.removeObject(forKey: "lastHeard")
+        UserDefaults.standard.removeObject(forKey: "lastHeardFrom")
+    }
+
+    private func noteClosed() { closedAt = Date().timeIntervalSince1970 }
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
     private(set) var target: String?
@@ -215,6 +233,7 @@ final class VoiceController: NSObject {
         } else if replyTo?.session == target {
             // Answered, so it has done its job. Cancelling or saying nothing leaves it to try again.
             replyTo = nil
+            noteClosed()
         }
         submit(partial, to: target)
         teardown()
@@ -271,6 +290,7 @@ final class VoiceController: NSObject {
     /// You would rather not hear it now. It goes quiet, and right Command can still replay it.
     func dismissReplies(from sessions: [TerminalSession]) {
         _ = takeWaiting(from: sessions)
+        noteClosed()
     }
 
     private func takeWaiting(from sessions: [TerminalSession]) -> [(text: String, from: String)] {
@@ -287,13 +307,13 @@ final class VoiceController: NSObject {
     }
 
     /// What the Assistant was handed stays replayable, in their own words.
-    func keepForReplay(_ items: [(text: String, from: String)]) {
+    func keepForReplay(_ items: [(text: String, from: String)], handedTo: String? = nil) {
+        replaySources = items.map(\.from) + (handedTo.map { [$0] } ?? [])
+        closedAt = Date().timeIntervalSince1970
         lastHeard = items.map(\.text)
         lastHeardFrom = items.map(\.from)
         UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
         UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
-        lastHeardAt = Date().timeIntervalSince1970
-        UserDefaults.standard.set(lastHeardAt, forKey: "lastHeardAt")
     }
 
     func replayLast() {
@@ -327,7 +347,10 @@ final class VoiceController: NSObject {
         let text = next.text
         speakingText = text
         replyQuietSince = nil
-        if let from = next.from { replyTo = ReplyTarget(session: from, text: text) }
+        if let from = next.from {
+            replyTo = ReplyTarget(session: from, text: text)
+            closedAt = nil
+        }
         reached = 0
         play(from: 0)
     }
@@ -362,19 +385,24 @@ final class VoiceController: NSObject {
         if utterance === latestUtterance { reached = playedFrom + location }
     }
 
-    func dismissReply() { replyTo = nil }
+    func dismissReply() {
+        replyTo = nil
+        noteClosed()
+    }
 
     /// Your answer to the update in front of you, spoken back like anything you dictate.
     func sendReply(_ text: String) {
         guard let replyTo else { return }
         submit(text, to: replyTo.session)
         self.replyTo = nil
+        noteClosed()
     }
 
     func expireReply(now: Date = Date()) {
         guard replyTo != nil, machine.state == .idle, let since = replyQuietSince,
               now.timeIntervalSince(since) >= ReplyTarget.lingerSeconds else { return }
         replyTo = nil
+        noteClosed()
     }
 
     /// Lets you hear the speed you just chose.

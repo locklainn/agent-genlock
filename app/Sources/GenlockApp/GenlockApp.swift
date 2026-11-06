@@ -253,7 +253,7 @@ struct ReplyBanner: View {
                     .padding(.horizontal, 12).padding(.vertical, 7)
                     .background(Color.white.opacity(0.07), in: Capsule())
                     .onSubmit { send() }
-                Text(voice.isSpeaking ? (voice.speedHeld ? "Faster" : "Esc to stop · Hold → for faster") : "Right ⌘ to replay · Esc to close")
+                Text(voice.isSpeaking ? (voice.speedHeld ? "Faster" : "Esc to stop · Hold → for faster") : (voice.canReplay ? "Right ⌘ to replay · Esc to close" : "Esc to close"))
                     .font(.system(size: 11, weight: .medium)).foregroundStyle(voice.speedHeld ? Theme.cyan : Theme.textSecondary).fixedSize()
             }
         }
