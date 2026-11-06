@@ -150,7 +150,8 @@ public enum GenlockCLI {
         }
         do {
             let s = try Snapshot.decode(output.stdout)
-            guard s.format == Snapshot.supportedFormat else { return .failure(.genlockTooOld) }
+            // A newer genlock only adds to this format, so only an older one is a problem.
+            guard s.format >= Snapshot.supportedFormat else { return .failure(.genlockTooOld) }
             return .success(s)
         } catch {
             return .failure(.failed("genlock printed something the app could not read: \(error)"))

@@ -150,7 +150,7 @@ final class CoreTests: XCTestCase {
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: future)
         var ahead = tools
         ahead.genlockArgv = [future]
-        XCTAssertEqual(GenlockCLI.snapshot(of: repo, tools: ahead), .failure(.genlockTooOld))
+        XCTAssertNotEqual(GenlockCLI.snapshot(of: repo, tools: ahead), .failure(.genlockTooOld), "newer only adds to the format")
     }
 
     func testToolsAreFoundWithAMinimalPath() { // S5

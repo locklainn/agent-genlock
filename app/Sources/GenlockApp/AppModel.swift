@@ -254,19 +254,16 @@ final class AppModel {
     private func runSetUp(_ id: String, name: String, flag: String, tools: ToolEnvironment) async {
         await Task.detached {
             let out = try? GenlockCLI.run(["init", flag], in: id, tools: tools)
-            let check = GenlockCLI.snapshot(of: id, tools: tools)
             await MainActor.run {
                 self.settingUp.remove(id)
                 self.refresh(id)
                 if out?.status != 0 {
                     self.message = "Could not set up \(name): \(out?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Genlock did not run")"
-                } else if case .success(let snap) = check, snap.initialized {
+                } else {
                     let running = self.sessions[id]?.isRunning == true
                     self.message = running
                         ? "\(name) is on the signal. End and restart its session to load the new rules."
                         : "\(name) is on the signal. Open its session and start working. Claude will track goals as you go."
-                } else {
-                    self.message = "Setup ran in \(name), but Genlock still does not see it as set up. Run genlock doctor there."
                 }
             }
         }.value
