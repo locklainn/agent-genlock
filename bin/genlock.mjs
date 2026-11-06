@@ -27,6 +27,7 @@ import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank } from '../lib/rank.mjs';
+import { cmdOverview, cmdTell } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
@@ -211,6 +212,8 @@ const COMMANDS = {
   mcp: runMcp,
   review: cmdReview,
   snapshot: cmdSnapshot,
+  overview: cmdOverview,
+  tell: cmdTell,
   rank: cmdRank,
   due: cmdDue,
   say: cmdSay,

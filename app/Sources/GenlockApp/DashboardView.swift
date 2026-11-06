@@ -45,6 +45,9 @@ struct DashboardHeader: View {
             }
             Spacer()
             UpdatePill()
+            Button { model.openAssistant() } label: { Label("Assistant", systemImage: "sparkles") }
+                .buttonStyle(GlassButtonStyle())
+                .help("One session across all your projects. Right ⌥ from here talks to it.")
             if !model.visible.isEmpty {
                 Button { model.route = .sessions } label: {
                     Label("Back to \(model.visible.count == 1 ? "session" : "\(model.visible.count) sessions")", systemImage: "terminal.fill")

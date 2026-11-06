@@ -198,6 +198,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | V11 | Replies are read by Ava, in the best quality installed, picked up automatically if you download a better one. If she is missing, the app falls back to American English and says how to get her | auto, eye |
 | V12 | Any failure says what is wrong straight away, with a way to fix it: dictation turned off, permission denied, or nothing heard. It never just goes quiet | auto, drive |
 | V13 | Pausing loses nothing. Words said before a pause stay on screen and are sent, however long the pause and whether or not you speak again | auto |
+| A1 | The Assistant is one session across every project, opened from the dashboard or the session bar, or by talking on the dashboard. It reads live status with `genlock overview`, and passes things on with `genlock tell` only when you ask. Only it can use those commands | auto, drive |
 | V15 | An agent never just starts talking. Its reply waits with a ding, a notice at the bottom, and a Dock and menu bar count. A clean tap of right ⌘ plays everything waiting and another stops it, with no mouse needed. Replies outlast a restart, and right ⌘ in a shortcut does nothing | auto, drive, eye |
 | V14 | A long dictation shows its newest words. A spoken reply shows its words in the same place, at the bottom, with a way to stop it | auto, drive, eye |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |

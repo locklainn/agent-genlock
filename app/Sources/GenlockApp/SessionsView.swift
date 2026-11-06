@@ -82,6 +82,9 @@ struct SessionBar: View {
             .scrollIndicators(.never)
             Spacer(minLength: 0)
             UpdatePill()
+            Button { model.openAssistant() } label: { Label("Assistant", systemImage: "sparkles") }
+                .buttonStyle(GlassButtonStyle())
+                .help("One session across all your projects")
             Button { voice.speakReplies.toggle() } label: {
                 Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
             }
@@ -140,7 +143,8 @@ struct PaneView: View {
             GeometryReader { geo in
                 // A narrow pane cannot give up the room, so there it slides over the terminal, closed until asked.
                 let roomy = geo.size.width >= Self.pushBelow
-                let showInspector = roomy ? !inspectorHidden : model.hiddenInspectors.contains("\(sessionKey)#open")
+                let showInspector = projectID != model.assistantFolder
+                    && (roomy ? !inspectorHidden : model.hiddenInspectors.contains("\(sessionKey)#open"))
                 HStack(spacing: 0) {
                     terminal
                     if roomy && showInspector {
@@ -182,8 +186,10 @@ struct PaneView: View {
             }
             Spacer(minLength: 8)
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }
-            Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
-                .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
+            if projectID != model.assistantFolder {
+                Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
+                    .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
+            }
             Button { model.closePane(sessionKey) } label: { Image(systemName: "xmark") }
                 .buttonStyle(IconButtonStyle()).help("Close this pane. The session keeps running.").accessibilityLabel("Close pane")
         }

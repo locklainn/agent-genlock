@@ -90,6 +90,7 @@ final class AppModel {
                 let model = AppModel.shared
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
+                model.collectTells()
                 model.updateAttention()
                 model.rememberSessions()
             }
@@ -391,14 +392,17 @@ final class AppModel {
                 self.restart(session.key, fresh: true)
             }
         }
-        session.start(tools: tools, conversation: start, voice: voice.speakReplies, spinoffs: session.spawn != nil || spinoffsAllowed(session.projectID))
+        let isAssistant = session.projectID == assistantFolder
+        session.start(tools: tools, conversation: start, voice: voice.speakReplies,
+                      spinoffs: !isAssistant && (session.spawn != nil || spinoffsAllowed(session.projectID)),
+                      assistantOf: isAssistant ? store.file : nil)
     }
 
     /// Reopens what was open last time, ready to carry on. Before the tools are found these
     /// wait, and boot starts them.
     private func restoreSessions() {
         memory = SessionMemory.load(from: memoryFile)
-        let back = memory.restorable { project in self.store.project(project)?.exists == true }
+        let back = memory.restorable { project in project == self.assistantFolder || self.store.project(project)?.exists == true }
         for open in back.open {
             let session = TerminalSession(projectID: open.project, spawn: open.spawn, token: open.token)
             sessions[session.key] = session
@@ -517,8 +521,31 @@ final class AppModel {
         return visible.first
     }
 
+    /// From the dashboard there is no project in front of you, so you are talking to the Assistant.
     func pressVoice(for id: String? = nil) {
-        voice.press(target: id ?? (route == .sessions ? focusedProject : nil))
+        if id == nil && route == .dashboard && voice.machine.state == .idle { openAssistant() }
+        voice.press(target: id ?? focusedProject)
+    }
+
+    // MARK: The Assistant
+
+    /// One session across all projects. It lives in a folder of its own, outside any repository.
+    var assistantFolder: String {
+        VoiceChannel.defaultBase.deletingLastPathComponent().appendingPathComponent("Assistant").path
+    }
+
+    func openAssistant() {
+        try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+        ensureSession(assistantFolder)
+        if !visible.contains(assistantFolder) { visible = [assistantFolder] }
+        route = .sessions
+        focus(assistantFolder)
+    }
+
+    func collectTells() {
+        for session in sessions.values where session.isRunning {
+            for text in session.channel.takeTells() { session.submit(text) }
+        }
     }
 
     // MARK: Reviews

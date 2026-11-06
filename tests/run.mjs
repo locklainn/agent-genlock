@@ -946,6 +946,55 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
 
 }
 
+/* ---- the assistant ------------------------------------------------------------- */
+{
+  const AS = path.join(ROOT, 'assistant');
+  const CH = path.join(AS, 'voice');
+  const PA = path.join(AS, 'alpha'); const PB = path.join(AS, 'beta');
+  for (const d of [CH, PA, PB]) fs.mkdirSync(d, { recursive: true });
+  for (const d of [PA, PB]) {
+    git(d, 'init', '-q'); git(d, 'config', 'user.email', 't@e.st'); git(d, 'config', 'user.name', 'test');
+    fs.writeFileSync(path.join(d, 'f'), 'x\n'); git(d, 'add', '.'); git(d, 'commit', '-qm', 'i');
+  }
+  const asEnv = (args) => {
+    const env = { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH };
+    const x = spawnSync(process.execPath, [CLI, ...args], { cwd: AS, encoding: 'utf8', env });
+    return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
+  };
+  r = run(AS, 'someone', ['overview']);
+  check('overview only works in the Assistant', r.code !== 0 && /Assistant/.test(r.err), r.all);
+  r = run(AS, 'someone', ['tell', 'alpha', 'hello']);
+  check('a project agent cannot tell another what to do', r.code !== 0, r.all);
+
+  fs.writeFileSync(path.join(AS, 'projects.json'), JSON.stringify([
+    { path: PB, tier: 'later' }, { path: PA, tier: 'today' }, { path: path.join(AS, 'gone'), tier: 'soon' },
+  ]));
+  fs.writeFileSync(path.join(AS, 'sessions.json'), JSON.stringify({ open: [{ project: PA, token: 'tok-a' }] }));
+  fs.mkdirSync(path.join(CH, 'tok-a'));
+  fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'waiting', message: 'May I run the migration?', at: Date.now() }));
+  const pa = (...args) => run(PA, 'pa', args);
+  const GX = (/\b(G-[0-9A-Z]{5})\b/.exec(pa('goal', 'add', 'Launch the site', '--user-said', 'yes').out) || [])[1];
+  pa('new', 'Checkout page loads', '-r', 'Checkout page returns 200', '-c', 'node t.mjs', '--due', '2099-01-01', '--goal', GX);
+  pa('ask', 'user', 'Which colour for the button?');
+
+  r = asEnv(['overview']);
+  check('overview puts TODAY first', r.code === 0 && r.out.indexOf('alpha') < r.out.indexOf('beta'), r.all);
+  check('...skips a folder that has gone', !/gone/.test(r.out), r.out);
+  check('...says a session needs the user, and what it said', /NEEDS THE USER/.test(r.out) && /May I run the migration/.test(r.out), r.out);
+  check('...shows ranked goals and tasks with dates', /goal #1: Launch the site/.test(r.out) && /task #1: Checkout page loads/.test(r.out) && /due 2099-01-01/.test(r.out), r.out);
+  check('...and questions waiting on the user', /WAITING ON THE USER: Which colour/.test(r.out), r.out);
+  check('...and says when there is no session or setup', /beta[\s\S]*none open[\s\S]*not set up/.test(r.out), r.out);
+
+  r = asEnv(['tell', 'ALPHA', 'please', 'run', 'it']);
+  const told = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));
+  check('tell leaves a message for the app to type in', r.code === 0 && told.length === 1
+    && JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', told[0]), 'utf8')).text === 'please run it', r.all);
+  r = asEnv(['tell', 'beta', 'hello']);
+  check('tell refuses a project with no session', r.code !== 0 && /no session/.test(r.err), r.all);
+  r = asEnv(['tell', 'nope', 'hello']);
+  check('tell refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err), r.all);
+}
+
 /* ---- report ------------------------------------------------------------------- */
 
 fs.rmSync(ROOT, { recursive: true, force: true });

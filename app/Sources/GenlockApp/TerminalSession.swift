@@ -53,7 +53,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeForegroundColor = NSColor(white: 0.92, alpha: 1)
     }
 
-    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool) {
+    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil) {
         guard let claude = tools.claudePath else {
             startError = "Claude Code was not found. Install it, then try again."
             return
@@ -68,6 +68,11 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         var env = tools.environment
         env["GENLOCK_APP_CHANNEL"] = channel.folder.path
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
+        // Only the Assistant is told where every project is.
+        if let store {
+            env["GENLOCK_APP_PROJECTS"] = store.path
+            env["GENLOCK_APP_CHANNELS"] = VoiceChannel.defaultBase.path
+        }
         let genlockCommand = tools.genlockArgv?.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
         var newID: String?
         var resumeID: String?
@@ -83,7 +88,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
                                            reportsState: true, sessionID: newID, resumeID: resumeID,
-                                           prompt: newID == nil ? nil : spawn?.prompt)
+                                           prompt: newID == nil ? nil : (store != nil ? SessionLaunch.assistantOpening : spawn?.prompt), assistant: store != nil)
         view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)
