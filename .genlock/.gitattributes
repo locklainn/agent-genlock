@@ -1,0 +1,2 @@
+# Written by genlock. Records are append-only; a merge keeps both sides' lines.
+records/*.jsonl merge=union

@@ -453,6 +453,35 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(t.text, "Maybe")
     }
 
+    func testALongDictationShowsItsNewestWords() { // V2
+        XCTAssertEqual(VoiceTranscript.latest("short and sweet"), "short and sweet")
+        let long = (1...100).map { "word\($0)" }.joined(separator: " ")
+        let shown = VoiceTranscript.latest(long)
+        XCTAssertTrue(shown.hasSuffix("word100"), "the newest words")
+        XCTAssertTrue(shown.hasPrefix("…word"), "starts on a whole word, and says it is cut")
+        XCTAssertLessThanOrEqual(shown.count, 171)
+    }
+
+    func testRankAndDueReachTheApp() throws { // S20 S21
+        let json = #"""
+        {"format":3,"root":"/r","initialized":true,"goals_declined":false,"current_goal":null,"last_ticket":null,
+         "goals":[
+          {"rank":2,"due":null,"days_until":null,"id":"G-B","title":"Second","status":"active","progress":{"done":0,"total":0,"blocked":0},"next":[],"forbids":[],"decisions":[],"refs":[]},
+          {"rank":1,"due":"2099-01-01","days_until":3,"id":"G-A","title":"First","status":"active","progress":{"done":0,"total":0,"blocked":0},"next":[],"forbids":[],"decisions":[],"refs":[]},
+          {"rank":null,"due":null,"days_until":null,"id":"G-C","title":"Closed","status":"done","progress":{"done":0,"total":0,"blocked":0},"next":[],"forbids":[],"decisions":[],"refs":[]}],
+         "tickets":[
+          {"rank":2,"due":null,"days_until":null,"id":"T-B","title":"B","status":"open","updated":"2026-01-02T00:00:00Z","summary":"","requirements":[],"hazards":[],"forbids":[]},
+          {"rank":1,"due":"2099-01-01","days_until":1,"id":"T-A","title":"A","status":"open","updated":"2026-01-01T00:00:00Z","summary":"","requirements":[],"hazards":[],"forbids":[]}],
+         "open_tickets":["T-B","T-A"],"questions_for_user":[],"reviews":[],"claims":[]}
+        """#
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let s = try d.decode(Snapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(s.rankedTasks.map(\.id), ["T-A", "T-B"], "by rank, not by recent activity")
+        XCTAssertEqual(s.rankedGoals.map(\.id), ["G-A", "G-B"], "closed goals have no place")
+        XCTAssertEqual(CardSummary(s).deadline?.text, "A", "a task's own date counts, and the nearest wins")
+    }
+
     func testRevisionsReplaceTheCurrentUtterance() { // V13
         var t = VoiceTranscript()
         t.receive("Nothing was her", endsUtterance: false)

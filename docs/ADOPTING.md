@@ -30,7 +30,8 @@ If the repository has handoff documents, status notes or plans, do not convert t
 | what the document holds | where it goes |
 |---|---|
 | What to do next, in order | `genlock goal next G "..."` |
-| Anything with a date | `genlock goal next G "..." --due YYYY-MM-DD` |
+| Anything with a date | `genlock due ID YYYY-MM-DD`, or `genlock goal next G "..." --due YYYY-MM-DD` |
+| What matters most, in one strict order | `genlock rank`, `genlock rank ID --to N` |
 | Where the work stands | `genlock update T "..."`, 600 characters at most |
 | Decisions and who made them | `genlock decide ID "..." --user-said ".."` |
 | Decisions reversed | `genlock decide ID "..." --supersedes N`, so nobody re-adds them |

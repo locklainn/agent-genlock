@@ -10,6 +10,8 @@ final class VoiceController: NSObject {
     private var transcript = VoiceTranscript()
     var partial: String { transcript.text }
     private(set) var isSpeaking = false
+    /// The reply being read now, shown where your eyes already are.
+    private(set) var speakingText: String?
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
     private(set) var target: String?
@@ -222,7 +224,7 @@ final class VoiceController: NSObject {
     }
 
     /// AVSpeechSynthesizer queues on its own, so replies from several sessions never overlap.
-    func speak(_ text: String) {
+    func speak(_ text: String, volume: Float = 1) {
         isSpeaking = true
         if !hintedVoice, let hint = VoiceOption.upgradeHint(for: chosenVoice) {
             hintedVoice = true
@@ -231,6 +233,7 @@ final class VoiceController: NSObject {
         lastSpoken = text
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = replyVoice
+        utterance.volume = volume
         synth.speak(utterance)
     }
 
@@ -248,13 +251,24 @@ final class VoiceController: NSObject {
     func stopSpeaking() {
         synth.stopSpeaking(at: .immediate)
         isSpeaking = false
+        speakingText = nil
     }
 }
 
 extension VoiceController: AVSpeechSynthesizerDelegate {
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart u: AVSpeechUtterance) {
+        let text = u.speechString
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.speakingText = text }
+        }
+    }
+
     nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { self.isSpeaking = self.synth.isSpeaking }
+            MainActor.assumeIsolated {
+                self.isSpeaking = self.synth.isSpeaking
+                if !self.isSpeaking { self.speakingText = nil }
+            }
         }
     }
 }

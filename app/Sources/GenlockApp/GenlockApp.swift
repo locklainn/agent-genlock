@@ -145,6 +145,7 @@ struct RootView: View {
         .animation(.spring(duration: 0.3), value: model.setupTarget)
         .animation(.spring(duration: 0.3), value: model.iconTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)
+        .animation(.spring(duration: 0.3), value: model.voice.speakingText)
         .preferredColorScheme(.dark)
         .onAppear { model.openMainWindow = { openWindow(id: "main") } }
         .dropDestination(for: URL.self) { urls, _ in
@@ -183,8 +184,8 @@ struct VoiceBanner: View {
         if voice.machine.state != .idle {
             HStack(spacing: 16) {
                 Waveform(level: voice.isListening ? voice.level : 0.2, bars: 20, height: 34)
-                Text(voice.partial.isEmpty ? (voice.isListening ? "Listening…" : "Sending…") : voice.partial)
-                    .lineLimit(3).font(.system(size: 15, weight: .medium))
+                Text(voice.partial.isEmpty ? (voice.isListening ? "Listening…" : "Sending…") : VoiceTranscript.latest(voice.partial))
+                    .lineLimit(3).truncationMode(.head).font(.system(size: 15, weight: .medium))
                     .foregroundStyle(voice.partial.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
@@ -202,6 +203,23 @@ struct VoiceBanner: View {
             .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.hot, lineWidth: 1.5))
             .shadow(color: Color(hex: 0xFF4D6D).opacity(0.45), radius: 26, y: 6)
+            .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if let spoken = voice.speakingText {
+            HStack(spacing: 16) {
+                Waveform(level: 0.7, bars: 14, height: 30, colors: [Theme.cyan, Color(hex: 0x7C5CFF)])
+                Text(spoken).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Spacer(minLength: 8)
+                Button { voice.stopSpeaking() } label: { Image(systemName: "stop.fill") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Stop speaking")
+                    .accessibilityLabel("Stop speaking")
+            }
+            .padding(.horizontal, 20).padding(.vertical, 14)
+            .frame(maxWidth: 760)
+            .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.cyan, lineWidth: 1.5))
+            .shadow(color: Theme.cyan.opacity(0.35), radius: 26, y: 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if let problem = voice.problem {
             VStack(spacing: 8) {

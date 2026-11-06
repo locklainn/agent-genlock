@@ -152,6 +152,8 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | S15 | A folder whose history cannot be picked up, such as only `claude -p` runs, opens a new conversation and says so, rather than a dead pane | auto, drive |
 | S16 | Dropping a file or folder on a pane types its escaped path at that session's prompt, and focuses it. Dropped anywhere else, a folder still becomes a project. A pane with nothing running refuses the drop | auto, drive, eye |
 | S17 | ⌘V with a copied file types its path. With a copied image, it saves a PNG to a temporary folder and types that path. Copied text pastes as usual | auto, drive, eye |
+| S20 | Goals and tasks each have one strict order, numbered from 1 with no ties, shared with agents through `genlock rank`. Dragging a row's handle onto another row takes that place | auto, drive, eye |
+| S21 | A goal or task can have a due date, set and removed in place, and counted among a card's deadlines | auto, drive, eye |
 | S18 | The pane's status (Working, Needs you, Done) sits beside its name, away from the mic | eye |
 | S19 | A changed source tree rebuilds itself in the background and offers "Restart to update". A failed build says why and retries on the next change | auto, drive |
 | S12 | The conversation is the session's own, by id, so a spin-off or a Terminal session in the same folder cannot take its place, and `/clear` is followed | auto, drive |
@@ -196,6 +198,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | V11 | Replies are read by Ava, in the best quality installed, picked up automatically if you download a better one. If she is missing, the app falls back to American English and says how to get her | auto, eye |
 | V12 | Any failure says what is wrong straight away, with a way to fix it: dictation turned off, permission denied, or nothing heard. It never just goes quiet | auto, drive |
 | V13 | Pausing loses nothing. Words said before a pause stay on screen and are sent, however long the pause and whether or not you speak again | auto |
+| V14 | A long dictation shows its newest words. A spoken reply shows its words in the same place, at the bottom, with a way to stop it | auto, drive, eye |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |
 
 ### Spin-offs

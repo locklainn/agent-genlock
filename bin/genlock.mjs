@@ -26,6 +26,7 @@ import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
+import { cmdDue, cmdRank } from '../lib/rank.mjs';
 import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
@@ -40,7 +41,7 @@ START HERE
   genlock orient                                what is going on here
 
 TICKETS   requirements first; done is proved, not asserted
-  genlock new "TITLE" -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--ask ..] [--draft]
+  genlock new "TITLE" -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--due YYYY-MM-DD] [--ask ..] [--draft]
   genlock list [--open] [--status S] [--goal G]  |  genlock show ID [--json]  |  genlock status ID
   genlock start ID  |  genlock req ID -r ".." -c ".."  |  genlock assign ID SESSION  |  genlock link ID GOAL
   genlock update ID "THE LATEST"   (600 characters at most; findings go in files)
@@ -48,6 +49,9 @@ TICKETS   requirements first; done is proved, not asserted
   genlock start ID --because ".."               required to restart a blocked ticket
 
 ON A TICKET OR A GOAL
+  genlock rank [goals|tasks]                    the strict order, most important first. No two share a place
+  genlock rank ID --to N  |  genlock rank ID --before OTHER
+  genlock due ID YYYY-MM-DD  |  genlock due ID --clear
   genlock decide ID "WHAT" [--user-said ..] [--supersedes N]
   genlock forbid ID "WHAT MUST NOT BE DONE" --lifted-by ".."  |  genlock unforbid ID N --user-said ".."
   genlock ref ID PATH --why "WHAT THE READER FINDS THERE, AND WHEN THEY NEED IT"
@@ -207,6 +211,8 @@ const COMMANDS = {
   mcp: runMcp,
   review: cmdReview,
   snapshot: cmdSnapshot,
+  rank: cmdRank,
+  due: cmdDue,
   say: cmdSay,
   'voice-check': cmdVoiceCheck,
   'session-state': cmdSessionState,
@@ -241,6 +247,8 @@ function parse(argv) {
       const eq = name.indexOf('=');
       if (eq >= 0) { val = name.slice(eq + 1); name = name.slice(0, eq); }
       if (FLAGS.has(name) && val === null) { a[name.replace(/-/g, '_')] = true; continue; }
+      // `due ID --clear` stands alone, while `hazard ID --clear N` takes a number.
+      if (val === null && name === 'clear' && argv[i + 1] === undefined) { a.clear = true; continue; }
       if (val === null) { val = argv[++i]; if (val === undefined) die(`--${name} needs a value`); }
       put(name, val);
     } else if (/^-[A-Za-z]/.test(tok)) {

@@ -82,17 +82,6 @@ struct SessionBar: View {
             .scrollIndicators(.never)
             Spacer(minLength: 0)
             UpdatePill()
-            if voice.isSpeaking {
-                Button { voice.stopSpeaking() } label: {
-                    HStack(spacing: 8) {
-                        Waveform(level: 0.8, bars: 10, height: 14, colors: [Theme.cyan, Color(hex: 0x7C5CFF)])
-                        Image(systemName: "stop.fill").font(.system(size: 9))
-                    }
-                }
-                .buttonStyle(GlassButtonStyle(active: true))
-                .help("Stop speaking")
-                .accessibilityLabel("Stop speaking")
-            }
             Button { voice.speakReplies.toggle() } label: {
                 Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
             }

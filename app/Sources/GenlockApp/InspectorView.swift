@@ -40,8 +40,8 @@ struct InspectorView: View {
 
     @ViewBuilder private func content(_ s: Snapshot, changed: Set<String>) -> some View {
         let current = s.goal(s.currentGoal)
-        let others = s.goals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != s.currentGoal }
-        let open = s.activeTickets.sorted { $0.updated > $1.updated }
+        let others = s.rankedGoals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != s.currentGoal }
+        let open = s.rankedTasks
         let reviews = s.openReviews
 
         if !reviews.isEmpty {
@@ -59,7 +59,9 @@ struct InspectorView: View {
         }
         InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
             if let current {
-                GoalBlock(goal: current, changed: changed, tier: tier)
+                RankedRow(id: current.id, title: current.title, rank: current.rank, due: current.due, daysUntil: current.daysUntil, projectID: projectID) {
+                    GoalBlock(goal: current, changed: changed, tier: tier)
+                }
             } else {
                 Text(s.goalsDeclined == true ? "No goals for this project." : "None yet. Claude will pick one up as you work.")
                     .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
@@ -69,7 +71,11 @@ struct InspectorView: View {
             if open.isEmpty {
                 Text("No open tasks.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(open) { TaskRow(ticket: $0, changed: changed.contains($0.id)) }
+            ForEach(open) { t in
+                RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
+                    TaskRow(ticket: t, changed: changed.contains(t.id))
+                }
+            }
         }
         let stops = (current?.forbids ?? []) + open.flatMap(\.forbids)
         if !stops.isEmpty {
@@ -81,7 +87,11 @@ struct InspectorView: View {
         }
         if !others.isEmpty {
             InspectorCard(title: "Other goals", symbol: "square.stack.3d.up.fill", count: others.count, color: Theme.textSecondary) {
-                ForEach(others) { OtherGoal(goal: $0, changed: changed, tier: tier) }
+                ForEach(others) { g in
+                    RankedRow(id: g.id, title: g.title, rank: g.rank, due: g.due, daysUntil: g.daysUntil, projectID: projectID) {
+                        OtherGoal(goal: g, changed: changed, tier: tier)
+                    }
+                }
             }
         }
         if !s.claims.isEmpty {
@@ -91,6 +101,98 @@ struct InspectorView: View {
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
             }
+        }
+    }
+}
+
+/// A goal or task with its place in the order. Drag the handle onto another of its kind to take
+/// that place. The order itself lives in `genlock rank`, shared with every agent.
+struct RankedRow<Content: View>: View {
+    @Environment(AppModel.self) private var model
+    let id: String
+    let title: String
+    let rank: Int?
+    let due: String?
+    let daysUntil: Int?
+    let projectID: String
+    @ViewBuilder let content: Content
+    @State private var targeted = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 7) {
+            if let rank {
+                VStack(spacing: 3) {
+                    Text("\(rank)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textSecondary)
+                    Image(systemName: "line.3.horizontal").font(.system(size: 9)).foregroundStyle(Theme.textTertiary)
+                }
+                .frame(width: 16)
+                .padding(.vertical, 2)
+                .contentShape(Rectangle())
+                .draggable(id) { Text(title).font(.system(size: 12.5, weight: .semibold)).padding(8).background(Theme.surfaceRaised, in: RoundedRectangle(cornerRadius: 8)) }
+                .help("Drag to change its rank")
+                .accessibilityLabel("Rank \(rank)")
+            }
+            VStack(alignment: .leading, spacing: 4) {
+                content
+                DueControl(id: id, due: due, daysUntil: daysUntil, projectID: projectID)
+            }
+            Spacer(minLength: 0)
+        }
+        .overlay(alignment: .top) {
+            if targeted { Rectangle().fill(Theme.cyan).frame(height: 2).offset(y: -4) }
+        }
+        .dropDestination(for: String.self) { items, _ in
+            guard let moved = items.first, let rank, moved != id, moved.prefix(2) == id.prefix(2) else { return false }
+            model.rank(moved, to: rank, in: projectID)
+            return true
+        } isTargeted: { targeted = $0 }
+    }
+}
+
+/// Shows a due date and changes it, in place.
+struct DueControl: View {
+    @Environment(AppModel.self) private var model
+    let id: String
+    let due: String?
+    let daysUntil: Int?
+    let projectID: String
+    @State private var picking = false
+    @State private var day = Date()
+
+    private static let format: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "yyyy-MM-dd"
+        f.locale = Locale(identifier: "en_US_POSIX")
+        return f
+    }()
+
+    var body: some View {
+        Button {
+            day = due.flatMap { Self.format.date(from: $0) } ?? Date()
+            picking = true
+        } label: {
+            if let days = daysUntil {
+                Label(CardSummary.Deadline(text: "", daysUntil: days).label, systemImage: "calendar")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(days <= 1 ? Theme.red : Theme.amber)
+            } else {
+                Label("Add due date", systemImage: "calendar").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(due ?? "Set a due date")
+        .popover(isPresented: $picking) {
+            VStack(alignment: .leading, spacing: 10) {
+                DatePicker("Due", selection: $day, displayedComponents: .date).datePickerStyle(.graphical).labelsHidden()
+                HStack {
+                    if due != nil {
+                        Button("Remove") { model.setDue(id, to: nil, in: projectID); picking = false }.buttonStyle(GlassButtonStyle())
+                    }
+                    Spacer()
+                    Button("Set") { model.setDue(id, to: Self.format.string(from: day), in: projectID); picking = false }
+                        .buttonStyle(GlassButtonStyle(active: true))
+                }
+            }
+            .padding(14)
         }
     }
 }

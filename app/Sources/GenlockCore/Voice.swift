@@ -63,6 +63,14 @@ public struct VoiceTranscript: Equatable {
 
     public var text: String { (settled + [current]).filter { !$0.isEmpty }.joined(separator: " ") }
 
+    /// The end of what was said, from a word boundary, so a long dictation shows its newest words.
+    public static func latest(_ text: String, maxCharacters: Int = 170) -> String {
+        guard text.count > maxCharacters else { return text }
+        let tail = text.suffix(maxCharacters)
+        guard let space = tail.firstIndex(of: " ") else { return "…\(tail)" }
+        return "…\(tail[tail.index(after: space)...])"
+    }
+
     /// `endsUtterance` is true on the result that carries the recognizer's metadata.
     public mutating func receive(_ words: String, endsUtterance: Bool) {
         if words.isEmpty { return }

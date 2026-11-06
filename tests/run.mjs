@@ -854,6 +854,98 @@ check('...and nothing is pushed or swept', /Nothing was pushed/.test(r.out) && /
 r = f('sync');
 check('a second sync has nothing to do', /nothing new/.test(r.out), r.all);
 
+/* ---- ranking and due dates ---------------------------------------------------- */
+{
+
+const RK = path.join(ROOT, 'rank');
+fs.mkdirSync(RK);
+git(RK, 'init', '-q');
+git(RK, 'config', 'user.email', 't@e.st');
+git(RK, 'config', 'user.name', 'test');
+fs.writeFileSync(path.join(RK, 'f'), 'x\n'); git(RK, 'add', '.'); git(RK, 'commit', '-qm', 'i');
+const k = (...args) => run(RK, 'ranker', args);
+const task = (title, ...extra) => idOf(k('new', title, '-r', `${title} returns 200`, '-c', 'node t.mjs', ...extra));
+const goalId = (r) => (/\b(G-[0-9A-Z]{5})\b/.exec(r.out) || [])[1];
+const snapR = () => JSON.parse(k('snapshot').out);
+const taskOrder = () => snapR().tickets.filter((t) => t.rank).sort((a, b) => a.rank - b.rank).map((t) => t.id);
+
+const TA = task('Alpha page loads'); const TB = task('Beta page loads'); const TC = task('Gamma page loads');
+check('things rank in the order they arrive', taskOrder().join() === [TA, TB, TC].join(), taskOrder().join());
+const TD = task('Delta page loads');
+check('a new thing joins at the bottom', taskOrder().at(-1) === TD);
+
+r = k('rank', TC, '--to', '1');
+check('moving to the top', r.code === 0 && taskOrder().join() === [TC, TA, TB, TD].join(), r.all);
+k('rank', TC, '--to', '3');
+check('moving down lands in the place asked for', taskOrder().join() === [TA, TB, TC, TD].join(), taskOrder().join());
+k('rank', TA, '--to', '99');
+check('a place past the end means last', taskOrder().at(-1) === TA, taskOrder().join());
+k('rank', TA, '--before', TB);
+check('moving before another', taskOrder().join() === [TA, TB, TC, TD].join(), taskOrder().join());
+const TE = task('Epsilon page loads');
+check('a thing created after a move still joins at the bottom', taskOrder().at(-1) === TE);
+
+const ranksOf = () => snapR().tickets.filter((t) => t.rank).map((t) => t.rank).sort((a, b) => a - b).join();
+check('places are 1 to n with no ties or gaps', ranksOf() === '1,2,3,4,5', ranksOf());
+
+r = k('rank', TA); check('rank with no place is refused', r.code !== 0 && /--to/.test(r.err), r.all);
+r = k('rank', TA, '--to', '0'); check('place 0 is refused', r.code !== 0, r.all);
+r = k('rank', TA, '--before', TA); check('before itself is refused', r.code !== 0, r.all);
+r = k('rank', 'T-NOPE', '--to', '1'); check('an unknown id is refused', r.code !== 0, r.all);
+
+// Two agents on two branches rank at once, and git's union merge keeps both sides' lines.
+const RANKING = path.join(RK, '.genlock', 'records', 'ranking.jsonl');
+const sharedLog = fs.readFileSync(RANKING, 'utf8');
+k('rank', TD, '--to', '1'); const sideA = fs.readFileSync(RANKING, 'utf8').slice(sharedLog.length);
+fs.writeFileSync(RANKING, sharedLog);
+k('rank', TE, '--to', '1'); const sideB = fs.readFileSync(RANKING, 'utf8').slice(sharedLog.length);
+fs.writeFileSync(RANKING, sharedLog + sideB + sideA);
+const mergedOne = taskOrder().join();
+fs.writeFileSync(RANKING, sharedLog + sideA + sideB);
+check('a merge gives one order whichever side came first', taskOrder().join() === mergedOne, `${taskOrder().join()} vs ${mergedOne}`);
+check('...and still no ties', ranksOf() === '1,2,3,4,5', ranksOf());
+
+r = k('abandon', TB, 'not needed');
+check('abandoning works here', r.code === 0, r.all);
+check('closing a thing closes the gap', ranksOf() === '1,2,3,4', ranksOf());
+check('a closed thing has no place', snapR().tickets.find((t) => t.id === TB).rank === null);
+r = k('rank', TB, '--to', '1'); check('a closed thing cannot be ranked', r.code !== 0 && /closed/.test(r.err), r.all);
+
+r = k('list', '--open');
+check('the list shows the order', r.out.indexOf(taskOrder()[0]) < r.out.indexOf(taskOrder()[1]) && /#1 /.test(r.out), r.out);
+
+const GA2 = goalId(k('goal', 'add', 'First goal', '--user-said', 'yes'));
+const GB2 = goalId(k('goal', 'add', 'Second goal', '--user-said', 'yes', '--due', '2099-01-02'));
+k('rank', GB2, '--to', '1');
+r = k('goal', 'list');
+check('goals have their own order', r.out.indexOf(GB2) < r.out.indexOf(GA2) && /#1 /.test(r.out), r.out);
+check('goal add takes a due date', /due 2099-01-02/.test(r.out), r.out);
+r = k('rank', GB2, '--before', TA); check('a goal cannot go before a task', r.code !== 0, r.all);
+r = k('rank'); check('rank alone shows both orders', /Goals/.test(r.out) && /Tasks/.test(r.out), r.out);
+
+r = k('due', TA, '2099-03-04');
+const dueT = () => snapR().tickets.find((t) => t.id === TA);
+check('a task takes a due date', r.code === 0 && dueT().due === '2099-03-04' && dueT().days_until > 0, r.all);
+check('...shown in the list and on the ticket', /due 2099-03-04/.test(k('list').out) && /due 2099-03-04/.test(k('show', TA).out));
+k('due', GA2, '2099-05-06');
+check('a goal takes one too', snapR().goals.find((x) => x.id === GA2).due === '2099-05-06');
+check('...shown on the goal', /due 2099-05-06/.test(k('goal', 'show', GA2).out));
+r = k('due', TA, '2026-02-31'); check('a date that only looks real is refused', r.code !== 0 && /not a real date/.test(r.err), r.all);
+r = k('due', TA, 'tomorrow'); check('a date in another format is refused', r.code !== 0, r.all);
+r = k('due', TA, '--clear');
+check('a due date can be cleared', r.code === 0 && dueT().due === null, r.all);
+const TF = task('Zeta page loads', '--due', '2099-07-08');
+check('new takes a due date', snapR().tickets.find((t) => t.id === TF).due === '2099-07-08');
+r = k('new', 'Eta page loads', '-r', 'Eta page returns 200', '-c', 'node t.mjs', '--due', 'soon');
+check('...and refuses a bad one', r.code !== 0, r.all);
+k('due', GA2, '2099-05-06');
+check('orient lists goals by rank', k('orient').out.indexOf(GB2) < k('orient').out.indexOf(GA2), k('orient').out);
+const soon = new Date(Date.now() + 2 * 86400000).toISOString().slice(0, 10);
+k('due', TC, soon);
+check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.test(k('orient').out), k('orient').out);
+
+}
+
 /* ---- report ------------------------------------------------------------------- */
 
 fs.rmSync(ROOT, { recursive: true, force: true });

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "genlock": {
+      "command": "genlock",
+      "args": [
+        "mcp"
+      ]
+    }
+  }
+}

@@ -2,7 +2,7 @@ import Foundation
 
 /// The JSON that `genlock snapshot` prints. The app reads records only through this.
 public struct Snapshot: Decodable, Equatable {
-    public static let supportedFormat = 2
+    public static let supportedFormat = 3
 
     public var format: Int
     public var root: String
@@ -19,6 +19,10 @@ public struct Snapshot: Decodable, Equatable {
     public var uncommitted: Int?
 
     public struct Goal: Decodable, Equatable, Identifiable {
+        /// Its place in the strict order, from 1. Nil once closed.
+        public var rank: Int?
+        public var due: String?
+        public var daysUntil: Int?
         public var id: String
         public var title: String
         public var status: String
@@ -64,6 +68,10 @@ public struct Snapshot: Decodable, Equatable {
     }
 
     public struct Ticket: Decodable, Equatable, Identifiable {
+        /// Its place in the strict order, from 1. Nil once closed.
+        public var rank: Int?
+        public var due: String?
+        public var daysUntil: Int?
         public var id: String
         public var title: String
         public var status: String
@@ -145,6 +153,12 @@ public struct Snapshot: Decodable, Equatable {
     public func goal(_ id: String?) -> Goal? { goals.first { $0.id == id } }
     public func ticket(_ id: String?) -> Ticket? { tickets.first { $0.id == id } }
     public var activeTickets: [Ticket] { tickets.filter { openTickets.contains($0.id) } }
+
+    /// Open tasks, most important first.
+    public var rankedTasks: [Ticket] { activeTickets.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) } }
+
+    /// Open goals, most important first.
+    public var rankedGoals: [Goal] { goals.filter { $0.rank != nil }.sorted { $0.rank! < $1.rank! } }
 }
 
 /// What a dashboard card needs, derived in one place so it can be tested without a screen.
@@ -195,8 +209,10 @@ public struct CardSummary: Equatable {
         needsSetup = !s.initialized
         let live = s.goals.filter { $0.status == "active" || $0.status == "parked" }
         extraGoals = max(0, s.goals.filter { $0.status == "active" }.count - 1)
-        deadline = live.flatMap(\.next)
-            .compactMap { n in n.daysUntil.map { Deadline(text: n.text, daysUntil: $0) } }
+        let nextDates = live.flatMap(\.next).compactMap { n in n.daysUntil.map { Deadline(text: n.text, daysUntil: $0) } }
+        let goalDates = live.compactMap { g in g.daysUntil.map { Deadline(text: g.title, daysUntil: $0) } }
+        let taskDates = s.activeTickets.compactMap { t in t.daysUntil.map { Deadline(text: t.title, daysUntil: $0) } }
+        deadline = (nextDates + goalDates + taskDates)
             .filter { $0.daysUntil <= Self.deadlineWindowDays }
             .min { $0.daysUntil < $1.daysUntil }
     }

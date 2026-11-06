@@ -527,6 +527,26 @@ final class AppModel {
         else { message = "\(review.path) is no longer there." }
     }
 
+    /// Moves a goal or task to a place in its order. This is `genlock rank`, as for any agent.
+    func rank(_ item: String, to place: Int, in project: String) {
+        runCLI(["rank", item, "--to", "\(place)"], in: project, failure: "Could not move it")
+    }
+
+    func setDue(_ item: String, to day: String?, in project: String) {
+        runCLI(["due", item] + (day.map { [$0] } ?? ["--clear"]), in: project, failure: "Could not change the due date")
+    }
+
+    private func runCLI(_ args: [String], in project: String, failure: String) {
+        guard let tools else { return }
+        Task.detached {
+            let out = try? GenlockCLI.run(args, in: project, tools: tools)
+            await MainActor.run {
+                if out?.status != 0 { self.message = "\(failure): \(out?.stderr ?? "")" }
+                self.refresh(project)
+            }
+        }
+    }
+
     func markReviewed(_ review: Snapshot.Review, in id: String) {
         guard let tools else { return }
         Task.detached {
