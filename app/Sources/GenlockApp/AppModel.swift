@@ -92,6 +92,7 @@ final class AppModel {
                 model.collectSpawns()
                 model.collectTells()
                 model.clearAssistantIfAsked()
+                model.refreshAssistantName()
                 model.updateAttention()
                 model.rememberSessions()
             }
@@ -396,7 +397,8 @@ final class AppModel {
         let isAssistant = session.projectID == assistantFolder
         session.start(tools: tools, conversation: start, voice: voice.speakReplies,
                       spinoffs: !isAssistant && (session.spawn != nil || spinoffsAllowed(session.projectID)),
-                      assistantOf: isAssistant ? store.file : nil)
+                      assistantOf: isAssistant ? store.file : nil,
+                      assistantName: isAssistant ? namer.saved : nil)
     }
 
     /// Reopens what was open last time, ready to carry on. Before the tools are found these
@@ -524,7 +526,10 @@ final class AppModel {
 
     /// From the dashboard there is no project in front of you, so you are talking to the Assistant.
     func pressVoice(for id: String? = nil) {
-        if id == nil && route == .dashboard && voice.machine.state == .idle { openAssistant() }
+        if id == nil && route == .dashboard && voice.machine.state == .idle {
+            openAssistant()
+            if askingAssistantName { return }
+        }
         voice.press(target: id ?? focusedProject)
     }
 
@@ -535,7 +540,43 @@ final class AppModel {
         VoiceChannel.defaultBase.deletingLastPathComponent().appendingPathComponent("Assistant").path
     }
 
+    private var namer: AssistantName { AssistantName(folder: URL(fileURLWithPath: assistantFolder)) }
+
+    /// What to call it everywhere. Refreshed on the timer, because the agent can name itself.
+    private(set) var assistantName = AssistantName.fallback
+    /// Asking once is enough: "Not now" stays "Assistant", and it can be named by talking to it.
+    var askingAssistantName = false
+    private var askedForName: Bool {
+        get { UserDefaults.standard.bool(forKey: "askedAssistantName") }
+        set { UserDefaults.standard.set(newValue, forKey: "askedAssistantName") }
+    }
+
+    func refreshAssistantName() {
+        let name = namer.saved ?? AssistantName.fallback
+        if name != assistantName { assistantName = name }
+        if let session = sessions[assistantFolder], session.displayName != name { session.displayName = name }
+    }
+
+    /// The answer to the question that opening it for the first time asks.
+    func nameAssistant(_ choice: String?, letItChoose: Bool = false) {
+        askedForName = true
+        askingAssistantName = false
+        if let choice { namer.save(choice) }
+        refreshAssistantName()
+        let hadSession = sessions[assistantFolder]?.isRunning == true
+        openAssistant()
+        if letItChoose {
+            sessions[assistantFolder]?.submit(SessionLaunch.chooseOwnName)
+        } else if hadSession, let saved = namer.saved, choice != nil {
+            sessions[assistantFolder]?.submit(SessionLaunch.told(name: saved))
+        }
+    }
+
     func openAssistant() {
+        if namer.saved == nil && !askedForName {
+            askingAssistantName = true
+            return
+        }
         try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
         ensureSession(assistantFolder)
         if !visible.contains(assistantFolder) { visible = [assistantFolder] }

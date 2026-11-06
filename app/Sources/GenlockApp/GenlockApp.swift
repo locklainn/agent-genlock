@@ -91,9 +91,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
                     // Pressed to cancel dictation, it has done its job.
                     if model.voice.machine.state == .idle { commandTap.down() } else { commandTap.interrupted() }
                 } else if commandTap.up() {
-                    switch VoiceMachine.tapAction(waiting: model.voice.waitingReplies, isSpeaking: model.voice.isSpeaking) {
+                    switch VoiceMachine.tapAction(waiting: model.voice.waitingReplies, isSpeaking: model.voice.isSpeaking, canReplay: model.voice.canReplay) {
                     case .hear: model.hearReplies()
                     case .stop: model.voice.stopSpeaking()
+                    case .replay: model.voice.replayLast()
                     case .none: break
                     }
                 }
@@ -156,6 +157,7 @@ struct RootView: View {
             }
             .padding(.bottom, 20)
             if let id = model.setupTarget { SetupSheet(projectID: id) }
+            if model.askingAssistantName { NameAssistantSheet() }
             if let id = model.iconTarget { IconPicker(projectID: id) }
         }
         .animation(.spring(duration: 0.34), value: model.route)
@@ -246,7 +248,7 @@ struct VoiceBanner: View {
         } else if voice.waitingReplies > 0 {
             HStack(spacing: 12) {
                 Image(systemName: "bell.badge.fill").font(.system(size: 16)).foregroundStyle(Theme.cyan)
-                Text(voice.waitingReplies == 1 ? "\(voice.waitingFrom.first ?? "An agent") has an update" : "\(voice.waitingReplies) updates waiting")
+                Text(VoiceMachine.updateNotice(from: voice.waitingFrom, count: voice.waitingReplies))
                     .font(.system(size: 14, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 Text("Right ⌘ to hear").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary).fixedSize()
                 Button { model.hearReplies() } label: { Image(systemName: "play.fill") }

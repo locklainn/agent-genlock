@@ -82,7 +82,7 @@ struct SessionBar: View {
             .scrollIndicators(.never)
             Spacer(minLength: 0)
             UpdatePill()
-            Button { model.openAssistant() } label: { Label("Assistant", systemImage: "sparkles") }
+            Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects")
             Button { voice.speakReplies.toggle() } label: {
@@ -133,7 +133,7 @@ struct PaneView: View {
     private func inspectorWidth(_ pane: CGFloat) -> CGFloat { pane < 860 ? 250 : 320 }
 
     private var inspectorHidden: Bool { model.hiddenInspectors.contains(sessionKey) }
-    private var name: String { URL(fileURLWithPath: projectID).lastPathComponent }
+    private var name: String { projectID == model.assistantFolder ? model.assistantName : URL(fileURLWithPath: projectID).lastPathComponent }
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
 
     var body: some View {

@@ -16,6 +16,11 @@ final class VoiceController: NSObject {
     private(set) var waitingReplies = 0
     private(set) var waitingFrom: [String] = []
     @ObservationIgnored private(set) var dings = 0
+    /// Speech is over only when the last thing queued ends, whatever else finishes before it.
+    @ObservationIgnored fileprivate var latestUtterance: AVSpeechUtterance?
+    /// What you last heard, kept so a stray press never costs you an update.
+    @ObservationIgnored private var lastHeard = UserDefaults.standard.stringArray(forKey: "lastHeard") ?? []
+    var canReplay: Bool { !lastHeard.isEmpty }
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
     private(set) var target: String?
@@ -239,13 +244,19 @@ final class VoiceController: NSObject {
     /// You said yes: read everything waiting, oldest first within each session.
     func hearReplies(from sessions: [TerminalSession]) {
         let open = sessions.count
-        for session in sessions {
-            for text in session.channel.takeMessages() {
-                speak(VoiceChannel.spoken(text, project: session.label, sessionsOpen: open), volume: Driver.isActive ? 0 : 1)
-            }
+        let heard = sessions.flatMap { session in
+            session.channel.takeMessages().map { VoiceChannel.spoken($0, project: session.label, sessionsOpen: open) }
         }
         waitingReplies = 0
         waitingFrom = []
+        guard !heard.isEmpty else { return }
+        lastHeard = heard
+        UserDefaults.standard.set(heard, forKey: "lastHeard")
+        for text in heard { speak(text, volume: Driver.isActive ? 0 : 1) }
+    }
+
+    func replayLast() {
+        for text in lastHeard { speak(text, volume: Driver.isActive ? 0 : 1) }
     }
 
     /// AVSpeechSynthesizer queues on its own, so replies from several sessions never overlap.
@@ -259,6 +270,7 @@ final class VoiceController: NSObject {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = replyVoice
         utterance.volume = volume
+        latestUtterance = utterance
         synth.speak(utterance)
     }
 
@@ -274,6 +286,7 @@ final class VoiceController: NSObject {
     }
 
     func stopSpeaking() {
+        latestUtterance = nil
         synth.stopSpeaking(at: .immediate)
         isSpeaking = false
         speakingText = nil
@@ -288,11 +301,17 @@ extension VoiceController: AVSpeechSynthesizerDelegate {
         }
     }
 
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) {
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didFinish u: AVSpeechUtterance) { ended(u) }
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didCancel u: AVSpeechUtterance) { ended(u) }
+
+    nonisolated private func ended(_ u: AVSpeechUtterance) {
+        nonisolated(unsafe) let u = u
         DispatchQueue.main.async {
             MainActor.assumeIsolated {
-                self.isSpeaking = self.synth.isSpeaking
-                if !self.isSpeaking { self.speakingText = nil }
+                guard u === self.latestUtterance else { return }
+                self.latestUtterance = nil
+                self.isSpeaking = false
+                self.speakingText = nil
             }
         }
     }

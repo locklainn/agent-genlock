@@ -948,6 +948,62 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
 
 }
 
+/* ---- short names --------------------------------------------------------------- */
+{
+  const SN = path.join(ROOT, 'names');
+  fs.mkdirSync(SN);
+  git(SN, 'init', '-q'); git(SN, 'config', 'user.email', 't@e.st'); git(SN, 'config', 'user.name', 'test');
+  fs.writeFileSync(path.join(SN, 'f'), 'x\n'); git(SN, 'add', '.'); git(SN, 'commit', '-qm', 'i');
+  const n = (...args) => run(SN, 'namer', args);
+  const gid = (x) => (/\b(G-[0-9A-Z]{5})\b/.exec(x.out) || [])[1];
+  const G1 = gid(n('goal', 'add', 'Ship the billing page', '--user-said', 'yes'));
+  const T1 = idOf(n('new', 'Refund button works', '-r', 'Refund button returns 200', '-c', 'node t.mjs', '--goal', G1));
+  const T2 = idOf(n('new', 'Refund button shows a receipt', '-r', 'Receipt page returns 200', '-c', 'node t.mjs'));
+  const T3 = idOf(n('new', 'Refund button works', '-r', 'Second button returns 200', '-c', 'node t.mjs', '--loose'));
+  const list = n('list').out;
+  check('a task has a short name from its title, shown first', new RegExp(`refund-button-works \\(${T1}\\)`).test(list), list);
+  check('...without filler words', /ship-billing-page/.test(n('goal', 'list').out), n('goal', 'list').out);
+  check('...and no two share one', /refund-button-shows/.test(list) && /refund-button-works-2/.test(list), list);
+  const sn = JSON.parse(n('snapshot').out);
+  check('short names reach other tools', sn.goals[0].short === 'ship-billing-page' && sn.tickets.find((t) => t.id === T1).short === 'refund-button-works', JSON.stringify(sn.goals[0]));
+
+  r = n('show', 'refund-button-shows');
+  check('a short name works where an id goes', r.code === 0 && r.out.includes(T2), r.all);
+  r = n('show', 'Refund Button Shows');
+  check('...however it is said', r.code === 0 && r.out.includes(T2), r.all);
+  r = n('show', 'receipt');
+  check('...and so do words from the title', r.code === 0 && r.out.includes(T2), r.all);
+  r = n('show', 'refund');
+  check('several matches are named, not guessed', r.code !== 0 && /several/.test(r.err) && /refund-button-shows/.test(r.err), r.all);
+  r = n('show', 'zebra');
+  check('no match is still refused', r.code !== 0, r.all);
+  r = n('continue', 'billing page');
+  check('continue takes a goal by name', r.code === 0 && r.out.includes(G1), r.all);
+  r = n('continue', 'receipt');
+  check('continue takes a task by name', r.code === 0 && r.out.includes(T2), r.all);
+  r = n('goal', 'show', 'billing');
+  check('goal commands take names', r.code === 0 && r.out.includes(G1), r.all);
+  r = n('rank', 'receipt', '--to', '1');
+  check('rank takes names', r.code === 0 && r.out.indexOf(T2) < r.out.indexOf(T1), r.all);
+  r = n('due', 'receipt', '2099-01-01');
+  check('due takes names', r.code === 0, r.all);
+  r = n('rank', 'refund', '--to', '1');
+  check('a command will not act on an ambiguous name', r.code !== 0 && /several/.test(r.err), r.all);
+
+  r = n('short', T3, 'second try');
+  check('a name can be chosen', r.code === 0 && /second-try/.test(n('list').out) && n('show', 'second try').out.includes(T3), r.all);
+  r = n('short', T2, 'second try');
+  check('...but not one already in use', r.code !== 0 && /already/.test(r.err), r.all);
+  r = n('short', T2, 'T-ABCDE');
+  check('...or one that looks like an id', r.code !== 0, r.all);
+  n('abandon', T2, 'not needed');
+  n('abandon', T3, 'not needed');
+  r = n('show', 'refund');
+  check('a closed thing gives way to an open one with the same words', r.code === 0 && r.out.includes(T1), r.all);
+  check('the same records give the same names', n('list').out === n('list').out);
+  check('the agents are told', /Say short names, never ids/.test(fs.readFileSync(path.join(path.dirname(CLI), '..', 'agent', 'goals.md'), 'utf8')));
+}
+
 /* ---- the assistant ------------------------------------------------------------- */
 {
   const AS = path.join(ROOT, 'assistant');
@@ -983,7 +1039,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('overview puts TODAY first', r.code === 0 && r.out.indexOf('alpha') < r.out.indexOf('beta'), r.all);
   check('...skips a folder that has gone', !/gone/.test(r.out), r.out);
   check('...says a session needs the user, and what it said', /NEEDS THE USER/.test(r.out) && /May I run the migration/.test(r.out), r.out);
-  check('...shows the top goal and task', /top goal: Launch the site/.test(r.out) && /top task: Checkout page loads/.test(r.out), r.out);
+  check('...shows the top goal and task', /top goal: \S+: Launch the site/.test(r.out) && /top task: \S+: Checkout page loads/.test(r.out), r.out);
   check('...and how many questions wait on the user', /WAITING ON THE USER: 1, newest: Which colour/.test(r.out), r.out);
   check('...and collapses a project with nothing going on', /No session and nothing tracked: beta/.test(r.out), r.out);
 
@@ -999,7 +1055,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   r = asEnv(['overview']);
   check('a long line is clipped', r.out.split('\n').every((l) => l.length < 200) && !/end$/m.test(r.out), r.out);
   r = asEnv(['overview', 'alpha']);
-  check('one project gives the full detail', /goal #1: Launch the site/.test(r.out) && /task #1/.test(r.out) && /due 2099-01-01/.test(r.out) && /Which colour/.test(r.out), r.out);
+  check('one project gives the full detail', /goal #1: \S+: Launch the site/.test(r.out) && /task #1/.test(r.out) && /due 2099-01-01/.test(r.out) && /Which colour/.test(r.out), r.out);
   r = asEnv(['overview', 'nope']);
   check('an unknown project is refused', r.code !== 0 && /alpha/.test(r.err), r.all);
 
@@ -1023,6 +1079,13 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const later = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
     env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_SESSION: 'a-new-conversation' } });
   check('a new conversation gets everything, not "unchanged"', /top goal/.test(later.stdout) && !/Unchanged: alpha/.test(later.stdout), later.stdout);
+
+  r = run(AS, 'someone', ['name', 'Juno']);
+  check('a project agent cannot name the Assistant', r.code !== 0, r.all);
+  r = asEnv(['name', 'Juno']);
+  check('the Assistant takes a name', r.code === 0 && fs.readFileSync(path.join(AS, 'Assistant', 'name.txt'), 'utf8').trim() === 'Juno', r.all);
+  r = asEnv(['name', 'a name that goes on far too long to fit']);
+  check('...of a sensible length', r.code !== 0, r.all);
 
   r = run(AS, 'someone', ['remember', 'x', 'y']);
   check('a project agent cannot use the Assistant notes', r.code !== 0, r.all);

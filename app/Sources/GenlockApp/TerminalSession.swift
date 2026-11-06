@@ -33,8 +33,11 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     @ObservationIgnored var rows = 0
     @ObservationIgnored let view: PaneTerminalView
 
+    /// What the Assistant is called, in place of its folder's name.
+    var displayName: String?
+
     var label: String {
-        let name = URL(fileURLWithPath: projectID).lastPathComponent
+        let name = displayName ?? URL(fileURLWithPath: projectID).lastPathComponent
         return spawn.map { "\(name) · \($0.ticket)" } ?? name
     }
 
@@ -57,7 +60,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeForegroundColor = NSColor(white: 0.92, alpha: 1)
     }
 
-    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil) {
+    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil) {
         guard let claude = tools.claudePath else {
             startError = "Claude Code was not found. Install it, then try again."
             return
@@ -92,7 +95,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
                                            reportsState: true, sessionID: newID, resumeID: resumeID,
-                                           prompt: newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt), assistant: store != nil, handoff: handoff)
+                                           prompt: newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt), assistant: store != nil, assistantName: assistantName, handoff: handoff)
         view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)

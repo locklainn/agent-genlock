@@ -26,8 +26,8 @@ import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
-import { cmdDue, cmdRank } from '../lib/rank.mjs';
-import { cmdClearContext, cmdOverview, cmdRemember, cmdRemembered, cmdTell, runAt } from '../lib/overview.mjs';
+import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
+import { cmdClearContext, cmdName, cmdOverview, cmdRemember, cmdRemembered, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
@@ -50,6 +50,9 @@ TICKETS   requirements first; done is proved, not asserted
   genlock start ID --because ".."               required to restart a blocked ticket
 
 ON A TICKET OR A GOAL
+  Every goal and ticket has a short name. Use it, or words from its title, anywhere an ID goes:
+    genlock continue billing-page  |  genlock start "refund button"
+  genlock short ID "NAME"                       choose its short name
   genlock rank [goals|tasks]                    the strict order, most important first. No two share a place
   genlock rank ID --to N  |  genlock rank ID --before OTHER
   genlock due ID YYYY-MM-DD  |  genlock due ID --clear
@@ -214,11 +217,13 @@ const COMMANDS = {
   snapshot: cmdSnapshot,
   overview: cmdOverview,
   tell: cmdTell,
+  name: cmdName,
   remember: cmdRemember,
   remembered: cmdRemembered,
   'clear-context': cmdClearContext,
   rank: cmdRank,
   due: cmdDue,
+  short: cmdShort,
   say: cmdSay,
   'voice-check': cmdVoiceCheck,
   'session-state': cmdSessionState,

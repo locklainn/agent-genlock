@@ -484,10 +484,14 @@ final class CoreTests: XCTestCase {
 
     func testACleanTapOfRightCommandAsksForReplies() { // V15
         typealias V = VoiceMachine
-        XCTAssertEqual(V.tapAction(waiting: 2, isSpeaking: false), .hear)
-        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: true), .stop)
-        XCTAssertEqual(V.tapAction(waiting: 1, isSpeaking: true), .stop, "stopping comes first")
-        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: false), .none, "otherwise an ordinary key")
+        XCTAssertEqual(V.tapAction(waiting: 2, isSpeaking: false, canReplay: true), .hear, "new comes before old")
+        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: true, canReplay: true), .stop)
+        XCTAssertEqual(V.tapAction(waiting: 1, isSpeaking: true, canReplay: false), .stop, "stopping comes first")
+        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: false, canReplay: true), .replay, "nothing is ever lost")
+        XCTAssertEqual(V.tapAction(waiting: 0, isSpeaking: false, canReplay: false), .none, "otherwise an ordinary key")
+
+        XCTAssertEqual(V.updateNotice(from: ["Assistant"], count: 1), "Assistant update")
+        XCTAssertEqual(V.updateNotice(from: ["Assistant", "ghostlight"], count: 3), "3 updates")
 
         var tap = CleanTap()
         tap.down()
@@ -540,6 +544,24 @@ final class CoreTests: XCTestCase {
 
         let args = L.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, handoff: "focused on billing")
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("focused on billing"))
+    }
+
+    func testTheAssistantsName() throws { // A3
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-name-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let namer = AssistantName(folder: folder)
+        XCTAssertNil(namer.saved, "not named yet")
+        namer.save("  Juno \n")
+        XCTAssertEqual(namer.saved, "Juno")
+        namer.save("   ")
+        XCTAssertEqual(namer.saved, "Juno", "a blank does not wipe it")
+        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, assistantName: "Juno")
+        XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("Your name is Juno"))
+    }
+
+    func testAppSessionsAreToldToUseShortNames() { // S22
+        let args = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock")
+        XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("short names"))
     }
 
     func testPassedMessagesArriveOnce() throws { // A1

@@ -45,7 +45,7 @@ struct DashboardHeader: View {
             }
             Spacer()
             UpdatePill()
-            Button { model.openAssistant() } label: { Label("Assistant", systemImage: "sparkles") }
+            Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects. Right ⌥ from here talks to it.")
             if !model.visible.isEmpty {
@@ -569,6 +569,44 @@ struct ProjectCard: View {
 }
 
 /// Where records go is a real choice, so it gets a real screen rather than a system alert.
+/// Asked the first time the Assistant is opened.
+struct NameAssistantSheet: View {
+    @Environment(AppModel.self) private var model
+    @State private var name = ""
+    @FocusState private var typing: Bool
+
+    var body: some View {
+        ZStack {
+            Color.black.opacity(0.55).ignoresSafeArea()
+            VStack(spacing: 18) {
+                Image(systemName: "sparkles").font(.system(size: 30, weight: .semibold)).foregroundStyle(Theme.brand)
+                Text("What should we call your assistant?").font(.system(size: 22, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
+                Text("It looks across all your projects, so you can talk to one place.")
+                    .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+                TextField("A name", text: $name)
+                    .textFieldStyle(.plain).font(.system(size: 18, weight: .medium)).multilineTextAlignment(.center)
+                    .padding(12).glass(corner: 12, fill: Color.white.opacity(0.05))
+                    .focused($typing)
+                    .onSubmit { if !trimmed.isEmpty { model.nameAssistant(trimmed) } }
+                HStack(spacing: 10) {
+                    Button("Not now") { model.nameAssistant(nil) }.buttonStyle(GlassButtonStyle())
+                    Button("Let it choose") { model.nameAssistant(nil, letItChoose: true) }.buttonStyle(GlassButtonStyle())
+                    Button("Use this name") { model.nameAssistant(trimmed) }.buttonStyle(GlowButtonStyle()).disabled(trimmed.isEmpty)
+                }
+            }
+            .padding(28)
+            .frame(width: 460)
+            .background(Color(hex: 0x12141F), in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 24, style: .continuous).strokeBorder(Theme.brand, lineWidth: 1.5))
+            .shadow(color: Color(hex: 0x6D5BFF).opacity(0.5), radius: 40)
+        }
+        .transition(.opacity)
+        .onAppear { typing = true }
+    }
+
+    private var trimmed: String { name.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
 struct SetupSheet: View {
     @Environment(AppModel.self) private var model
     let projectID: String
