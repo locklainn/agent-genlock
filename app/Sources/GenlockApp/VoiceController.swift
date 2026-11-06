@@ -18,6 +18,23 @@ final class VoiceController: NSObject {
     @ObservationIgnored private(set) var dings = 0
     /// Speech is over only when the last thing queued ends, whatever else finishes before it.
     @ObservationIgnored fileprivate var latestUtterance: AVSpeechUtterance?
+    @ObservationIgnored private var queue: [(text: String, from: String?)] = []
+    /// The update in front of you, which the talk key and the reply box answer.
+    private(set) var replyTo: ReplyTarget?
+    @ObservationIgnored private var replyQuietSince: Date?
+    @ObservationIgnored private var lastHeardFrom = UserDefaults.standard.stringArray(forKey: "lastHeardFrom") ?? []
+    @ObservationIgnored private var speechVolume: Float = 1
+    /// Where speech has got to in `speakingText`, and where the current utterance began in it.
+    @ObservationIgnored private(set) var reached = 0
+    @ObservationIgnored private var playedFrom = 0
+    private(set) var speedHeld = false
+    /// How fast replies are read, as a multiple of normal speech.
+    var speechSpeed: Double {
+        didSet {
+            UserDefaults.standard.set(speechSpeed, forKey: "speechSpeed")
+            applySpeed()
+        }
+    }
     /// What you last heard, kept so a stray press never costs you an update.
     @ObservationIgnored private var lastHeard = UserDefaults.standard.stringArray(forKey: "lastHeard") ?? []
     var canReplay: Bool { !lastHeard.isEmpty }
@@ -41,6 +58,7 @@ final class VoiceController: NSObject {
 
     override init() {
         speakReplies = UserDefaults.standard.object(forKey: "speakReplies") as? Bool ?? true
+        speechSpeed = UserDefaults.standard.object(forKey: "speechSpeed") as? Double ?? SpeechSpeed.standard
         super.init()
         synth.delegate = self
     }
@@ -68,6 +86,8 @@ final class VoiceController: NSObject {
             problem = nil
             needsDictationSetting = false
             didSend = false
+            // Dictating answers the update, so it has done its job.
+            if replyTo?.session == project { replyTo = nil }
             requestAccessThenListen()
         case .finishListening:
             finish()
@@ -245,33 +265,103 @@ final class VoiceController: NSObject {
     func hearReplies(from sessions: [TerminalSession]) {
         let open = sessions.count
         let heard = sessions.flatMap { session in
-            session.channel.takeMessages().map { VoiceChannel.spoken($0, project: session.label, sessionsOpen: open) }
+            session.channel.takeMessages().map { (text: VoiceChannel.spoken($0, project: session.label, sessionsOpen: open), from: session.key) }
         }
         waitingReplies = 0
         waitingFrom = []
         guard !heard.isEmpty else { return }
-        lastHeard = heard
-        UserDefaults.standard.set(heard, forKey: "lastHeard")
-        for text in heard { speak(text, volume: Driver.isActive ? 0 : 1) }
+        lastHeard = heard.map(\.text)
+        lastHeardFrom = heard.map(\.from)
+        UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
+        UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
+        for item in heard { speak(item.text, volume: Driver.isActive ? 0 : 1, from: item.from) }
     }
 
     func replayLast() {
-        for text in lastHeard { speak(text, volume: Driver.isActive ? 0 : 1) }
+        for (i, text) in lastHeard.enumerated() {
+            speak(text, volume: Driver.isActive ? 0 : 1, from: i < lastHeardFrom.count ? lastHeardFrom[i] : nil)
+        }
     }
 
-    /// AVSpeechSynthesizer queues on its own, so replies from several sessions never overlap.
-    func speak(_ text: String, volume: Float = 1) {
+    /// Replies queue here rather than in the synthesizer, because changing speed means restarting
+    /// the current one from the word it has reached.
+    func speak(_ text: String, volume: Float = 1, from session: String? = nil) {
         isSpeaking = true
         if !hintedVoice, let hint = VoiceOption.upgradeHint(for: chosenVoice) {
             hintedVoice = true
             AppModel.shared.message = hint
         }
         lastSpoken = text
-        let utterance = AVSpeechUtterance(string: text)
+        queue.append((text, session))
+        speechVolume = volume
+        if latestUtterance == nil { playNext() }
+    }
+
+    fileprivate func playNext() {
+        guard !queue.isEmpty else {
+            isSpeaking = false
+            speakingText = nil
+            replyQuietSince = Date()
+            return
+        }
+        let next = queue.removeFirst()
+        let text = next.text
+        speakingText = text
+        replyQuietSince = nil
+        if let from = next.from { replyTo = ReplyTarget(session: from, text: text) }
+        reached = 0
+        play(from: 0)
+    }
+
+    private func play(from offset: Int) {
+        guard let text = speakingText else { return }
+        playedFrom = offset
+        let utterance = AVSpeechUtterance(string: SpeechSpeed.remainder(of: text, from: offset))
         utterance.voice = replyVoice
-        utterance.volume = volume
+        utterance.volume = speechVolume
+        utterance.rate = SpeechSpeed.rate(speed: speechSpeed, held: speedHeld)
         latestUtterance = utterance
         synth.speak(utterance)
+    }
+
+    /// Restarts what is being read from the word it reached, at the current speed.
+    private func applySpeed() {
+        guard latestUtterance != nil else { return }
+        latestUtterance = nil
+        synth.stopSpeaking(at: .immediate)
+        play(from: reached)
+    }
+
+    /// While the right arrow is held.
+    func holdSpeed(_ held: Bool) {
+        guard held != speedHeld else { return }
+        speedHeld = held
+        applySpeed()
+    }
+
+    fileprivate func noteReached(_ location: Int, of utterance: AVSpeechUtterance) {
+        if utterance === latestUtterance { reached = playedFrom + location }
+    }
+
+    func dismissReply() { replyTo = nil }
+
+    /// Your answer to the update in front of you, spoken back like anything you dictate.
+    func sendReply(_ text: String) {
+        guard let replyTo else { return }
+        submit(text, to: replyTo.session)
+        self.replyTo = nil
+    }
+
+    func expireReply(now: Date = Date()) {
+        guard replyTo != nil, machine.state == .idle, let since = replyQuietSince,
+              now.timeIntervalSince(since) >= ReplyTarget.lingerSeconds else { return }
+        replyTo = nil
+    }
+
+    /// Lets you hear the speed you just chose.
+    func trySpeed() {
+        stopSpeaking()
+        speak("This is how fast replies will be read. Hold the right arrow while I'm talking to go faster.", volume: Driver.isActive ? 0 : 1)
     }
 
     @ObservationIgnored private(set) var lastSpoken: String?
@@ -286,7 +376,10 @@ final class VoiceController: NSObject {
     }
 
     func stopSpeaking() {
+        queue.removeAll()
+        replyQuietSince = Date()
         latestUtterance = nil
+        speedHeld = false
         synth.stopSpeaking(at: .immediate)
         isSpeaking = false
         speakingText = nil
@@ -294,10 +387,10 @@ final class VoiceController: NSObject {
 }
 
 extension VoiceController: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, didStart u: AVSpeechUtterance) {
-        let text = u.speechString
+    nonisolated func speechSynthesizer(_ s: AVSpeechSynthesizer, willSpeakRangeOfSpeechString range: NSRange, utterance u: AVSpeechUtterance) {
+        nonisolated(unsafe) let u = u
         DispatchQueue.main.async {
-            MainActor.assumeIsolated { self.speakingText = text }
+            MainActor.assumeIsolated { self.noteReached(range.location, of: u) }
         }
     }
 
@@ -310,8 +403,7 @@ extension VoiceController: AVSpeechSynthesizerDelegate {
             MainActor.assumeIsolated {
                 guard u === self.latestUtterance else { return }
                 self.latestUtterance = nil
-                self.isSpeaking = false
-                self.speakingText = nil
+                self.playNext()
             }
         }
     }

@@ -41,6 +41,7 @@ struct InspectorView: View {
     @ViewBuilder private func content(_ s: Snapshot, changed: Set<String>) -> some View {
         let current = s.goal(s.currentGoal)
         let others = s.rankedGoals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != s.currentGoal }
+        let focus = s.taskFocus()
         let open = s.rankedTasks
         let reviews = s.openReviews
 
@@ -51,10 +52,7 @@ struct InspectorView: View {
         }
         if !s.questionsForUser.isEmpty {
             InspectorCard(title: "Waiting on you", symbol: "person.fill.questionmark", count: s.questionsForUser.count, color: Theme.violet) {
-                ForEach(s.questionsForUser) { q in
-                    Text(q.text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true).livePulse(changed.contains(q.id))
-                }
+                WaitingList(questions: s.questionsForUser, changed: changed)
             }
         }
         InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
@@ -67,30 +65,22 @@ struct InspectorView: View {
                     .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
         }
-        InspectorCard(title: "Tasks", symbol: "bolt.fill", count: open.count, color: Theme.cyan) {
-            if open.isEmpty {
-                Text("No open tasks.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
+        InspectorCard(title: "Now", symbol: "bolt.fill", count: focus.active.isEmpty ? nil : focus.active.count, color: Theme.cyan) {
+            if focus.active.isEmpty && focus.justFinished.isEmpty {
+                Text(open.isEmpty ? "Nothing going on." : "Nothing going on right now.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(open) { t in
+            ForEach(focus.active) { t in
                 RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
                     TaskRow(ticket: t, changed: changed.contains(t.id))
                 }
             }
+            ForEach(focus.justFinished) { TaskRow(ticket: $0, changed: changed.contains($0.id)) }
         }
         let stops = (current?.forbids ?? []) + open.flatMap(\.forbids)
         if !stops.isEmpty {
             InspectorCard(title: "Do not", symbol: "hand.raised.fill", color: Theme.red) {
                 ForEach(stops.indices, id: \.self) { i in
                     Text(stops[i].text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true)
-                }
-            }
-        }
-        if !others.isEmpty {
-            InspectorCard(title: "Other goals", symbol: "square.stack.3d.up.fill", count: others.count, color: Theme.textSecondary) {
-                ForEach(others) { g in
-                    RankedRow(id: g.id, title: g.title, rank: g.rank, due: g.due, daysUntil: g.daysUntil, projectID: projectID) {
-                        OtherGoal(goal: g, changed: changed, tier: tier)
-                    }
                 }
             }
         }
@@ -101,6 +91,9 @@ struct InspectorView: View {
                         .font(.system(size: 11, design: .monospaced)).foregroundStyle(Theme.textSecondary).lineLimit(2)
                 }
             }
+        }
+        if !focus.backlog.isEmpty || !others.isEmpty {
+            BacklogCard(tasks: focus.backlog, goals: others, changed: changed, tier: tier, projectID: projectID)
         }
     }
 }
@@ -193,6 +186,72 @@ struct DueControl: View {
                 }
             }
             .padding(14)
+        }
+    }
+}
+
+/// Everything not going on right now, a click away so it does not bury what is.
+struct BacklogCard: View {
+    let tasks: [Snapshot.Ticket]
+    let goals: [Snapshot.Goal]
+    let changed: Set<String>
+    let tier: Tier
+    let projectID: String
+    @State private var expanded = false
+
+    private var summary: String {
+        var parts: [String] = []
+        if !tasks.isEmpty { parts.append(tasks.count == 1 ? "1 task" : "\(tasks.count) tasks") }
+        if !goals.isEmpty { parts.append(goals.count == 1 ? "1 other goal" : "\(goals.count) other goals") }
+        return parts.joined(separator: ", ")
+    }
+
+    var body: some View {
+        InspectorCard(title: "Backlog", symbol: "tray.full.fill", color: Theme.textSecondary) {
+            Button { withAnimation(.spring(duration: 0.28)) { expanded.toggle() } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(expanded ? 90 : 0))
+                    Text(summary).font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Spacer(minLength: 0)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Backlog: \(summary)")
+            if expanded {
+                ForEach(tasks) { t in
+                    RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
+                        TaskRow(ticket: t, changed: changed.contains(t.id))
+                    }
+                }
+                ForEach(goals) { g in
+                    RankedRow(id: g.id, title: g.title, rank: g.rank, due: g.due, daysUntil: g.daysUntil, projectID: projectID) {
+                        OtherGoal(goal: g, changed: changed, tier: tier)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Questions only you can answer, short until you ask for all of it.
+struct WaitingList: View {
+    let questions: [Snapshot.Question]
+    let changed: Set<String>
+    @State private var expanded = false
+    private static let shown = 2
+
+    var body: some View {
+        let visible = expanded ? questions : Array(questions.prefix(Self.shown))
+        ForEach(visible) { q in
+            Text(q.text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary)
+                .lineLimit(expanded ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true).livePulse(changed.contains(q.id))
+        }
+        if questions.count > Self.shown || expanded {
+            Button(expanded ? "Show less" : "Show all \(questions.count)") { withAnimation(.spring(duration: 0.28)) { expanded.toggle() } }
+                .buttonStyle(LinkButtonStyle())
         }
     }
 }

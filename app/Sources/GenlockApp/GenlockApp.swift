@@ -52,11 +52,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private var monitor: Any?
     private var shiftWasDown = false
     private var commandTap = CleanTap()
+    private static let rightArrowKey: UInt16 = 124
 
     @MainActor func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.activate(ignoringOtherApps: true)
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown]) { [weak self] event in
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown, .keyUp]) { [weak self] event in
             nonisolated(unsafe) let event = event
             return MainActor.assumeIsolated { self?.handle(event) ?? event }
         }
@@ -101,8 +102,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             } else {
                 commandTap.interrupted()
             }
+        case .keyUp:
+            if event.keyCode == Self.rightArrowKey && model.voice.speedHeld {
+                model.voice.holdSpeed(false)
+                return nil
+            }
         case .keyDown:
             commandTap.interrupted()
+            // While it talks the right arrow speeds it up, instead of reaching the terminal.
+            if event.keyCode == Self.rightArrowKey && (model.voice.isSpeaking || model.voice.speedHeld) {
+                model.voice.holdSpeed(true)
+                return nil
+            }
             if event.keyCode == 53 { // Esc
                 if model.voice.machine.state != .idle { model.voice.cancel(); return nil }
                 if model.route == .dashboard && model.markedCount > 0 { model.clearMarks(); return nil }
@@ -165,6 +176,7 @@ struct RootView: View {
         .animation(.spring(duration: 0.3), value: model.iconTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)
         .animation(.spring(duration: 0.3), value: model.voice.speakingText)
+        .animation(.spring(duration: 0.3), value: model.voice.replyTo)
         .animation(.spring(duration: 0.3), value: model.voice.waitingReplies)
         .preferredColorScheme(.dark)
         .onAppear { model.openMainWindow = { openWindow(id: "main") } }
@@ -195,15 +207,95 @@ struct MessageBanner: View {
     }
 }
 
+/// An update you can answer from here, without opening its project.
+struct ReplyBanner: View {
+    let reply: ReplyTarget
+    let voice: VoiceController
+    let from: String
+    @State private var typed = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top, spacing: 14) {
+                if voice.isSpeaking {
+                    Waveform(level: 0.7, bars: 14, height: 30, colors: [Theme.cyan, Color(hex: 0x7C5CFF)])
+                } else {
+                    Image(systemName: "bubble.left.fill").font(.system(size: 18)).foregroundStyle(Theme.cyan).frame(height: 30)
+                }
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(from).font(.system(size: 11.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.cyan)
+                    Text(reply.text.hasPrefix("\(from). ") ? String(reply.text.dropFirst(from.count + 2)) : reply.text)
+                        .font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                        .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    if voice.isSpeaking { voice.stopSpeaking() } else { voice.dismissReply() }
+                } label: { Image(systemName: voice.isSpeaking ? "stop.fill" : "xmark") }
+                    .buttonStyle(IconButtonStyle())
+                    .help(voice.isSpeaking ? "Stop speaking" : "Dismiss")
+                    .accessibilityLabel(voice.isSpeaking ? "Stop speaking" : "Dismiss this update")
+            }
+            HStack(spacing: 10) {
+                TextField("Type a reply to \(from), or press right ⌥ to talk", text: $typed)
+                    .textFieldStyle(.plain).font(.system(size: 13))
+                    .padding(.horizontal, 12).padding(.vertical, 7)
+                    .background(Color.white.opacity(0.07), in: Capsule())
+                    .onSubmit { send() }
+                Text(voice.isSpeaking ? (voice.speedHeld ? "Faster" : "Hold → for faster") : "Right ⌘ to replay")
+                    .font(.system(size: 11, weight: .medium)).foregroundStyle(voice.speedHeld ? Theme.cyan : Theme.textSecondary).fixedSize()
+            }
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+        .frame(maxWidth: 760)
+        .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.cyan, lineWidth: 1.5))
+        .shadow(color: Theme.cyan.opacity(0.35), radius: 26, y: 6)
+    }
+
+    private func send() {
+        let text = typed.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty { voice.sendReply(text) }
+    }
+}
+
 /// What the microphone is hearing, drawn as sound, with a way out of it.
 struct VoiceBanner: View {
     @Environment(AppModel.self) private var model
+
+    /// A reply that came from nowhere you can answer, such as trying out the speed.
+    @ViewBuilder private func speakingBanner(_ spoken: String, voice: VoiceController) -> some View {
+        HStack(spacing: 16) {
+            Waveform(level: 0.7, bars: 14, height: 30, colors: [Theme.cyan, Color(hex: 0x7C5CFF)])
+            Text(spoken).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text("Right ⌘ to stop").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                Text(voice.speedHeld ? "Faster" : "Hold → for faster").font(.system(size: 11)).foregroundStyle(voice.speedHeld ? Theme.cyan : Theme.textTertiary)
+            }
+            .fixedSize()
+            Button { voice.stopSpeaking() } label: { Image(systemName: "stop.fill") }
+                .buttonStyle(IconButtonStyle())
+                .help("Stop speaking")
+                .accessibilityLabel("Stop speaking")
+        }
+        .padding(.horizontal, 20).padding(.vertical, 14)
+        .frame(maxWidth: 760)
+        .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.cyan, lineWidth: 1.5))
+        .shadow(color: Theme.cyan.opacity(0.35), radius: 26, y: 6)
+        .transition(.move(edge: .bottom).combined(with: .opacity))
+    }
 
     var body: some View {
         let voice = model.voice
         if voice.machine.state != .idle {
             HStack(spacing: 16) {
                 Waveform(level: voice.isListening ? voice.level : 0.2, bars: 20, height: 34)
+                if let target = voice.target, target != model.focusedProject, let label = model.sessions[target]?.label {
+                    Text("To \(label)").font(.system(size: 11.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.cyan).fixedSize()
+                }
                 Text(voice.partial.isEmpty ? (voice.isListening ? "Listening…" : "Sending…") : VoiceTranscript.latest(voice.partial))
                     .lineLimit(3).truncationMode(.head).font(.system(size: 15, weight: .medium))
                     .foregroundStyle(voice.partial.isEmpty ? Theme.textSecondary : Theme.textPrimary)
@@ -224,28 +316,9 @@ struct VoiceBanner: View {
             .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.hot, lineWidth: 1.5))
             .shadow(color: Color(hex: 0xFF4D6D).opacity(0.45), radius: 26, y: 6)
             .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else if let spoken = voice.speakingText {
-            HStack(spacing: 16) {
-                Waveform(level: 0.7, bars: 14, height: 30, colors: [Theme.cyan, Color(hex: 0x7C5CFF)])
-                Text(spoken).font(.system(size: 15, weight: .medium)).foregroundStyle(Theme.textPrimary)
-                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
-                Spacer(minLength: 8)
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("Right ⌘ to stop").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                }
-                .fixedSize()
-                Button { voice.stopSpeaking() } label: { Image(systemName: "stop.fill") }
-                    .buttonStyle(IconButtonStyle())
-                    .help("Stop speaking")
-                    .accessibilityLabel("Stop speaking")
-            }
-            .padding(.horizontal, 20).padding(.vertical, 14)
-            .frame(maxWidth: 760)
-            .background(Color(hex: 0x14162A).opacity(0.97), in: RoundedRectangle(cornerRadius: 22, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 22, style: .continuous).strokeBorder(Theme.cyan, lineWidth: 1.5))
-            .shadow(color: Theme.cyan.opacity(0.35), radius: 26, y: 6)
-            .transition(.move(edge: .bottom).combined(with: .opacity))
-        } else if voice.waitingReplies > 0 {
+        } else if let spoken = voice.speakingText, voice.replyTo == nil {
+            speakingBanner(spoken, voice: voice)
+        } else if voice.waitingReplies > 0 && !voice.isSpeaking {
             HStack(spacing: 12) {
                 Image(systemName: "bell.badge.fill").font(.system(size: 16)).foregroundStyle(Theme.cyan)
                 Text(VoiceMachine.updateNotice(from: voice.waitingFrom, count: voice.waitingReplies))
@@ -261,6 +334,10 @@ struct VoiceBanner: View {
             .overlay(Capsule().strokeBorder(Theme.cyan.opacity(0.8), lineWidth: 1.5))
             .shadow(color: Theme.cyan.opacity(0.3), radius: 18, y: 4)
             .transition(.move(edge: .bottom).combined(with: .opacity))
+        } else if let reply = voice.replyTo {
+            ReplyBanner(reply: reply, voice: voice, from: model.sessions[reply.session]?.label ?? "That session")
+                .id(reply.text)
+                .transition(.move(edge: .bottom).combined(with: .opacity))
         } else if let problem = voice.problem {
             VStack(spacing: 8) {
                 MessageBanner(text: problem) { voice.problem = nil }

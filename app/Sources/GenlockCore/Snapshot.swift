@@ -154,6 +154,31 @@ public struct Snapshot: Decodable, Equatable {
     public func ticket(_ id: String?) -> Ticket? { tickets.first { $0.id == id } }
     public var activeTickets: [Ticket] { tickets.filter { openTickets.contains($0.id) } }
 
+    /// What the panel shows by default: what is going on now, with the rest a level down.
+    public struct TaskFocus: Equatable {
+        public var active: [Ticket]
+        public var justFinished: [Ticket]
+        public var backlog: [Ticket]
+    }
+
+    /// Counts as going on: started, stuck, or touched in the last day.
+    public static let recentSeconds: TimeInterval = 24 * 3600
+    public static let justFinishedLimit = 3
+
+    public func taskFocus(now: Date = Date()) -> TaskFocus {
+        let recent = { (t: Ticket) in
+            ISODate.parse(t.updated).map { now.timeIntervalSince($0) <= Self.recentSeconds } ?? false
+        }
+        let order = ["in_progress": 0, "blocked": 1]
+        let active = rankedTasks
+            .filter { $0.status == "in_progress" || $0.status == "blocked" || recent($0) }
+            .sorted { (order[$0.status] ?? 2, $1.updated) < (order[$1.status] ?? 2, $0.updated) }
+        let ids = Set(active.map(\.id))
+        let finished = tickets.filter { $0.status == "done" && recent($0) }.sorted { $0.updated > $1.updated }
+        return TaskFocus(active: active, justFinished: Array(finished.prefix(Self.justFinishedLimit)),
+                         backlog: rankedTasks.filter { !ids.contains($0.id) })
+    }
+
     /// Open tasks, most important first.
     public var rankedTasks: [Ticket] { activeTickets.sorted { ($0.rank ?? .max) < ($1.rank ?? .max) } }
 

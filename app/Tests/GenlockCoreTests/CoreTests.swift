@@ -564,6 +564,55 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("short names"))
     }
 
+    func testReadingSpeed() { // V16
+        typealias S = SpeechSpeed
+        XCTAssertEqual(S.rate(forSpeed: 1), 0.5, accuracy: 0.001)
+        XCTAssertEqual(S.rate(forSpeed: 2.03), 0.65, accuracy: 0.001, "as measured")
+        XCTAssertEqual(S.rate(forSpeed: 0.5), 0.5, accuracy: 0.001, "no slower than normal")
+        XCTAssertEqual(S.rate(forSpeed: 99), 1, accuracy: 0.001, "no faster than it can go")
+        for (slow, fast) in zip(S.options, S.options.dropFirst()) {
+            XCTAssertLessThan(S.rate(forSpeed: slow), S.rate(forSpeed: fast), "each choice is faster than the last")
+        }
+        XCTAssertGreaterThan(S.rate(speed: 1.5, held: true), S.rate(speed: 1.5, held: false))
+        XCTAssertLessThanOrEqual(S.rate(speed: 3, held: true), S.rate(forSpeed: S.fastest), "holding has a ceiling")
+        XCTAssertEqual(S.label(1.5), "1.5×")
+        XCTAssertEqual(S.label(2), "2×")
+        XCTAssertEqual(S.remainder(of: "one two", from: 4), "two")
+        XCTAssertEqual(S.remainder(of: "😀 two", from: 3), "two", "counted as the synthesizer counts")
+        XCTAssertEqual(S.remainder(of: "one", from: 99), "", "never past the end")
+    }
+
+    func testTheTalkKeyAnswersTheUpdateInFrontOfYou() { // V17
+        typealias R = ReplyTarget
+        let update = R(session: "/other", text: "Done.")
+        XCTAssertEqual(R.dictationTarget(pane: nil, reply: update, focused: "/here"), "/other", "the update, wherever you are")
+        XCTAssertEqual(R.dictationTarget(pane: nil, reply: nil, focused: "/here"), "/here", "otherwise what is in front of you")
+        XCTAssertEqual(R.dictationTarget(pane: "/pane", reply: update, focused: "/here"), "/pane", "a pane's own button means that pane")
+    }
+
+    func testThePanelFocusesOnWhatIsGoingOn() throws { // S23
+        func ticket(_ id: String, _ status: String, _ updated: String, rank: Int?) -> String {
+            #"{"rank":\#(rank.map(String.init) ?? "null"),"id":"\#(id)","title":"\#(id)","status":"\#(status)","updated":"\#(updated)","summary":"","requirements":[],"hazards":[],"forbids":[]}"#
+        }
+        let now = ISODate.parse("2026-11-06T12:00:00Z")!
+        let tickets = [
+            ticket("old-top", "open", "2026-10-01T00:00:00Z", rank: 1),
+            ticket("started-long-ago", "in_progress", "2026-10-02T00:00:00Z", rank: 2),
+            ticket("touched-today", "open", "2026-11-06T11:00:00Z", rank: 3),
+            ticket("stuck", "blocked", "2026-10-03T00:00:00Z", rank: 4),
+            ticket("old-bottom", "open", "2026-10-01T00:00:00Z", rank: 5),
+            ticket("done-today", "done", "2026-11-06T10:00:00Z", rank: nil),
+            ticket("done-long-ago", "done", "2026-10-01T00:00:00Z", rank: nil),
+        ].joined(separator: ",")
+        let json = #"{"format":3,"root":"/r","initialized":true,"goals":[],"tickets":[\#(tickets)],"open_tickets":["old-top","started-long-ago","touched-today","stuck","old-bottom"],"questions_for_user":[],"reviews":[],"claims":[]}"#
+        let d = JSONDecoder()
+        d.keyDecodingStrategy = .convertFromSnakeCase
+        let focus = try d.decode(Snapshot.self, from: Data(json.utf8)).taskFocus(now: now)
+        XCTAssertEqual(focus.active.map(\.id), ["started-long-ago", "stuck", "touched-today"], "started first, however long ago, then stuck, then recent")
+        XCTAssertEqual(focus.justFinished.map(\.id), ["done-today"])
+        XCTAssertEqual(focus.backlog.map(\.id), ["old-top", "old-bottom"], "the rest, still in rank order")
+    }
+
     func testPassedMessagesArriveOnce() throws { // A1
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-tell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: base) }

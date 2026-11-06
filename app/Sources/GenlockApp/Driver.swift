@@ -49,6 +49,13 @@ enum Driver {
         NSApp.postEvent(e, atStart: false)
     }
 
+    private static func postKey(_ type: NSEvent.EventType) {
+        guard let w = window, let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                                       windowNumber: w.windowNumber, context: nil, characters: "\u{F703}", charactersIgnoringModifiers: "\u{F703}",
+                                                       isARepeat: false, keyCode: 124) else { return }
+        NSApp.postEvent(e, atStart: false)
+    }
+
     private static func run(_ step: [String: Any]) async {
         let model = AppModel.shared
         if let s = step["wait"] as? Double { try? await Task.sleep(nanoseconds: UInt64(s * 1e9)) }
@@ -94,6 +101,11 @@ enum Driver {
         if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
         if step["restartToUpdate"] != nil { model.updater.restart() }
         if step["openAssistant"] != nil { model.openAssistant() }
+        if step["pressRightArrow"] != nil { postKey(.keyDown) }
+        if let text = step["sendReply"] as? String { model.voice.sendReply(text) }
+        if step["talkKey"] != nil { model.pressVoice() }
+        if step["releaseRightArrow"] != nil { postKey(.keyUp) }
+        if let speed = step["speechSpeed"] as? Double { model.voice.speechSpeed = speed }
         if let name = step["nameAssistant"] as? String { model.nameAssistant(name.isEmpty ? nil : name) }
         if step["letAssistantChoose"] != nil { model.nameAssistant(nil, letItChoose: true) }
         if let state = step["assistantPhase"] as? String { model.sessions[model.assistantFolder]?.phase = state }
@@ -207,6 +219,11 @@ enum Driver {
             "voice": model.voice.chosenVoice?.name ?? "",
             "pasteResults": pasteResults,
             "assistantName": model.assistantName,
+            "voiceReached": model.voice.reached,
+            "replyTo": model.voice.replyTo.map { URL(fileURLWithPath: $0.session).lastPathComponent } ?? "",
+            "focused": model.focusedProject.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
+            "voiceHeld": model.voice.speedHeld,
+            "voiceSpeed": model.voice.speechSpeed,
             "voiceSpeakingText": model.voice.speakingText ?? "",
             "askingName": model.askingAssistantName,
             "voiceWaiting": model.voice.waitingReplies,

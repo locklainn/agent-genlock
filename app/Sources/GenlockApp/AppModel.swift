@@ -93,6 +93,7 @@ final class AppModel {
                 model.collectTells()
                 model.clearAssistantIfAsked()
                 model.refreshAssistantName()
+                model.voice.expireReply()
                 model.updateAttention()
                 model.rememberSessions()
             }
@@ -526,11 +527,11 @@ final class AppModel {
 
     /// From the dashboard there is no project in front of you, so you are talking to the Assistant.
     func pressVoice(for id: String? = nil) {
-        if id == nil && route == .dashboard && voice.machine.state == .idle {
+        if id == nil && voice.replyTo == nil && route == .dashboard && voice.machine.state == .idle {
             openAssistant()
             if askingAssistantName { return }
         }
-        voice.press(target: id ?? focusedProject)
+        voice.press(target: ReplyTarget.dictationTarget(pane: id, reply: voice.replyTo, focused: focusedProject))
     }
 
     // MARK: The Assistant

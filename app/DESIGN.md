@@ -154,6 +154,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | S17 | ⌘V with a copied file types its path. With a copied image, it saves a PNG to a temporary folder and types that path. Copied text pastes as usual | auto, drive, eye |
 | S20 | Goals and tasks each have one strict order, numbered from 1 with no ties, shared with agents through `genlock rank`. Dragging a row's handle onto another row takes that place | auto, drive, eye |
 | S21 | A goal or task can have a due date, set and removed in place, and counted among a card's deadlines | auto, drive, eye |
+| S23 | The panel shows what is going on now: tasks started, stuck or touched in the last day, plus up to 3 just finished, with started ones first. The rest of the tasks and other goals sit in a collapsed Backlog. Waiting on you shows 2 questions, clipped, until you ask for all of them | auto, drive, eye |
 | S18 | The pane's status (Working, Needs you, Done) sits beside its name, away from the mic | eye |
 | S19 | A changed source tree rebuilds itself in the background and offers "Restart to update". A failed build says why and retries on the next change | auto, drive |
 | S12 | The conversation is the session's own, by id, so a spin-off or a Terminal session in the same folder cannot take its place, and `/clear` is followed | auto, drive |
@@ -203,6 +204,8 @@ Press to start, press again to send, with a key and with a button on screen. The
 | A3 | The first time the Assistant is opened, the app asks what to call it: type a name, let it choose its own, or not now. The name shows everywhere, and it can be changed by asking it | auto, drive, eye |
 | A2 | The Assistant keeps its context and manages it itself, invisibly. At a natural break it saves decisions to the project, saves the rest with `genlock remember`, and asks to clear with a handoff to itself. The app then starts it fresh with that handoff and a saved copy of the conversation, never mid-turn, mid-dictation or with a reply unheard. Nothing clears it on a timer | auto, drive |
 | V15 | An agent never just starts talking. Its reply waits with a ding, a notice at the bottom, and a Dock and menu bar count. A clean tap of right ⌘ plays everything waiting and another stops it, with no mouse needed. With nothing waiting, it replays what you last heard, even after a restart. Replies outlast a restart, and right ⌘ in a shortcut does nothing | auto, drive, eye |
+| V16 | Replies can be read at 1× to 3×, chosen from the speaker button, with a way to hear it. Holding the right arrow while it talks speeds it up until released, carrying on from the same word, and the arrow reaches the terminal as usual otherwise | auto, drive, eye |
+| V17 | An update you have heard stays on screen for 5 minutes, saying who it is from. Right ⌥ or a reply box answers that session from wherever you are, without opening it, and its answer comes back the same way. Dictation says who it is going to when that is not the pane in front of you | auto, drive, eye |
 | V14 | A long dictation shows its newest words. A spoken reply shows its words in the same place, at the bottom, with a way to stop it | auto, drive, eye |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |
 

@@ -24,6 +24,7 @@ struct SessionsView: View {
 /// Every session you have open, so you can move between them without the dashboard.
 struct SessionBar: View {
     @Environment(AppModel.self) private var model
+    @State private var showingSpeech = false
 
     var body: some View {
         let voice = model.voice
@@ -85,10 +86,11 @@ struct SessionBar: View {
             Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects")
-            Button { voice.speakReplies.toggle() } label: {
+            Button { showingSpeech.toggle() } label: {
                 Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
             }
             .buttonStyle(GlassButtonStyle(active: voice.speakReplies, compact: true))
+            .popover(isPresented: $showingSpeech, arrowEdge: .bottom) { SpeechSettings(voice: voice) }
             .help(voice.speakReplies
                   ? "Agents read short replies aloud after you dictate. Voice: \(voice.chosenVoice?.name ?? "system default"). Sessions started from now on follow this setting. \(VoiceOption.upgradeHint(for: voice.chosenVoice) ?? "")"
                   : "Spoken replies are off")
@@ -97,6 +99,31 @@ struct SessionBar: View {
         .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
         .background(Color.black.opacity(0.25))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+    }
+}
+
+/// Whether replies are read aloud, and how fast.
+struct SpeechSettings: View {
+    @Bindable var voice: VoiceController
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Toggle("Read replies aloud", isOn: $voice.speakReplies).toggleStyle(.switch)
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Reading speed").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                Picker("Reading speed", selection: $voice.speechSpeed) {
+                    ForEach(SpeechSpeed.options, id: \.self) { Text(SpeechSpeed.label($0)).tag($0) }
+                }
+                .pickerStyle(.segmented).labelsHidden()
+            }
+            HStack {
+                Text("Hold → while it talks to go faster").font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary)
+                Spacer(minLength: 12)
+                Button("Try it") { voice.trySpeed() }.buttonStyle(GlassButtonStyle(compact: true))
+            }
+        }
+        .padding(16)
+        .frame(width: 340)
     }
 }
 

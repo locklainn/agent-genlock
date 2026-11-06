@@ -89,6 +89,62 @@ public struct AssistantName {
     }
 }
 
+/// An update you have heard, kept in front of you so you can answer it from wherever you are.
+public struct ReplyTarget: Equatable {
+    /// Long enough to think about it, without a stale update capturing your next dictation much later.
+    public static let lingerSeconds: TimeInterval = 300
+
+    public var session: String
+    public var text: String
+
+    public init(session: String, text: String) {
+        self.session = session
+        self.text = text
+    }
+
+    /// Where a press of the talk key goes. A pane's own button always means that pane.
+    public static func dictationTarget(pane: String?, reply: ReplyTarget?, focused: String?) -> String? {
+        pane ?? reply?.session ?? focused
+    }
+}
+
+/// How fast replies are read, as multiples of normal speech. The synthesizer's own rate is far from
+/// linear, so this maps through timings measured on Ava reading a 200-character reply.
+public enum SpeechSpeed {
+    public static let options: [Double] = [1, 1.25, 1.5, 1.75, 2, 2.5, 3]
+    public static let standard = 1.5
+    /// Holding the right arrow multiplies by this.
+    public static let holdBoost = 1.75
+    public static let fastest = 4.0
+
+    private static let measured: [(speed: Double, rate: Double)] = [
+        (1, 0.50), (1.19, 0.52), (1.34, 0.54), (1.47, 0.56), (1.59, 0.58), (1.71, 0.60),
+        (2.03, 0.65), (2.35, 0.70), (3.03, 0.80), (4.15, 1.00),
+    ]
+
+    public static func rate(forSpeed speed: Double) -> Float {
+        let s = min(max(speed, measured[0].speed), measured[measured.count - 1].speed)
+        for (low, high) in zip(measured, measured.dropFirst()) where s <= high.speed {
+            return Float(low.rate + (high.rate - low.rate) * (s - low.speed) / (high.speed - low.speed))
+        }
+        return 1
+    }
+
+    public static func rate(speed: Double, held: Bool) -> Float {
+        rate(forSpeed: held ? min(speed * holdBoost, fastest) : speed)
+    }
+
+    public static func label(_ speed: Double) -> String {
+        speed == speed.rounded() ? "\(Int(speed))×" : "\(speed)×"
+    }
+
+    /// The rest of the text from where speech has reached, counted as the synthesizer counts.
+    public static func remainder(of text: String, from utf16Offset: Int) -> String {
+        let clamped = min(max(utf16Offset, 0), text.utf16.count)
+        return String(text[String.Index(utf16Offset: clamped, in: text)...])
+    }
+}
+
 /// A modifier pressed and released on its own, so right Command used in a shortcut never counts.
 public struct CleanTap: Equatable {
     private var armed = false
