@@ -252,7 +252,7 @@ final class VoiceController: NSObject {
             waitingFrom = []
             return
         }
-        let waiting = sessions.filter { $0.channel.waitingCount > 0 }
+        let waiting = sessions.filter { $0.channel.waitingCount > 0 && UpdateRouting.isReady(phase: $0.phase, isRunning: $0.isRunning) }
         let total = waiting.reduce(0) { $0 + $1.channel.waitingCount }
         if total > waitingReplies && machine.state == .idle {
             dings += 1
@@ -274,7 +274,8 @@ final class VoiceController: NSObject {
 
     private func takeWaiting(from sessions: [TerminalSession]) -> [(text: String, from: String)] {
         let open = sessions.count
-        let waiting = sessions.flatMap { session in
+        let ready = sessions.filter { UpdateRouting.isReady(phase: $0.phase, isRunning: $0.isRunning) }
+        let waiting = ready.flatMap { session in
             session.channel.takeMessages().map { (text: VoiceChannel.spoken($0, project: session.label, sessionsOpen: open), from: session.key) }
         }
         waitingReplies = 0
@@ -285,6 +286,14 @@ final class VoiceController: NSObject {
         UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
         UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
         return waiting
+    }
+
+    /// What the Assistant was handed stays replayable, in their own words.
+    func keepForReplay(_ items: [(text: String, from: String)]) {
+        lastHeard = items.map(\.text)
+        lastHeardFrom = items.map(\.from)
+        UserDefaults.standard.set(lastHeard, forKey: "lastHeard")
+        UserDefaults.standard.set(lastHeardFrom, forKey: "lastHeardFrom")
     }
 
     func replayLast() {

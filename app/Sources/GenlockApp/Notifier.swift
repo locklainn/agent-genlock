@@ -11,6 +11,8 @@ enum Notifier {
     }
 
     @MainActor static func post(session: TerminalSession, attention: Attention) {
+        // Only an app bundle can post notifications, and the center throws outside one.
+        guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
         content.title = "\(session.label) \(attention.headline)"
         let goal = AppModel.shared.state(for: session.projectID).snapshot.flatMap { CardSummary($0).goalTitle }
@@ -29,6 +31,7 @@ enum Notifier {
     }
 
     static func clear(_ key: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [key])
     }
 }

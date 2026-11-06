@@ -88,6 +88,7 @@ final class AppModel {
         voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
             MainActor.assumeIsolated {
                 let model = AppModel.shared
+                model.routeUpdates()
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
                 model.collectTells()
@@ -602,6 +603,41 @@ final class AppModel {
         sessions[assistantFolder] = fresh
         if let tools { launch(fresh, tools: tools, fresh: true) }
         if wasFocused { focus(assistantFolder) }
+    }
+
+    /// When two or more projects have something to say, the Assistant goes through them with you.
+    func routeUpdates() {
+        guard voice.speakReplies, let tools else { return }
+        let ready = sessions.values
+            .filter { $0.projectID != assistantFolder && $0.channel.waitingCount > 0
+                && UpdateRouting.isReady(phase: $0.phase, isRunning: $0.isRunning) }
+            .sorted { tierOrder($0.projectID) < tierOrder($1.projectID) }
+        guard UpdateRouting.handToAssistant(projectsReady: ready.count, listening: voice.machine.state != .idle, speaking: voice.isSpeaking) else { return }
+        let updates = ready.flatMap { session in session.channel.takeMessages().map { (session: session, text: $0) } }
+        voice.keepForReplay(updates.map { (text: $0.text, from: $0.session.key) })
+        let briefing = UpdateRouting.briefing(updates.map { (project: $0.session.label, text: $0.text) })
+        if let assistant = sessions[assistantFolder], assistant.isRunning {
+            assistant.channel.markPending()
+            assistant.submit(briefing)
+        } else {
+            // Typed before it is ready, a long line would be cut off, so it starts with this instead.
+            try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+            let assistant = TerminalSession(projectID: assistantFolder)
+            assistant.startsQuietly = true
+            assistant.openingMessage = briefing
+            sessions[assistantFolder] = assistant
+            launch(assistant, tools: tools)
+            assistant.channel.markPending()
+        }
+    }
+
+    private func tierOrder(_ project: String) -> Int {
+        switch store.project(project)?.tier {
+        case .today: return 0
+        case .soon: return 1
+        case .later: return 2
+        case nil: return 3
+        }
     }
 
     func collectTells() {

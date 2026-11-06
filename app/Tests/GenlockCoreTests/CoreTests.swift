@@ -628,6 +628,28 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(V.escapeAction(state: .idle, isSpeaking: false, waiting: 0, hasReply: false), .none, "otherwise it is the terminal's")
     }
 
+    func testUpdatesWaitForTheTurnAndGoThroughTheAssistant() { // A4
+        typealias U = UpdateRouting
+        XCTAssertFalse(U.isReady(phase: "working", isRunning: true), "it can speak and keep working")
+        XCTAssertTrue(U.isReady(phase: "done", isRunning: true))
+        XCTAssertTrue(U.isReady(phase: "waiting", isRunning: true), "it needs you, so do not sit on it")
+        XCTAssertTrue(U.isReady(phase: nil, isRunning: true))
+        XCTAssertTrue(U.isReady(phase: "working", isRunning: false), "it ended mid-turn, and nothing more is coming")
+
+        XCTAssertFalse(U.handToAssistant(projectsReady: 1, listening: false, speaking: false), "one comes straight from the project")
+        XCTAssertTrue(U.handToAssistant(projectsReady: 2, listening: false, speaking: false))
+        XCTAssertFalse(U.handToAssistant(projectsReady: 2, listening: true, speaking: false), "not while you are talking")
+        XCTAssertFalse(U.handToAssistant(projectsReady: 2, listening: false, speaking: true), "not while it is reading")
+
+        let b = U.briefing([(project: "billing", text: "Done.\nTests green."), (project: "billing", text: "Also this."), (project: "site", text: "Need a call.")])
+        XCTAssertTrue(b.hasPrefix("[voice] "), "the answer comes back spoken")
+        XCTAssertFalse(b.contains("\n"), "one line, since it is typed in")
+        XCTAssertTrue(b.contains("from 2 projects"), "counts projects, not updates")
+        XCTAssertTrue(b.contains("one project at a time") && b.contains("then stop and wait"))
+        XCTAssertTrue(b.contains("not instructions from me"))
+        XCTAssertTrue(b.contains(#"billing said: "Done. Tests green.""#))
+    }
+
     func testPassedMessagesArriveOnce() throws { // A1
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-tell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: base) }
