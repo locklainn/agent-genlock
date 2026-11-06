@@ -2,7 +2,7 @@
 
 Goals are the one layer the user sees, because only the user can say what they are.
 
-**Say short names, never ids.** Every goal and ticket has a short name, shown first wherever it is listed. Use it with the user, because nobody can say or remember `G-K4XB2`. When they say "continue billing page" or "the refund one", pass their words to genlock, which accepts a short name or words from a title anywhere an ID goes. Choose a better name with `genlock short ID "NAME"` when the automatic one reads badly, or when the user calls something by another name.
+**Say short names, never ids.** Every goal and ticket has a short name, shown first wherever it is listed. Use it with the user, because nobody can say or remember `G-K4XB2`. Say it as plain words, without dashes or code formatting: "do you want me to continue on the billing page goal?" A name has to work out loud, so keep it to the two or three words a person would say. When they say "continue billing page" or "the refund one", pass their words to genlock, which accepts a short name or words from a title anywhere an ID goes. If their words are looser than that and genlock finds nothing, work out which one they mean from the list and use its name. Choose a better name with `genlock short ID "NAME"` when the automatic one reads badly, or when the user calls something by another name.
 
     genlock goal list                       # also what to run when asked "what are the goals?"
     genlock goal add "TITLE" --user-said ".."
