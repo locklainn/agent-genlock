@@ -91,6 +91,7 @@ final class AppModel {
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
                 model.collectTells()
+                model.clearAssistantIfAsked()
                 model.updateAttention()
                 model.rememberSessions()
             }
@@ -540,6 +541,24 @@ final class AppModel {
         if !visible.contains(assistantFolder) { visible = [assistantFolder] }
         route = .sessions
         focus(assistantFolder)
+    }
+
+    /// The Assistant asked to start clean, at a break it chose. Waits for its turn to end and for
+    /// you to hear anything it said. What carries over is the handoff it wrote for itself.
+    func clearAssistantIfAsked() {
+        guard let session = sessions[assistantFolder], session.isRunning, let handoff = session.channel.requestedHandoff,
+              SessionLaunch.assistantMayClear(phase: session.phase, repliesWaiting: session.channel.waitingCount,
+                                              dictating: voice.machine.state != .idle) else { return }
+        let wasFocused = focusedProject == assistantFolder
+        session.end()
+        session.channel.remove()
+        memory.conversations[assistantFolder] = nil
+        let fresh = TerminalSession(projectID: assistantFolder)
+        fresh.startsQuietly = true
+        fresh.handoff = handoff
+        sessions[assistantFolder] = fresh
+        if let tools { launch(fresh, tools: tools, fresh: true) }
+        if wasFocused { focus(assistantFolder) }
     }
 
     func collectTells() {

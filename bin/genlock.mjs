@@ -27,7 +27,7 @@ import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank } from '../lib/rank.mjs';
-import { cmdOverview, cmdTell } from '../lib/overview.mjs';
+import { cmdClearContext, cmdOverview, cmdRemember, cmdRemembered, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
@@ -214,6 +214,9 @@ const COMMANDS = {
   snapshot: cmdSnapshot,
   overview: cmdOverview,
   tell: cmdTell,
+  remember: cmdRemember,
+  remembered: cmdRemembered,
+  'clear-context': cmdClearContext,
   rank: cmdRank,
   due: cmdDue,
   say: cmdSay,
@@ -269,6 +272,8 @@ const argv = process.argv.slice(2);
 // Anywhere on the line: asking for help must never run the command it is asking about.
 if (!argv.length || argv[0] === 'help' || argv.includes('--help') || argv.includes('-h')) { console.log(USAGE); process.exit(0); }
 if (['-V', '--version', 'version'].includes(argv[0])) { console.log(VERSION); process.exit(0); }
+// Its flags belong to the command it runs, so this one is not parsed here.
+if (argv[0] === 'at') runAt(argv.slice(1));
 const fn = COMMANDS[argv[0]];
 if (!fn) die(`unknown command '${argv[0]}'. \`genlock help\` lists them.`);
 if (fn === cmdInstall || fn === cmdInit || fn === cmdGuide) fn();

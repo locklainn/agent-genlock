@@ -521,6 +521,27 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(plain[plain.firstIndex(of: "--append-system-prompt")! + 1].contains("genlock overview"))
     }
 
+    func testTheAssistantClearsOnlyWhenNothingIsLost() throws { // A2
+        typealias L = SessionLaunch
+        XCTAssertTrue(L.assistantMayClear(phase: "done", repliesWaiting: 0, dictating: false))
+        XCTAssertFalse(L.assistantMayClear(phase: "working", repliesWaiting: 0, dictating: false), "mid-turn")
+        XCTAssertFalse(L.assistantMayClear(phase: "waiting", repliesWaiting: 0, dictating: false), "needs an answer")
+        XCTAssertFalse(L.assistantMayClear(phase: nil, repliesWaiting: 0, dictating: false), "nothing reported yet")
+        XCTAssertFalse(L.assistantMayClear(phase: "done", repliesWaiting: 1, dictating: false), "a reply is unheard")
+        XCTAssertFalse(L.assistantMayClear(phase: "done", repliesWaiting: 0, dictating: true), "mid-dictation")
+
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-clear-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let channel = VoiceChannel(session: "s", base: base)
+        try channel.prepare()
+        XCTAssertNil(channel.requestedHandoff, "it only clears when it asks")
+        try #"{"handoff":"focused on billing"}"#.write(to: channel.folder.appendingPathComponent("clear-context.json"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(channel.requestedHandoff, "focused on billing")
+
+        let args = L.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, handoff: "focused on billing")
+        XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("focused on billing"))
+    }
+
     func testPassedMessagesArriveOnce() throws { // A1
         let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-tell-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: base) }

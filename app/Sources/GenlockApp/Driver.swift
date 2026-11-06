@@ -94,6 +94,7 @@ enum Driver {
         if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
         if step["restartToUpdate"] != nil { model.updater.restart() }
         if step["openAssistant"] != nil { model.openAssistant() }
+        if let state = step["assistantPhase"] as? String { model.sessions[model.assistantFolder]?.phase = state }
         if let args = step["rank"] as? [String], let id = projectID(named: args[0]), let place = Int(args[2]) { model.rank(args[1], to: place, in: id) }
         if let args = step["due"] as? [String], let id = projectID(named: args[0]) { model.setDue(args[1], to: args[2].isEmpty ? nil : args[2], in: id) }
         if let text = step["speakSilently"] as? String { model.voice.speak(text, volume: 0) }

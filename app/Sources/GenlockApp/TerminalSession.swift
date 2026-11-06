@@ -22,6 +22,10 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     @ObservationIgnored var lastReportAt: Double = 0
     /// The conversation it is in, once known. Nil while continuing the folder's latest.
     @ObservationIgnored var conversation: String?
+    /// A cleared Assistant waits to be spoken to, rather than opening with a status report.
+    @ObservationIgnored var startsQuietly = false
+    /// What a cleared Assistant left itself.
+    @ObservationIgnored var handoff: String?
     /// Called when picking up a conversation fails as it starts.
     @ObservationIgnored var onFailedPickUp: (() -> Void)?
     @ObservationIgnored private var started: (how: ConversationStart, at: Date)?
@@ -88,7 +92,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
                                            reportsState: true, sessionID: newID, resumeID: resumeID,
-                                           prompt: newID == nil ? nil : (store != nil ? SessionLaunch.assistantOpening : spawn?.prompt), assistant: store != nil)
+                                           prompt: newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt), assistant: store != nil, handoff: handoff)
         view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)

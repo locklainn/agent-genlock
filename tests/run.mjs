@@ -757,6 +757,8 @@ r = voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 check('a prompt means working', r.code === 0 && stateOf().state === 'working', r.err);
 voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit","session_id":"conv-1"}');
 check('a report names the conversation, so the app can resume it', stateOf().session === 'conv-1', JSON.stringify(stateOf()));
+voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit","transcript_path":"/tmp/t.jsonl"}');
+check('...and where its transcript is', stateOf().transcript === '/tmp/t.jsonl', JSON.stringify(stateOf()));
 r = voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}');
 check('a Claude Code notification means waiting, with its message', stateOf().state === 'waiting' && /permission/.test(stateOf().message), r.err);
 voiceRun(['session-state'], '{"hook_event_name":"PostToolUse"}');
@@ -981,9 +983,79 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('overview puts TODAY first', r.code === 0 && r.out.indexOf('alpha') < r.out.indexOf('beta'), r.all);
   check('...skips a folder that has gone', !/gone/.test(r.out), r.out);
   check('...says a session needs the user, and what it said', /NEEDS THE USER/.test(r.out) && /May I run the migration/.test(r.out), r.out);
-  check('...shows ranked goals and tasks with dates', /goal #1: Launch the site/.test(r.out) && /task #1: Checkout page loads/.test(r.out) && /due 2099-01-01/.test(r.out), r.out);
-  check('...and questions waiting on the user', /WAITING ON THE USER: Which colour/.test(r.out), r.out);
-  check('...and says when there is no session or setup', /beta[\s\S]*none open[\s\S]*not set up/.test(r.out), r.out);
+  check('...shows the top goal and task', /top goal: Launch the site/.test(r.out) && /top task: Checkout page loads/.test(r.out), r.out);
+  check('...and how many questions wait on the user', /WAITING ON THE USER: 1, newest: Which colour/.test(r.out), r.out);
+  check('...and collapses a project with nothing going on', /No session and nothing tracked: beta/.test(r.out), r.out);
+
+  r = asEnv(['overview']);
+  check('looking again prints only that nothing changed', /Nothing has changed/.test(r.out) && /Unchanged: alpha/.test(r.out) && !/top goal/.test(r.out), r.out);
+  pa('new', 'Search page loads', '-r', 'Search page returns 200', '-c', 'node t.mjs');
+  fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'done', message: 'The migration ran.', at: Date.now() }));
+  r = asEnv(['overview']);
+  check('a project that changed is shown again', /alpha/.test(r.out) && /The migration ran/.test(r.out), r.out);
+  const quiet = asEnv(['overview', '--all']);
+  check('--all shows everything regardless', /top goal/.test(quiet.out), quiet.out);
+  pa('ask', 'user', `${'A very long question '.repeat(30)}end`);
+  r = asEnv(['overview']);
+  check('a long line is clipped', r.out.split('\n').every((l) => l.length < 200) && !/end$/m.test(r.out), r.out);
+  r = asEnv(['overview', 'alpha']);
+  check('one project gives the full detail', /goal #1: Launch the site/.test(r.out) && /task #1/.test(r.out) && /due 2099-01-01/.test(r.out) && /Which colour/.test(r.out), r.out);
+  r = asEnv(['overview', 'nope']);
+  check('an unknown project is refused', r.code !== 0 && /alpha/.test(r.err), r.all);
+
+  r = run(AS, 'someone', ['at', 'alpha', 'list']);
+  check('a project agent cannot change another project', r.code !== 0 && /Assistant/.test(r.err), r.all);
+  const TN = idOf(asEnv(['at', 'alpha', 'new', 'Cart page loads', '-r', 'Cart page returns 200', '-c', 'node t.mjs']));
+  check('the Assistant can add a task to a project', !!TN && /Cart page loads/.test(pa('list').out), TN);
+  r = asEnv(['at', 'alpha', 'rank', TN, '--to', '1']);
+  check('...rank it', r.code === 0 && pa('rank', 'tasks').out.indexOf(TN) < pa('rank', 'tasks').out.indexOf('Checkout'), r.all);
+  r = asEnv(['at', 'alpha', 'due', TN, '2099-02-03']);
+  check('...and date it', r.code === 0 && /2099-02-03/.test(pa('show', TN).out), r.all);
+  r = asEnv(['at', 'alpha', 'done', TN]);
+  check('...but not call it done, which is for whoever did the work', r.code !== 0 && /does not run/.test(r.err), r.all);
+  r = asEnv(['at', 'beta', 'list']);
+  check('...and it refuses a project not set up, rather than set it up by accident', r.code !== 0 && !fs.existsSync(path.join(PB, '.genlock')), r.all);
+  r = asEnv(['at', 'nope', 'list']);
+  check('...or an unknown one', r.code !== 0 && /alpha/.test(r.err), r.all);
+
+  fs.writeFileSync(path.join(AS, 'sessions.json'), JSON.stringify({ open: [{ project: PA, token: 'tok-a' }] }));
+  asEnv(['overview']);
+  const later = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
+    env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_SESSION: 'a-new-conversation' } });
+  check('a new conversation gets everything, not "unchanged"', /top goal/.test(later.stdout) && !/Unchanged: alpha/.test(later.stdout), later.stdout);
+
+  r = run(AS, 'someone', ['remember', 'x', 'y']);
+  check('a project agent cannot use the Assistant notes', r.code !== 0, r.all);
+  r = asEnv(['remembered']);
+  check('nothing saved yet', /Nothing saved/.test(r.out), r.all);
+  r = asEnv(['remember', 'Billing plan', 'Ship invoices before refunds, because of the audit.']);
+  check('remember saves outside the conversation', r.code === 0 && /Saved/.test(r.out), r.all);
+  check('...which lists by title', /Billing plan/.test(asEnv(['remembered']).out));
+  r = asEnv(['remembered', 'AUDIT']);
+  check('...and finds by any word, in full', /Ship invoices before refunds/.test(r.out), r.out);
+  check('...and says when nothing matches', /Nothing saved mentions/.test(asEnv(['remembered', 'zebra']).out));
+
+  const OWN = path.join(AS, 'own-channel');
+  fs.mkdirSync(OWN);
+  const TR = path.join(AS, 'transcript.jsonl');
+  fs.writeFileSync(TR, 'small\n');
+  fs.writeFileSync(path.join(OWN, 'state.json'), JSON.stringify({ state: 'done', at: Date.now(), transcript: TR }));
+  const own = (args) => {
+    const x = spawnSync(process.execPath, [CLI, ...args], { cwd: AS, encoding: 'utf8',
+      env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_APP_CHANNEL: OWN } });
+    return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
+  };
+  check('a short conversation gets no nudge', !/grown long/.test(own(['overview', '--all']).out));
+  fs.writeFileSync(TR, Buffer.alloc(900 * 1024, 120));
+  check('a long one is told, and left to choose its moment', /grown long/.test(own(['overview', '--all']).out));
+  r = own(['clear-context']);
+  check('clearing needs a handoff', r.code !== 0, r.all);
+  check('...and nothing clears until it asks', !fs.existsSync(path.join(OWN, 'clear-context.json')));
+  r = own(['clear-context', 'Focused', 'on', 'billing']);
+  const ask = JSON.parse(fs.readFileSync(path.join(OWN, 'clear-context.json'), 'utf8'));
+  check('asking leaves the handoff for the app', r.code === 0 && /^Focused on billing/.test(ask.handoff), r.all);
+  const savedAt = (/saved at (\S+)\./.exec(ask.handoff) || [])[1];
+  check('...with a saved copy of the whole conversation', !!savedAt && fs.statSync(savedAt).size === 900 * 1024, ask.handoff);
 
   r = asEnv(['tell', 'ALPHA', 'please', 'run', 'it']);
   const told = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));
