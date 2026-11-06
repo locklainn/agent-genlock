@@ -120,7 +120,47 @@ struct SignalMark: View {
     }
 }
 
-/// A live waveform. Follows `level` when there is one, and idles gently otherwise.
+/// Something is being made. Pixels form into a block and dissolve again, each in its own turn.
+/// Voice has the waveform, so this never looks like the microphone.
+struct WorkingIndicator: View {
+    var label = "Working"
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    private static let columns = 4, rows = 3, pixel: CGFloat = 3, gap: CGFloat = 1
+
+    /// 0 to 1: dark, forming, whole, dissolving. Scattered by cell so it never reads as a sweep.
+    private static func brightness(cell: Int, at t: Double) -> Double {
+        let scatter = (Double(cell) * 0.618).truncatingRemainder(dividingBy: 1)
+        let phase = (t / 2.4).truncatingRemainder(dividingBy: 1)
+        let on = 0.05 + scatter * 0.35, off = 0.6 + scatter * 0.35, fade = 0.05
+        return min(1, max(0, min((phase - on) / fade, (off - phase) / fade)))
+    }
+
+    var body: some View {
+        let width = CGFloat(Self.columns) * (Self.pixel + Self.gap) - Self.gap
+        let height = CGFloat(Self.rows) * (Self.pixel + Self.gap) - Self.gap
+        HStack(spacing: 6) {
+            TimelineView(.animation(minimumInterval: 1.0 / 20, paused: reduceMotion)) { context in
+                let t = reduceMotion ? 1.0 : context.date.timeIntervalSinceReferenceDate
+                Canvas { canvas, _ in
+                    for cell in 0..<(Self.columns * Self.rows) {
+                        let rect = CGRect(x: CGFloat(cell % Self.columns) * (Self.pixel + Self.gap),
+                                          y: CGFloat(cell / Self.columns) * (Self.pixel + Self.gap),
+                                          width: Self.pixel, height: Self.pixel)
+                        let amount = Self.brightness(cell: cell, at: t)
+                        canvas.fill(Path(rect), with: .color(Theme.cyan.opacity(0.12 + 0.88 * amount)))
+                    }
+                }
+                .frame(width: width, height: height)
+            }
+            Text(label).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textSecondary).fixedSize()
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
+    }
+}
+
+/// A live waveform, for voice only. Follows `level` when there is one, and idles gently otherwise.
 struct Waveform: View {
     var level: Double = 0.5
     var bars = 28

@@ -20,14 +20,14 @@ struct InspectorView: View {
                 if let snap = state.snapshot {
                     if !snap.initialized {
                         VStack(alignment: .leading, spacing: 10) {
-                            Text("Set up genlock here to see goals and tasks live.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
-                            Button("Set up genlock") { model.setupTarget = projectID }.buttonStyle(LinkButtonStyle())
+                            Text("Set up Genlock here to see goals and tasks live.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
+                            Button("Set up Genlock") { model.setupTarget = projectID }.buttonStyle(GlassButtonStyle(active: true))
                         }
                     } else {
                         content(snap, changed: state.recentlyChanged)
                     }
                 } else if state.error == nil {
-                    Waveform(level: 0.4, bars: 16, height: 18, colors: Theme.tint(tier))
+                    WorkingIndicator(label: "Loading")
                 }
             }
             .padding(12)

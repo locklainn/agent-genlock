@@ -18,6 +18,22 @@ public struct VoiceMachine: Equatable {
 
     public mutating func reset() { state = .idle }
 
+    public static let rightOptionKey: UInt16 = 61
+    public static let rightCommandKey: UInt16 = 54
+
+    /// What a modifier key does. Right Option talks and sends. Right Command, right beside it,
+    /// cancels only while dictating, so it stays an ordinary Command key the rest of the time.
+    public static func keyAction(keyCode: UInt16, isDown: Bool, state: State) -> KeyAction {
+        guard isDown else { return .none }
+        switch keyCode {
+        case rightOptionKey: return .press
+        case rightCommandKey: return state == .idle ? .none : .cancel
+        default: return .none
+        }
+    }
+
+    public enum KeyAction: Equatable { case press, cancel, none }
+
     /// What to tell the user when recognition fails. Nil for what is normal: stopping with nothing said.
     public static func explain(recognitionError text: String) -> (message: String, needsDictationSetting: Bool)? {
         let lower = text.lowercased()
@@ -34,6 +50,27 @@ public struct VoiceMachine: Equatable {
     public static func message(from transcript: String) -> String? {
         let t = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         return t.isEmpty ? nil : "[voice] \(t.replacingOccurrences(of: "\n", with: " "))"
+    }
+}
+
+/// Everything said so far in one dictation. The recognizer forgets each utterance once you pause:
+/// the next result starts from scratch, and stopping after a pause ends on an empty result.
+public struct VoiceTranscript: Equatable {
+    private var settled: [String] = []
+    private var current = ""
+
+    public init() {}
+
+    public var text: String { (settled + [current]).filter { !$0.isEmpty }.joined(separator: " ") }
+
+    /// `endsUtterance` is true on the result that carries the recognizer's metadata.
+    public mutating func receive(_ words: String, endsUtterance: Bool) {
+        if words.isEmpty { return }
+        current = words
+        if endsUtterance {
+            settled.append(words)
+            current = ""
+        }
     }
 }
 
@@ -70,10 +107,11 @@ public enum SessionLaunch {
     /// `prompt` opens a spin-off with its handoff. Flags come after it, because --allowedTools
     /// would otherwise swallow it as another tool name.
     public static func arguments(resume: Bool, voice: Bool, genlockCommand: String?, spinoffs: Bool = false,
-                                 reportsState: Bool = false, sessionID: String? = nil, prompt: String? = nil) -> [String] {
+                                 reportsState: Bool = false, sessionID: String? = nil, resumeID: String? = nil, prompt: String? = nil) -> [String] {
         var args: [String] = []
         if let prompt { args.append(prompt) }
         if resume { args.append("--continue") }
+        if let resumeID { args += ["--resume", resumeID] }
         if let sessionID { args += ["--session-id", sessionID] }
         guard let genlockCommand else { return args }
         var rules: [String] = []
@@ -102,6 +140,8 @@ public struct SessionReport: Decodable, Equatable {
     public var state: String
     public var message: String
     public var at: Double
+    /// Claude Code's conversation id, which changes on /clear. Older genlocks do not send it.
+    public var session: String?
 }
 
 /// Whether a session needs you. It stops needing you once you have seen it or it has resumed.
@@ -124,12 +164,21 @@ public enum Attention: String, Equatable {
 
 /// An agent asking for a spin-off to open as a pane. Its safety check and the user's yes have
 /// already happened in `genlock spinoff launch`, which also took the claim.
-public struct SpawnRequest: Decodable, Equatable {
+public struct SpawnRequest: Codable, Equatable {
     public var ticket: String
     public var session: String
     public var title: String
     public var project: String
     public var prompt: String
+
+    /// Whether this came from the parent's own repository. The session opens in the parent's
+    /// folder, so one from elsewhere could not find its ticket. A project can be a subfolder of
+    /// the repository git reports, and the two can spell one folder differently.
+    public func belongs(to parent: String) -> Bool {
+        let from = resolvedPath(project)
+        let to = resolvedPath(parent)
+        return from == to || to.hasPrefix(from + "/") || from.hasPrefix(to + "/")
+    }
 }
 
 /// The folder a session's spoken replies arrive in. Outside the repository, so voice writes
@@ -142,7 +191,9 @@ public struct VoiceChannel {
     }
 
     public static var defaultBase: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Genlock/voice")
+        // A test run clears its own channels at launch, and must not clear those of a running app.
+        if let base = ProcessInfo.processInfo.environment["GENLOCK_APP_VOICE_BASE"] { return URL(fileURLWithPath: base) }
+        return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Genlock/voice")
     }
 
     public func prepare() throws {

@@ -414,6 +414,199 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(v.press(), .startListening)
     }
 
+    func testRightCommandCancelsOnlyWhileDictating() { // V2
+        typealias V = VoiceMachine
+        XCTAssertEqual(V.keyAction(keyCode: V.rightOptionKey, isDown: true, state: .idle), .press)
+        XCTAssertEqual(V.keyAction(keyCode: V.rightOptionKey, isDown: true, state: .listening), .press)
+        XCTAssertEqual(V.keyAction(keyCode: V.rightOptionKey, isDown: false, state: .listening), .none, "only on the way down")
+        XCTAssertEqual(V.keyAction(keyCode: V.rightCommandKey, isDown: true, state: .listening), .cancel)
+        XCTAssertEqual(V.keyAction(keyCode: V.rightCommandKey, isDown: true, state: .sending), .cancel)
+        XCTAssertEqual(V.keyAction(keyCode: V.rightCommandKey, isDown: true, state: .idle), .none, "an ordinary key otherwise")
+        XCTAssertEqual(V.keyAction(keyCode: 55, isDown: true, state: .listening), .none, "left Command is left alone")
+    }
+
+    // These sequences are what the on-device recognizer really delivered, on macOS 26.5.
+    func testStoppingAfterAPauseKeepsTheWords() { // V13
+        var t = VoiceTranscript()
+        t.receive("Dictation keep saying", endsUtterance: false)
+        t.receive("Dictation keeps saying nothing was heard", endsUtterance: true)
+        t.receive("", endsUtterance: false) // the final result
+        XCTAssertEqual(t.text, "Dictation keeps saying nothing was heard")
+    }
+
+    func testAPauseMidSentenceKeepsWhatCameBefore() { // V13
+        var t = VoiceTranscript()
+        t.receive("The first part", endsUtterance: false)
+        t.receive("The first part is about the red bicycle", endsUtterance: true)
+        XCTAssertEqual(t.text, "The first part is about the red bicycle")
+        t.receive("The", endsUtterance: false)
+        XCTAssertEqual(t.text, "The first part is about the red bicycle The", "the new words follow, they do not replace")
+        t.receive("The second part", endsUtterance: false)
+        t.receive("The second part is about the blue kitchen", endsUtterance: true)
+        XCTAssertEqual(t.text, "The first part is about the red bicycle The second part is about the blue kitchen")
+    }
+
+    func testAnEmptyResultDoesNotEraseWordsStillBeingRevised() { // V13
+        var t = VoiceTranscript()
+        t.receive("Maybe", endsUtterance: false)
+        t.receive("", endsUtterance: true)
+        XCTAssertEqual(t.text, "Maybe")
+    }
+
+    func testRevisionsReplaceTheCurrentUtterance() { // V13
+        var t = VoiceTranscript()
+        t.receive("Nothing was her", endsUtterance: false)
+        t.receive("Nothing was heard", endsUtterance: false)
+        XCTAssertEqual(t.text, "Nothing was heard")
+        XCTAssertNil(VoiceMachine.message(from: VoiceTranscript().text), "silence still sends nothing")
+    }
+
+    func testPathsAreEscapedAsTerminalDoes() { // S16
+        XCTAssertEqual(TerminalInput.escaped(path: "/Users/tj/My Shots (1)/a&b.png"), #"/Users/tj/My\ Shots\ \(1\)/a\&b.png"#)
+        XCTAssertEqual(TerminalInput.escaped(path: "/tmp/café-😀_v1.2+x.png"), "/tmp/café-😀_v1.2+x.png", "ordinary characters stay readable")
+        XCTAssertEqual(TerminalInput.text(forPaths: ["/a b", "/c"]), #"/a\ b /c "#, "separated, with room to keep typing")
+    }
+
+    func testAPathThatWouldPressReturnIsNotTyped() { // S16
+        XCTAssertNil(TerminalInput.text(forPaths: ["/tmp/a\nb.png"]))
+        XCTAssertNil(TerminalInput.text(forPaths: ["/tmp/a\u{1b}b.png"]))
+        XCTAssertEqual(TerminalInput.text(forPaths: ["/tmp/a\nb.png", "/ok"]), "/ok ")
+        XCTAssertNil(TerminalInput.text(forPaths: []))
+    }
+
+    func testWhatAPasteMeans() { // S17
+        typealias T = TerminalInput
+        XCTAssertEqual(T.pasteKind(hasFiles: true, hasText: true, hasImage: true), .files, "a copied file also carries its name")
+        XCTAssertEqual(T.pasteKind(hasFiles: false, hasText: false, hasImage: true), .image, "a screenshot")
+        XCTAssertEqual(T.pasteKind(hasFiles: false, hasText: true, hasImage: true), .text, "a copied spreadsheet")
+        XCTAssertEqual(T.pasteKind(hasFiles: false, hasText: true, hasImage: false), .text)
+        XCTAssertEqual(T.pasteKind(hasFiles: false, hasText: false, hasImage: false), .text, "left to SwiftTerm, which does nothing")
+    }
+
+    func testPastedPathsAreMarkedOnlyWhenAsked() { // S16
+        XCTAssertEqual(TerminalInput.bracketed("/a ", enabled: true), "\u{1b}[200~/a \u{1b}[201~")
+        XCTAssertEqual(TerminalInput.bracketed("/a ", enabled: false), "/a ")
+    }
+
+    func testWhenTheAppRebuildsItself() { // S19
+        typealias U = AppUpdate
+        let t: TimeInterval = 1000
+        XCTAssertEqual(U.next(running: t, available: t, newestSource: t - 5, lastAttempt: nil, now: t + 60), .nothing, "nothing changed")
+        XCTAssertEqual(U.next(running: t, available: t, newestSource: t + 50, lastAttempt: nil, now: t + 60), .nothing, "still being edited")
+        XCTAssertEqual(U.next(running: t, available: t, newestSource: t + 30, lastAttempt: nil, now: t + 60), .build, "gone quiet")
+        XCTAssertEqual(U.next(running: t, available: t + 40, newestSource: t + 30, lastAttempt: t + 40, now: t + 90), .offerRestart, "built")
+        XCTAssertEqual(U.next(running: t, available: t, newestSource: t + 30, lastAttempt: t + 40, now: t + 90), .nothing, "failed: wait for a change")
+        XCTAssertEqual(U.next(running: t, available: t, newestSource: t + 50, lastAttempt: t + 40, now: t + 90), .build, "changed since it failed")
+        XCTAssertEqual(U.next(running: t, available: t + 40, newestSource: t + 50, lastAttempt: t + 40, now: t + 90), .build, "newer than the build on offer")
+        XCTAssertEqual(U.next(running: t, available: nil, newestSource: t - 5, lastAttempt: nil, now: t + 60), .nothing)
+    }
+
+    func testABuildFailureShowsTheError() { // S19
+        XCTAssertEqual(AppUpdate.failure(from: "Building\n/x.swift:3:1: error: nope\nmore"), "/x.swift:3:1: error: nope")
+        XCTAssertEqual(AppUpdate.failure(from: "only this"), "only this")
+    }
+
+    func testOlderMemoryWithoutTokensStillLoads() throws { // S7
+        let json = #"{"open":[{"project":"/p"}],"visible":["/p"],"conversations":{}}"#
+        let m = try JSONDecoder().decode(SessionMemory.self, from: Data(json.utf8))
+        XCTAssertEqual(m.open.first?.project, "/p")
+        XCTAssertNil(m.open.first?.token)
+    }
+
+    // MARK: The session host
+
+    private func hostTool() -> String {
+        Bundle(for: CoreTests.self).bundleURL.deletingLastPathComponent().appendingPathComponent("genlock-host").path
+    }
+
+    /// One attached end, as the app would be: the host's output arrives on `out`.
+    private func attachHost(_ tool: String, socket: String, folder: String, command: [String]) throws -> (p: Process, stdin: Pipe, out: URL) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = ["run", socket, folder, "--"] + command
+        let stdin = Pipe()
+        let out = FileManager.default.temporaryDirectory.appendingPathComponent("host-\(UUID().uuidString).out")
+        FileManager.default.createFile(atPath: out.path, contents: nil)
+        p.standardInput = stdin
+        p.standardOutput = try FileHandle(forWritingTo: out)
+        try p.run()
+        return (p, stdin, out)
+    }
+
+    private func wait(for what: String, timeout: Double = 8, until done: () -> Bool) {
+        let end = Date().addingTimeInterval(timeout)
+        while !done() && Date() < end { usleep(50_000) }
+        XCTAssertTrue(done(), "timed out waiting for \(what)")
+    }
+
+    private func probe(_ tool: String, _ socket: String) -> Bool {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: tool)
+        p.arguments = ["probe", socket]
+        try? p.run()
+        p.waitUntilExit()
+        return p.terminationStatus == 0
+    }
+
+    func testASessionOutlivesWhatIsAttachedToIt() throws { // S7
+        let tool = hostTool()
+        // Deep on purpose: a socket's own path may be no longer than about 100 bytes.
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("genlock-host-\(UUID().uuidString)/\(String(repeating: "deep-", count: 30))")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir.deletingLastPathComponent()) }
+        let socket = dir.appendingPathComponent("host.sock").path
+        let beat = dir.appendingPathComponent("beat").path
+        // Says it started, then counts for as long as it lives, and answers whatever it reads.
+        let script = #"printf '\033[?2004h'; echo started; (while :; do echo x >> "$0"; sleep 0.1; done) & while read line; do echo "got:$line"; if [ "$line" = quit ]; then kill $!; exit 7; fi; done"#
+        let first = try attachHost(tool, socket: socket, folder: dir.path, command: ["/bin/sh", "-c", script, beat])
+        wait(for: "the first output") { (try? String(contentsOf: first.out, encoding: .utf8))?.contains("started") == true }
+
+        // Killed outright, as a crash or a quit would.
+        kill(first.p.processIdentifier, SIGKILL)
+        first.p.waitUntilExit()
+        XCTAssertTrue(probe(tool, socket), "the host outlives the attached end")
+        let before = (try? String(contentsOfFile: beat, encoding: .utf8))?.count ?? 0
+        wait(for: "the program to keep running") { ((try? String(contentsOfFile: beat, encoding: .utf8))?.count ?? 0) > before }
+
+        // Back again: what it said is replayed, its bracketed-paste mode is restored, and it still listens.
+        let second = try attachHost(tool, socket: socket, folder: dir.path, command: ["/usr/bin/false"])
+        wait(for: "the replay") { (try? String(contentsOf: second.out, encoding: .utf8))?.contains("started") == true }
+        XCTAssertTrue((try? String(contentsOf: second.out, encoding: .utf8))?.hasPrefix("\u{1b}[?2004h") == true)
+        usleep(500_000) // past the moment answers to replayed questions are thrown away
+        second.stdin.fileHandleForWriting.write(Data("hello\n".utf8))
+        wait(for: "the reply") { (try? String(contentsOf: second.out, encoding: .utf8))?.contains("got:hello") == true }
+
+        // A probe leaves the attached end alone.
+        XCTAssertTrue(probe(tool, socket))
+        usleep(200_000)
+        XCTAssertTrue(second.p.isRunning)
+
+        // The program's own exit code comes back, and the host leaves nothing behind.
+        second.stdin.fileHandleForWriting.write(Data("quit\n".utf8))
+        second.p.waitUntilExit()
+        XCTAssertEqual(second.p.terminationStatus, 7)
+        wait(for: "the socket to go") { !FileManager.default.fileExists(atPath: socket) }
+    }
+
+    func testEndingASessionReachesTheHost() throws { // S7
+        let tool = hostTool()
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-host-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let socket = dir.appendingPathComponent("host.sock").path
+        let attached = try attachHost(tool, socket: socket, folder: dir.path, command: ["/bin/sh", "-c", "echo up; sleep 60"])
+        wait(for: "it to start") { (try? String(contentsOf: attached.out, encoding: .utf8))?.contains("up") == true }
+        let k = Process()
+        k.executableURL = URL(fileURLWithPath: tool)
+        k.arguments = ["kill", socket]
+        try k.run()
+        k.waitUntilExit()
+        attached.p.waitUntilExit()
+        XCTAssertNotEqual(attached.p.terminationStatus, 0)
+        XCTAssertFalse(probe(tool, socket))
+    }
+
     func testRecognitionFailuresAreExplained() { // V12
         let off = VoiceMachine.explain(recognitionError: #"Error Domain=kLSRErrorDomain Code=201 "Siri and Dictation are disabled""#)
         XCTAssertEqual(off?.needsDictationSetting, true)
@@ -481,6 +674,95 @@ final class CoreTests: XCTestCase {
         p.waitUntilExit()
         XCTAssertEqual(channel.readState()?.state, "waiting")
         XCTAssertEqual(channel.readState()?.message, "Needs approval")
+    }
+
+    private func transcripts(writing ids: [String] = []) throws -> Transcripts {
+        let t = Transcripts(project: "/some/my_project.app", claudeHome: root)
+        XCTAssertEqual(t.folder.lastPathComponent, "-some-my-project-app")
+        try FileManager.default.createDirectory(at: t.folder, withIntermediateDirectories: true)
+        for id in ids { try Data().write(to: t.folder.appendingPathComponent("\(id).jsonl")) }
+        return t
+    }
+
+    func testAConversationIsPickedUpByItsOwnID() throws { // S1, S12
+        let t = try transcripts()
+        XCTAssertEqual(t.start(saved: nil, spawnSession: nil, newID: "n"), .new("n"), "nothing here yet")
+        XCTAssertEqual(t.start(saved: "a", spawnSession: nil, newID: "n"), .new("n"), "opened and never spoken to, so it cannot be resumed")
+        try Data().write(to: t.folder.appendingPathComponent("other.jsonl"))
+        XCTAssertEqual(t.start(saved: nil, spawnSession: nil, newID: "n"), .latest, "history from before the app remembered")
+        try Data().write(to: t.folder.appendingPathComponent("a.jsonl"))
+        XCTAssertEqual(t.start(saved: "a", spawnSession: nil, newID: "n"), .resume("a"))
+        XCTAssertEqual(t.start(saved: "a", spawnSession: "spin", newID: "n"), .new("spin"), "a spin-off starts on its handoff")
+        try Data().write(to: t.folder.appendingPathComponent("spin.jsonl"))
+        XCTAssertEqual(t.start(saved: nil, spawnSession: "spin", newID: "n"), .resume("spin"), "and never takes the folder's latest")
+    }
+
+    func testASpinOffFromAnotherRepositoryDoesNotBelong() throws { // O6
+        let spawn = { (project: String) in
+            try JSONDecoder().decode(SpawnRequest.self, from: Data(#"{"ticket":"T","session":"s","title":"t","project":"\#(project)","prompt":"p"}"#.utf8))
+        }
+        XCTAssertTrue(try spawn("/repo").belongs(to: "/repo"))
+        XCTAssertTrue(try spawn("/repo").belongs(to: "/repo/app"), "a project can be a subfolder of its repository")
+        XCTAssertTrue(try spawn("/private/tmp").belongs(to: "/tmp"), "one folder, two spellings")
+        XCTAssertFalse(try spawn("/tmp/fixture").belongs(to: "/repo"))
+        XCTAssertFalse(try spawn("/repo-other").belongs(to: "/repo"), "a shared prefix is not a shared folder")
+    }
+
+    func testTranscriptsAreFoundWhereClaudeCodeKeepsThem() { // S12
+        XCTAssertEqual(Transcripts(project: "/tmp", claudeHome: root).folder.lastPathComponent, "-private-tmp", "symlinks resolved, /private kept")
+    }
+
+    func testOnlyAPickUpThatDiesAtOnceStartsOver() { // S15
+        XCTAssertTrue(ConversationStart.latest.failedToPickUp(exitCode: 1, after: 2))
+        XCTAssertTrue(ConversationStart.resume("a").failedToPickUp(exitCode: 1, after: 2))
+        XCTAssertFalse(ConversationStart.latest.failedToPickUp(exitCode: 0, after: 2), "you ended it")
+        XCTAssertFalse(ConversationStart.latest.failedToPickUp(exitCode: 1, after: 600), "it ran, then something else went wrong")
+        XCTAssertFalse(ConversationStart.new("a").failedToPickUp(exitCode: 1, after: 2), "so it can never loop")
+    }
+
+    func testResumingPassesTheIDAndNotTheHandoff() { // S11
+        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: nil, resumeID: "a")
+        XCTAssertEqual(args, ["--resume", "a"])
+    }
+
+    func testOpenSessionsSurviveARestart() throws { // S11
+        var m = SessionMemory()
+        let spawn = try JSONDecoder().decode(SpawnRequest.self, from: Data(#"{"ticket":"T-1","session":"s","title":"t","project":"/a","prompt":"p"}"#.utf8))
+        m.open = [.init(project: "/a"), .init(project: "/a", spawn: spawn), .init(project: "/gone")]
+        m.visible = ["/gone", "/a#T-1", "/a"]
+        m.conversations = ["/a": "c"]
+        let file = SessionMemory.file(beside: root.appendingPathComponent("deep/projects.json"))
+        try m.save(to: file)
+        let back = SessionMemory.load(from: file)
+        XCTAssertEqual(back, m)
+        let r = back.restorable { $0 != "/gone" }
+        XCTAssertEqual(r.open.map(\.key), ["/a", "/a#T-1"])
+        XCTAssertEqual(r.visible, ["/a#T-1", "/a"], "the split as you left it, less what has gone")
+        XCTAssertEqual(back.restorable { $0 == "/a" }.visible.count, 2)
+        m.visible = ["/gone"]
+        XCTAssertEqual(m.restorable { $0 != "/gone" }.visible, ["/a"], "something always comes back on screen")
+        try Data("not json".utf8).write(to: file)
+        XCTAssertEqual(SessionMemory.load(from: file), SessionMemory(), "damage means nothing open, not a crash")
+    }
+
+    func testACardReadsWhatTheConversationIsAbout() throws { // D12
+        let t = try transcripts()
+        let lines = [
+            "half a line cut off by the tail",
+            #"{"type":"ai-title","aiTitle":"Old title","sessionId":"a"}"#,
+            #"{"type":"user","message":"mentions \"ai-title\" in passing"}"#,
+            #"{"type":"last-prompt","lastPrompt":"[voice] fix   the\nresume","sessionId":"a"}"#,
+            #"{"type":"ai-title","aiTitle":"Session restore","sessionId":"a"}"#,
+        ]
+        try lines.joined(separator: "\n").write(to: t.folder.appendingPathComponent("a.jsonl"), atomically: true, encoding: .utf8)
+        try #"{"type":"ai-title","aiTitle":"Spin-off","sessionId":"b"}"#.write(to: t.folder.appendingPathComponent("b.jsonl"), atomically: true, encoding: .utf8)
+        let a = t.activity(conversation: "a")
+        XCTAssertEqual(a?.title, "Session restore")
+        XCTAssertEqual(a?.prompt, "fix the resume", "tidied, and without the dictation marker")
+        XCTAssertNotNil(a?.at)
+        XCTAssertEqual(t.activity(conversation: "b")?.title, "Spin-off")
+        XCTAssertNotNil(t.activity(conversation: nil), "with none remembered, the folder's newest")
+        XCTAssertNil(Transcripts(project: "/nowhere", claudeHome: root).activity(conversation: nil))
     }
 
     func testSpeechOffAddsNothingAndResumeWorks() { // V7, S10

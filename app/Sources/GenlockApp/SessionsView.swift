@@ -54,15 +54,34 @@ struct SessionBar: View {
                                     ProjectIconView(project: p, size: 16)
                                 }
                                 Text(model.sessions[id]?.label ?? id).lineLimit(1)
+                                Color.clear.frame(width: 12, height: 1) // room for the close button
                             }
                         }
                         .buttonStyle(GlassButtonStyle(active: shown))
                         .help("Click to show. Shift-click to add to the split.")
+                        .contextMenu {
+                            if model.sessions[id]?.spawn == nil {
+                                Button("Start New Conversation") { model.restart(id, fresh: true); model.visible = [id]; model.focus(id) }
+                            }
+                            Button("End Session") { model.endSession(id) }
+                        }
+                        .overlay(alignment: .trailing) {
+                            Button { model.endSession(id) } label: {
+                                Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .foregroundStyle(Theme.textSecondary)
+                            .padding(.trailing, 5)
+                            .help("End this session. Opening the project again picks the conversation back up.")
+                            .accessibilityLabel("End session \(model.sessions[id]?.label ?? "")")
+                        }
                     }
+                    newSessionMenu
                 }
             }
             .scrollIndicators(.never)
             Spacer(minLength: 0)
+            UpdatePill()
             if voice.isSpeaking {
                 Button { voice.stopSpeaking() } label: {
                     HStack(spacing: 8) {
@@ -86,6 +105,28 @@ struct SessionBar: View {
         .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
         .background(Color.black.opacity(0.25))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+    }
+}
+
+extension SessionBar {
+    /// Opens another project beside what you have, without going back to the dashboard.
+    private var newSessionMenu: some View {
+        Menu {
+            ForEach(model.projectsWithoutSession) { project in
+                Button(project.name) { model.openSessions(model.visible + [project.id]) }
+                    .disabled(model.visible.count >= DashSelection.maxPanes)
+            }
+            if !model.projectsWithoutSession.isEmpty { Divider() }
+            Button("Add a Folder…") { model.chooseFolders() }
+        } label: {
+            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .padding(.horizontal, 6)
+        .help("Open a session for another project")
+        .accessibilityLabel("New session")
     }
 }
 
@@ -137,6 +178,13 @@ struct PaneView: View {
         return HStack(spacing: 10) {
             if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 20) }
             Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
+            if let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
+                switch phase {
+                case "working": WorkingIndicator()
+                case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
+                default: Pill(text: "Done", symbol: "checkmark", color: Theme.green)
+                }
+            }
             if let spawn {
                 Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
                 Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -144,13 +192,6 @@ struct PaneView: View {
                 Text(goal.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
-            if let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
-                switch phase {
-                case "working": Waveform(level: 0.55, bars: 8, height: 12, colors: [Theme.cyan, Color(hex: 0x7C5CFF)]).help("Working")
-                case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
-                default: Pill(text: "Done", symbol: "checkmark", color: Theme.green)
-                }
-            }
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }
             Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
                 .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
@@ -228,8 +269,8 @@ struct SessionEndedOverlay: View {
             }
             .font(.system(size: 14, weight: .medium)).foregroundStyle(Theme.textPrimary).multilineTextAlignment(.center)
             HStack(spacing: 10) {
-                Button("Start new") { model.restart(projectID, resume: false); model.focus(projectID) }.buttonStyle(GlowButtonStyle())
-                Button("Resume last conversation") { model.restart(projectID, resume: true); model.focus(projectID) }.buttonStyle(GlassButtonStyle())
+                Button("Resume conversation") { model.restart(projectID, fresh: false); model.focus(projectID) }.buttonStyle(GlowButtonStyle())
+                Button("Start new") { model.restart(projectID, fresh: true); model.focus(projectID) }.buttonStyle(GlassButtonStyle())
             }
         }
         .padding(24)
@@ -262,15 +303,27 @@ struct TerminalHost: NSViewRepresentable {
 /// a null one, whose origin is far off screen.
 final class TerminalContainer: NSView {
     private static let inset = (x: CGFloat(6), y: CGFloat(4))
-    private weak var terminal: NSView?
+    private(set) weak var terminal: PaneTerminalView?
 
-    func show(_ view: NSView) {
+    func show(_ view: PaneTerminalView) {
         if view.superview !== self {
             view.removeFromSuperview()
             addSubview(view)
         }
         terminal = view
+        if registeredDraggedTypes.isEmpty { registerForDraggedTypes([.fileURL]) }
         place()
+    }
+
+    // A file dropped on a pane goes to its session. Anywhere else, the window takes a folder as a new project.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        terminal?.process.running == true && !PaneTerminalView.fileURLs(on: sender.draggingPasteboard).isEmpty ? .copy : []
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        guard let terminal, terminal.insert(paths: PaneTerminalView.fileURLs(on: sender.draggingPasteboard).map(\.path)) else { return false }
+        window?.makeFirstResponder(terminal)
+        return true
     }
 
     override func setFrameSize(_ newSize: NSSize) {

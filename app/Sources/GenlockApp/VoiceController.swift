@@ -7,7 +7,8 @@ import Speech
 @MainActor @Observable
 final class VoiceController: NSObject {
     private(set) var machine = VoiceMachine()
-    private(set) var partial = ""
+    private var transcript = VoiceTranscript()
+    var partial: String { transcript.text }
     private(set) var isSpeaking = false
     /// How loud the microphone is right now, 0 to 1, to draw it.
     private(set) var level = 0.0
@@ -52,7 +53,7 @@ final class VoiceController: NSObject {
                 return
             }
             target = project
-            partial = ""
+            transcript = VoiceTranscript()
             problem = nil
             needsDictationSetting = false
             didSend = false
@@ -69,7 +70,7 @@ final class VoiceController: NSObject {
         didSend = true
         teardown()
         machine.reset()
-        partial = ""
+        transcript = VoiceTranscript()
         target = nil
     }
 
@@ -142,7 +143,10 @@ final class VoiceController: NSObject {
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
                     guard let self else { return }
-                    if let result { self.partial = result.bestTranscription.formattedString }
+                    if let result {
+                        self.transcript.receive(result.bestTranscription.formattedString,
+                                                endsUtterance: result.speechRecognitionMetadata != nil)
+                    }
                     if let error {
                         self.lastRecognitionError = "\(error)"
                         // Say so at once, rather than listen on while nothing can come of it.
@@ -182,7 +186,7 @@ final class VoiceController: NSObject {
         submit(partial, to: target)
         teardown()
         machine.reset()
-        partial = ""
+        transcript = VoiceTranscript()
         target = nil
     }
 

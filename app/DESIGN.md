@@ -42,7 +42,8 @@ One person running several Claude Code sessions across several repositories on a
 
 Dark, vivid and alive: an enterprise product that is exciting to open, rather than a utility. Decided 5 November 2026, after the first version read as a plain form.
 
-- **One motif.** The genlock signal: three square waves locked to one clock. It is the mark, the loading state, and the voice meter's shape.
+- **One motif.** The genlock signal: three square waves locked to one clock. It is the mark, and the voice meter's shape.
+- **One shape, one meaning.** A waveform is only ever voice. Work in progress is pixels forming into a block, always with a word beside it: Working, Setting up, Loading.
 - **Depth.** A near-black canvas with slow colour moving behind it, and glass surfaces on top.
 - **Tiers have identity.** TODAY is hot coral to amber, SOON cyan to blue, LATER violet. That colour follows a project into its pane.
 - **Numbers lead.** The dashboard opens with live sessions, waiting on you, to review and due this week.
@@ -126,6 +127,7 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | D6 | A new project goes into the tier you are looking at, or SOON in the All view, and the app says where it went. Adding one already here shows it instead | auto, drive |
 | D7 | A deadline within 7 days or overdue shows on the card | auto |
 | D8 | A card shows when a session is running in that project | drive |
+| D12 | A card shows what its latest conversation is about, Claude Code's title and last prompt, with no goals or setup needed. With a goal, the goal stays the heading | auto, drive, eye |
 | D10 | The card is the dashboard's main action: clicking it opens the session, and hovering shows Open. Nothing has to be done first, so a card with no goal has no button at all. Setting up genlock is a quiet text link | auto, drive |
 | D11 | In a focused tier, every card in a row is the same height and width, a sparse card matches a full one, and its button sits at the bottom | auto, drive |
 | D9 | Each project can have its own icon, chosen from emoji, symbols or an image, shown on its card, session tab and pane. Until then it shows its first letter. Icons live with your projects on this Mac, never in the repository | auto, drive |
@@ -134,16 +136,25 @@ Each one is either true or false once built, and says how it is checked. Checks 
 
 | id | requirement | check |
 |---|---|---|
-| S1 | Clicking a card opens that project's session, running real `claude` in its folder, visible and ready to type into immediately | auto, drive, eye |
+| S1 | Clicking a card opens that project's session, running real `claude` in its folder and carrying on its last conversation, visible and ready to type into immediately. A folder with no conversation starts a new one | auto, drive, eye |
 | S2 | Shift-clicking several cards marks them, and releasing Shift opens all of them in a split | auto, drive |
 | S3 | Returning to the dashboard leaves sessions running, and opening one shows it exactly as you left it | drive |
 | S4 | A project has at most one main session, plus any spin-offs | auto |
 | S5 | `claude` and `genlock` are found when the app is launched from Finder, where PATH is normally minimal | auto |
 | S6 | When a session's process ends, the pane says so and offers a restart, and the app does not crash | drive |
-| S7 | Quitting with sessions running asks first and names how many | drive |
+| S7 | Sessions never stop because the app did. Quitting, restarting, updating or a crash leaves every session running, and reopening shows each as it is, with its history. Only ending a session stops it. Quitting therefore asks nothing | auto, drive |
 | S8 | A split holds up to 6 panes. A seventh is refused with a message | auto |
 | S9 | Keyboard input, paste, selection, colours and resize work in the terminal as in Terminal | eye |
-| S10 | A context menu can resume the project's last conversation with `claude --continue` | drive |
+| S10 | A context menu and the session-ended screen can start a new conversation instead | drive |
+| S11 | Launching reopens every session that was open, spin-offs included, each in its own conversation, with the split as you left it. A session you ended or that exited stays closed. A folder that has gone is skipped | auto, drive |
+| S13 | Each tab has a visible close button that ends its session, and its context menu can also start a new conversation. A running project is never lost by this: opening it again picks the conversation back up | drive, eye |
+| S14 | A + at the end of the tabs opens a session for another project, or adds a folder, without going back to the dashboard | drive, eye |
+| S15 | A folder whose history cannot be picked up, such as only `claude -p` runs, opens a new conversation and says so, rather than a dead pane | auto, drive |
+| S16 | Dropping a file or folder on a pane types its escaped path at that session's prompt, and focuses it. Dropped anywhere else, a folder still becomes a project. A pane with nothing running refuses the drop | auto, drive, eye |
+| S17 | ⌘V with a copied file types its path. With a copied image, it saves a PNG to a temporary folder and types that path. Copied text pastes as usual | auto, drive, eye |
+| S18 | The pane's status (Working, Needs you, Done) sits beside its name, away from the mic | eye |
+| S19 | A changed source tree rebuilds itself in the background and offers "Restart to update". A failed build says why and retries on the next change | auto, drive |
+| S12 | The conversation is the session's own, by id, so a spin-off or a Terminal session in the same folder cannot take its place, and `/clear` is followed | auto, drive |
 
 ### Inspector
 
@@ -174,7 +185,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | id | requirement | check |
 |---|---|---|
 | V1 | Pressing the mic button or tapping the right Option key starts listening to the focused pane; pressing either again sends what was said, as a message, with no further step | auto, eye |
-| V2 | While listening, the words appear live on screen, and Esc cancels without sending anything | eye |
+| V2 | While listening, the words appear live on screen. Right ⌘, right beside right Option, cancels without sending anything, as do Esc and a button on screen. Right ⌘ is an ordinary key otherwise | auto, drive, eye |
 | V3 | Saying nothing sends nothing | auto |
 | V4 | After a dictated message, the agent speaks a short version of its reply. It is told: only the important details, one to three spoken sentences, no paths, code or lists, and ask if it should go into more depth | drive |
 | V5 | If the agent tries to finish a dictated turn without speaking, it is sent back once and only once, so a session can never be trapped | auto, drive |
@@ -184,6 +195,7 @@ Press to start, press again to send, with a key and with a button on screen. The
 | V9 | Voice works in any folder without setting anything up or writing anything to the project | auto, drive |
 | V11 | Replies are read by Ava, in the best quality installed, picked up automatically if you download a better one. If she is missing, the app falls back to American English and says how to get her | auto, eye |
 | V12 | Any failure says what is wrong straight away, with a way to fix it: dictation turned off, permission denied, or nothing heard. It never just goes quiet | auto, drive |
+| V13 | Pausing loses nothing. Words said before a pause stay on screen and are sent, however long the pause and whether or not you speak again | auto |
 | V10 | Recognition runs on this Mac when the Mac supports it. Denied microphone or speech permission gets a message saying where to allow it | read the code, eye |
 
 ### Spin-offs
@@ -196,6 +208,7 @@ When a rabbit hole comes up, the agent offers to move it to its own session, so 
 | O2 | The agent offers only after `genlock spinoff propose` says SAFE, in one line, and launches only on your yes, with your words on record | auto |
 | O3 | On launch, a new pane running real `claude` joins the split beside its parent, under the session that holds the claim | drive |
 | O4 | The new session starts from a handoff prompt naming its ticket and what it holds. It reads the ticket, goal and context, and writes requirements before starting | drive |
+| O6 | A spin-off request from a different repository is refused with a message, because its ticket could not be found from the parent's folder | auto |
 | O5 | A full split keeps the session running, reachable from the bar, and says so | read the code |
 | O6 | Outside the app, `genlock spinoff launch` still opens a terminal window | auto |
 
@@ -261,6 +274,10 @@ The right Option key is the shortcut because it does nothing alone in a terminal
 
 **Spin-offs.** `genlock spinoff launch` runs its safety check and takes the claim as always. It then sees `GENLOCK_APP_CHANNEL` and drops a request in that folder instead of opening a window. The app notices, and starts `claude` with the handoff prompt under the session id that holds the claim, so the guard treats it as the holder. Its pane shares the project's inspector.
 
+**Picking up where you left off.** `sessions.json`, beside the project list, holds which sessions are open, the split, and each session's conversation id. A new session is given its id with `--session-id` and later reopened with `--resume`. Hooks report the current id, which `/clear` changes. With no id remembered, or none with a transcript, it falls back to `--continue`. Whether reopening many sessions at once draws on usage limits has not been measured.
+
+**What a card says it is working on.** The `ai-title` and `last-prompt` lines at the end of the conversation's transcript in `~/.claude/projects`. That format is Claude Code's own and undocumented, so anything unrecognised just leaves the card as it was.
+
 **Knowing when you are needed.** Sessions the app starts carry `Stop`, `Notification`, `UserPromptSubmit` and `PostToolUse` hooks, passed at launch. Each runs `genlock session-state`, which writes `state.json` to the session's private channel. The app reads it on its timer and turns it into a notification, the menu bar badge and the state on cards and panes. A dictated turn sent back for not speaking is not reported as done.
 
 **Layout.** `GenlockCore` holds everything that can be tested without a screen: snapshot decoding, the store, selection logic, split layout, and change detection. `Genlock` holds only views and the terminal.
@@ -281,7 +298,7 @@ Each is what I chose, and what would change if you disagree.
 |---|---|---|
 | 1 | **Releasing Shift opens the split.** Nothing extra to click, but letting go between clicks opens early | An "Open 3" button, which is one more step but cannot fire early |
 | 2 | **One main session per project, plus spin-offs.** A click always returns to the same place | Several freely-opened sessions per project |
-| 3 | **A click starts a new session, unless one is running.** genlock's orient gives it the context, and resuming is in the context menu | Always resume the last conversation |
+| 3 | **A click carries on the last conversation.** Starting over loses work and starting new is one menu item away. This reversed the first version, which started new on every click and lost everything on every restart | A new session each time, relying on genlock's orient for context |
 | 4 | **New projects go to the tier on screen.** Always visible the moment you add one | Always SOON, which hides them while you focus on TODAY |
 | 5 | **Tiers are per-Mac, not in the repo** | Committed, so they would follow you across machines |
 | 6 | **Three fixed tiers** | Renameable or more |
@@ -323,3 +340,7 @@ Editing goals or tasks in the app (ask the agent); viewing files inside the app;
     swift test                # everything that needs no screen
     ./scripts/build.sh        # produces build/Genlock.app
     ./scripts/install.sh      # copies it to /Applications
+
+You only need this once. An app built this way notices when its source changes, waits for 20 quiet seconds, rebuilds in the background and offers "Restart to update", which leaves every session running. It also signs with an Apple Development identity if the Mac has one, because macOS forgets granted permissions when an ad hoc signature changes.
+
+**Why sessions survive.** The app does not own them. Each `claude` belongs to its own `genlock-host` process (`Sources/GenlockHost`), which holds the terminal, keeps the last 4 MB of output, and has no parent to die with. The pane runs `genlock-host run`, which attaches and replays that output. A running host outlives the file it came from, so new apps talk to old hosts: frames may be added, never changed. After a reboot no host is left, and the same command starts one that resumes the conversation.

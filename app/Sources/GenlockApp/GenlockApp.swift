@@ -51,8 +51,6 @@ struct GenlockApp: App {
 final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     private var monitor: Any?
     private var shiftWasDown = false
-    private var rightOptionWasDown = false
-    private static let rightOptionKey: UInt16 = 61
 
     @MainActor func applicationDidFinishLaunching(_ note: Notification) {
         NSApp.setActivationPolicy(.regular)
@@ -79,10 +77,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             let shift = event.modifierFlags.contains(.shift)
             if shiftWasDown && !shift { model.shiftReleased() }
             shiftWasDown = shift
-            if event.keyCode == Self.rightOptionKey {
-                let down = event.modifierFlags.contains(.option)
-                if down && !rightOptionWasDown { model.pressVoice() }
-                rightOptionWasDown = down
+            // A modifier's own flag says whether this event was it going down or coming up.
+            let flag: NSEvent.ModifierFlags = event.keyCode == VoiceMachine.rightOptionKey ? .option : .command
+            switch VoiceMachine.keyAction(keyCode: event.keyCode, isDown: event.modifierFlags.contains(flag), state: model.voice.machine.state) {
+            case .press: model.pressVoice()
+            case .cancel: model.voice.cancel()
+            case .none: break
             }
         case .keyDown:
             if event.keyCode == 53 { // Esc
@@ -98,17 +98,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             break
         }
         return event
-    }
-
-    @MainActor func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        let running = AppModel.shared.sessions.values.filter(\.isRunning).count
-        guard running > 0, !Driver.isActive else { return .terminateNow }
-        let alert = NSAlert()
-        alert.messageText = running == 1 ? "1 session is still running" : "\(running) sessions are still running"
-        alert.informativeText = "Quitting ends them. You can resume a conversation later from a project's menu."
-        alert.addButton(withTitle: "Quit")
-        alert.addButton(withTitle: "Cancel")
-        return alert.runModal() == .alertFirstButtonReturn ? .terminateNow : .terminateCancel
     }
 
     /// Banners still show while Genlock is in front, for a session you are not looking at.
@@ -199,10 +188,14 @@ struct VoiceBanner: View {
                     .foregroundStyle(voice.partial.isEmpty ? Theme.textSecondary : Theme.textPrimary)
                 Spacer(minLength: 8)
                 VStack(alignment: .trailing, spacing: 2) {
-                    Text("Right Option to send").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
-                    Text("Esc to cancel").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
+                    Text("Right ⌥ to send").font(.system(size: 11, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    Text("Right ⌘ to cancel").font(.system(size: 11)).foregroundStyle(Theme.textTertiary)
                 }
                 .fixedSize()
+                Button { voice.cancel() } label: { Image(systemName: "xmark") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Cancel without sending (right ⌘ or Esc)")
+                    .accessibilityLabel("Cancel dictation")
             }
             .padding(.horizontal, 20).padding(.vertical, 14)
             .frame(maxWidth: 760)

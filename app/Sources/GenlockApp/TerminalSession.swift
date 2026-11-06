@@ -10,7 +10,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let key: String
     let projectID: String
     let spawn: SpawnRequest?
-    let voiceToken = UUID().uuidString
+    let voiceToken: String
     let channel: VoiceChannel
     private(set) var isRunning = false
     private(set) var exitCode: Int32?
@@ -20,9 +20,14 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     var phase: String?
     var attentionMessage = ""
     @ObservationIgnored var lastReportAt: Double = 0
+    /// The conversation it is in, once known. Nil while continuing the folder's latest.
+    @ObservationIgnored var conversation: String?
+    /// Called when picking up a conversation fails as it starts.
+    @ObservationIgnored var onFailedPickUp: (() -> Void)?
+    @ObservationIgnored private var started: (how: ConversationStart, at: Date)?
     @ObservationIgnored var cols = 0
     @ObservationIgnored var rows = 0
-    @ObservationIgnored let view: LocalProcessTerminalView
+    @ObservationIgnored let view: PaneTerminalView
 
     var label: String {
         let name = URL(fileURLWithPath: projectID).lastPathComponent
@@ -33,12 +38,14 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         ticket.map { "\(project)#\($0)" } ?? project
     }
 
-    init(projectID: String, spawn: SpawnRequest? = nil) {
+    /// `token` finds a session's host again after a restart.
+    init(projectID: String, spawn: SpawnRequest? = nil, token: String? = nil) {
         self.projectID = projectID
         self.spawn = spawn
+        voiceToken = token ?? UUID().uuidString
         key = Self.key(project: projectID, ticket: spawn?.ticket)
         channel = VoiceChannel(session: voiceToken)
-        view = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        view = PaneTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         super.init()
         view.processDelegate = self
         view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
@@ -46,9 +53,13 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         view.nativeForegroundColor = NSColor(white: 0.92, alpha: 1)
     }
 
-    func start(tools: ToolEnvironment, resume: Bool, voice: Bool, spinoffs: Bool) {
+    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool) {
         guard let claude = tools.claudePath else {
             startError = "Claude Code was not found. Install it, then try again."
+            return
+        }
+        guard let host = SessionHost.executable else {
+            startError = "Genlock is missing its session host. Reinstall the app."
             return
         }
         startError = nil
@@ -58,9 +69,22 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         env["GENLOCK_APP_CHANNEL"] = channel.folder.path
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
         let genlockCommand = tools.genlockArgv?.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
-        let args = SessionLaunch.arguments(resume: resume, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
-                                           reportsState: true, sessionID: spawn?.session, prompt: spawn?.prompt)
-        view.startProcess(executable: claude, args: args,
+        var newID: String?
+        var resumeID: String?
+        switch start {
+        case .new(let id): newID = id
+        case .resume(let id): resumeID = id
+        case .latest: break
+        }
+        // Already running from before a restart, this attaches and the arguments go unused.
+        let socket = SessionHost.socket(in: channel.folder)
+        let reattaching = SessionHost.isAlive(socket: socket)
+        conversation = reattaching ? resumeID : newID ?? resumeID
+        started = reattaching ? nil : (start, Date())
+        let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
+                                           reportsState: true, sessionID: newID, resumeID: resumeID,
+                                           prompt: newID == nil ? nil : spawn?.prompt)
+        view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)
         isRunning = true
@@ -75,7 +99,9 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         }
     }
 
+    /// Really ends it. Quitting the app does not come through here.
     func end() {
+        SessionHost.end(socket: SessionHost.socket(in: channel.folder))
         view.terminate()
         isRunning = false
     }
@@ -95,8 +121,12 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     nonisolated func processTerminated(source: TerminalView, exitCode: Int32?) {
         DispatchQueue.main.async { [weak self] in
             MainActor.assumeIsolated {
-                self?.isRunning = false
-                self?.exitCode = exitCode
+                guard let self else { return }
+                self.isRunning = false
+                self.exitCode = exitCode
+                if let started = self.started, started.how.failedToPickUp(exitCode: exitCode, after: Date().timeIntervalSince(started.at)) {
+                    self.onFailedPickUp?()
+                }
             }
         }
     }

@@ -20,6 +20,8 @@ enum Driver {
         }
     }
 
+    private static var pasteResults: [Bool] = []
+
     private static var window: NSWindow? { NSApp.windows.first { $0.isVisible && $0.contentView != nil } }
 
     private static func projectID(named name: String) -> String? {
@@ -55,10 +57,15 @@ enum Driver {
             if shift { postFlags(.shift, keyCode: 56) }
             postClick(at: frame, shift: shift)
         }
+        if let at = step["clickAt"] as? [Double] { postClick(at: CGRect(x: at[0], y: at[1], width: 0, height: 0), shift: false) }
         if step["releaseShift"] != nil { postFlags([], keyCode: 56) }
         if step["tapRightOption"] != nil {
             postFlags(.option, keyCode: 61)
             postFlags([], keyCode: 61)
+        }
+        if step["tapRightCommand"] != nil {
+            postFlags(.command, keyCode: VoiceMachine.rightCommandKey)
+            postFlags([], keyCode: VoiceMachine.rightCommandKey)
         }
         if step["dashboard"] != nil { model.route = .dashboard }
         if let args = step["icon"] as? [String], let id = projectID(named: args[0]) {
@@ -72,6 +79,20 @@ enum Driver {
         if let args = step["tier"] as? [String], let id = projectID(named: args[0]), let tier = Tier(rawValue: args[1]) { model.move(id, to: tier) }
         if let args = step["dictate"] as? [String], let id = projectID(named: args[0]) { model.voice.submit(args[1], to: id) }
         if let args = step["type"] as? [String], let id = projectID(named: args[0]) { model.sessions[id]?.view.send(txt: args[1]) }
+        // Dropped paths and a private pasteboard, so a test never touches the real clipboard.
+        if let args = step["insertPaths"] as? [String], let id = projectID(named: args[0]) {
+            _ = model.sessions[id]?.view.insert(paths: Array(args.dropFirst()))
+        }
+        if let args = step["pasteFrom"] as? [String], let id = projectID(named: args[0]), let view = model.sessions[id]?.view {
+            let board = NSPasteboard(name: .init("com.locklainn.genlock.test"))
+            board.clearContents()
+            if args[1] == "text" { board.setString(args[2], forType: .string) }
+            if args[1] == "image" { board.setData(try? Data(contentsOf: URL(fileURLWithPath: args[2])), forType: .tiff) }
+            if args[1] == "file" { board.writeObjects([URL(fileURLWithPath: args[2]) as NSURL]) }
+            pasteResults.append(view.pasteAttachment(from: board))
+        }
+        if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
+        if step["restartToUpdate"] != nil { model.updater.restart() }
         if let cmd = step["shell"] as? String {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")
@@ -99,7 +120,10 @@ enum Driver {
         }
         if let path = step["snapshot"] as? String { snapshot(to: path) }
         if let path = step["report"] as? String { report(to: path) }
-        if step["quit"] != nil { NSApp.terminate(nil) }
+        if step["quit"] != nil {
+            model.rememberSessions()
+            NSApp.terminate(nil)
+        }
     }
 
     private static func snapshot(to path: String) {
@@ -120,6 +144,25 @@ enum Driver {
         try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
     }
 
+    /// For each pane: does a point in the middle land on a registered drop target, and does Paste reach this terminal?
+    private static func paneReport() -> [[String: Any]] {
+        AppModel.shared.sessions.values.map { s in
+            let view = s.view
+            var dropTarget = ""
+            if let root = view.window?.contentView {
+                let middle = root.convert(NSPoint(x: view.bounds.midX, y: view.bounds.midY), from: view)
+                var v = root.hitTest(middle)
+                while let found = v, !found.registeredDraggedTypes.contains(.fileURL) { v = found.superview }
+                dropTarget = v.map { String(describing: type(of: $0)) } ?? "none"
+            }
+            view.window?.makeFirstResponder(view)
+            let pasteItem = NSApp.mainMenu?.items.compactMap(\.submenu).flatMap(\.items).first { $0.action == #selector(NSText.paste(_:)) }
+            return ["label": s.label, "dropTarget": dropTarget,
+                    "pasteReachesTerminal": NSApp.target(forAction: #selector(NSText.paste(_:))) as AnyObject === view,
+                    "pasteKey": pasteItem?.keyEquivalent ?? "<no menu item>"]
+        }
+    }
+
     private static func report(to path: String) {
         let model = AppModel.shared
         var cards: [String: Any] = [:]
@@ -132,6 +175,8 @@ enum Driver {
                 "error": model.state(for: p.id).error?.description ?? "",
                 "changed": Array(model.state(for: p.id).recentlyChanged),
                 "reviews": snap?.openReviews.count ?? 0,
+                "activityTitle": model.state(for: p.id).activity?.title ?? "",
+                "activityPrompt": model.state(for: p.id).activity?.prompt ?? "",
             ]
         }
         let out: [String: Any] = [
@@ -153,6 +198,9 @@ enum Driver {
             "cards": cards,
             "spoken": model.voice.lastSpoken ?? "",
             "voice": model.voice.chosenVoice?.name ?? "",
+            "pasteResults": pasteResults,
+            "update": "\(model.updater.state)",
+            "panes": paneReport(),
             "voiceState": "\(model.voice.machine.state)",
             "voiceTarget": model.voice.target ?? "",
             "voicePartial": model.voice.partial,

@@ -14,6 +14,8 @@ let package = Package(
             dependencies: ["GenlockCore", .product(name: "SwiftTerm", package: "SwiftTerm")],
             path: "Sources/GenlockApp"
         ),
-        .testTarget(name: "GenlockCoreTests", dependencies: ["GenlockCore"]),
+        // A separate program because it has to outlive the app. C because Swift does not allow fork.
+        .executableTarget(name: "genlock-host", path: "Sources/GenlockHost"),
+        .testTarget(name: "GenlockCoreTests", dependencies: ["GenlockCore", "genlock-host"]),
     ]
 )

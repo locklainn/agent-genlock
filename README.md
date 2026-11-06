@@ -1,4 +1,4 @@
-# genlock: keeps coding agents in sync
+# Genlock: keeps coding agents in sync
 
 In video, a *genlock* locks several sources to one timing signal. Here the signal is a repository's goals and tickets: every agent reads them, keeps them current, and stays out of the others' way.
 
@@ -162,4 +162,4 @@ Almost every assertion is a refusal. Merge tests run real `git merge` and `git r
 | `docs/ADOPTING.md` | what `genlock guide` prints |
 | `install.mjs` | writes rules, hooks, MCP config and skills, idempotently |
 
-MIT.
+MIT. The license covers the code, not the name: Genlock™ is a trademark of TJ Loughlin. © 2026 TJ Loughlin.

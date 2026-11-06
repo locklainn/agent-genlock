@@ -44,6 +44,7 @@ struct DashboardHeader: View {
                     .transition(.scale.combined(with: .opacity))
             }
             Spacer()
+            UpdatePill()
             if !model.visible.isEmpty {
                 Button { model.route = .sessions } label: {
                     Label("Back to \(model.visible.count == 1 ? "session" : "\(model.visible.count) sessions")", systemImage: "terminal.fill")
@@ -447,28 +448,34 @@ struct ProjectCard: View {
         } else if let snap = state.snapshot {
             summary(snap)
         } else {
-            Waveform(level: 0.4, bars: 16, height: 18, colors: Theme.tint(tier))
+            WorkingIndicator(label: "Loading")
         }
     }
 
     @ViewBuilder private func summary(_ s: Snapshot) -> some View {
         let c = CardSummary(s)
         if c.needsSetup {
-            Text("Goals and tasks are off").font(.system(size: 17, weight: .semibold, design: .rounded)).foregroundStyle(Theme.textSecondary)
+            if let title = state.activity?.title {
+                Text(title).font(.system(size: 17, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+            } else {
+                Text("Goals and tasks are off").font(.system(size: 17, weight: .semibold, design: .rounded)).foregroundStyle(Theme.textSecondary)
+            }
             Spacer(minLength: 0)
+            activityRow(state.activity?.prompt)
             if model.settingUp.contains(project.id) {
                 HStack(spacing: 10) {
-                    Waveform(level: 0.6, bars: 12, height: 18, colors: Theme.tint(tier))
-                    Text("Setting up…").font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textSecondary)
+                    WorkingIndicator(label: "Setting up")
                 }
             } else {
-                Button("Set up genlock") { model.setupTarget = project.id }.buttonStyle(LinkButtonStyle())
+                Button("Set up Genlock") { model.setupTarget = project.id }.buttonStyle(GlassButtonStyle(active: true))
             }
         } else {
             HStack(alignment: .top, spacing: 10) {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(c.goalTitle ?? "No goal yet").font(.system(size: 17, weight: c.goalTitle == nil ? .semibold : .bold, design: .rounded))
-                        .foregroundStyle(c.goalTitle == nil ? Theme.textSecondary : Theme.textPrimary)
+                    let heading = c.goalTitle ?? state.activity?.title
+                    Text(heading ?? "No goal yet").font(.system(size: 17, weight: heading == nil ? .semibold : .bold, design: .rounded))
+                        .foregroundStyle(heading == nil ? Theme.textSecondary : Theme.textPrimary)
                         .lineLimit(3).fixedSize(horizontal: false, vertical: true)
                     if let next = c.nextThing {
                         HStack(alignment: .firstTextBaseline, spacing: 5) {
@@ -483,6 +490,8 @@ struct ProjectCard: View {
                 }
             }
             Spacer(minLength: 0)
+            // Under a goal, the conversation's title is news. Otherwise it is already the heading.
+            activityRow(c.goalTitle == nil ? state.activity?.prompt : state.activity?.title ?? state.activity?.prompt)
             if let task = c.lastTaskTitle, let status = c.lastTaskStatus {
                 let symbol = Theme.status(status)
                 HStack(spacing: 7) {
@@ -498,6 +507,23 @@ struct ProjectCard: View {
                 .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
             }
             badges(c)
+        }
+    }
+
+    /// What the project's conversation was last on, in the same inset as the last task.
+    @ViewBuilder private func activityRow(_ text: String?) -> some View {
+        if let text {
+            HStack(spacing: 7) {
+                Image(systemName: "text.bubble").foregroundStyle(Theme.textSecondary).font(.system(size: 12))
+                    .accessibilityLabel("Latest conversation")
+                Text(text).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.textPrimary.opacity(0.85)).lineLimit(1)
+                Spacer(minLength: 4)
+                if let when = state.activity?.at {
+                    Text(ISODate.age(when)).font(.system(size: 11)).foregroundStyle(Theme.textTertiary).fixedSize()
+                }
+            }
+            .padding(.horizontal, 9).padding(.vertical, 7)
+            .background(Color.black.opacity(0.28), in: RoundedRectangle(cornerRadius: 9, style: .continuous))
         }
     }
 
@@ -527,12 +553,12 @@ struct ProjectCard: View {
         }
         Divider()
         Button("Open Session") { model.openSessions([project.id]) }
-        Button("Resume Last Conversation") { model.restart(project.id, resume: true); model.openSessions([project.id]) }
+        Button("Start New Conversation") { model.restart(project.id, fresh: true); model.openSessions([project.id]) }
         if model.sessions[project.id] != nil {
             Button("End Session") { model.endSession(project.id) }
         }
         Divider()
-        if state.snapshot?.initialized == false { Button("Set Up genlock…") { model.setupTarget = project.id } }
+        if state.snapshot?.initialized == false { Button("Set Up Genlock…") { model.setupTarget = project.id } }
         Button("Change Icon…") { model.iconTarget = project.id }
         Button("Reveal in Finder") { NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: project.path) }
         Button("Remove from Genlock") { model.removeProject(project.id) }

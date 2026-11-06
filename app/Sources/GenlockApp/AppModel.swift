@@ -9,6 +9,8 @@ final class ProjectState {
     var error: SnapshotError?
     /// What changed in the last refresh, to point at it briefly.
     var recentlyChanged: Set<String> = []
+    /// What its latest conversation is about, which needs no goals or setup.
+    var activity: SessionActivity?
     @ObservationIgnored var watcher: ProjectWatcher?
     @ObservationIgnored var refreshing = false
     @ObservationIgnored var refreshAgain = false
@@ -27,6 +29,8 @@ final class AppModel {
     private(set) var states: [String: ProjectState] = [:]
     private(set) var sessions: [String: TerminalSession] = [:]
     private(set) var selection = DashSelection()
+    @ObservationIgnored private var memory = SessionMemory()
+    @ObservationIgnored private var memoryFile: URL { SessionMemory.file(beside: store.file) }
     var route: Route = .dashboard
     var visible: [String] = []
     var message: String? {
@@ -54,22 +58,24 @@ final class AppModel {
 
     @ObservationIgnored var lastClickHadShift = false
     @ObservationIgnored var cardFrames: [String: CGRect] = [:]
+    let updater = AppUpdater()
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var voiceTicker: Timer?
 
     func boot() {
-        // Sessions do not survive a restart, so neither do their channels.
-        try? FileManager.default.removeItem(at: VoiceChannel.defaultBase)
         suggestions = ProjectStore.discover().filter { store.project($0) == nil }
         for p in store.projects { state(for: p.id) }
+        restoreSessions()
+        removeForgottenChannels()
         Task.detached {
             let resolved = ToolEnvironment.resolve()
             await MainActor.run {
                 self.tools = resolved
+                self.updater.start()
                 for p in self.store.projects { self.startWatching(p.id); self.refresh(p.id) }
                 // Anything clicked while the tools were being found starts now.
                 for session in self.sessions.values where !session.isRunning && session.exitCode == nil {
-                    session.start(tools: resolved, resume: false, voice: self.voice.speakReplies, spinoffs: self.spinoffsAllowed(session.projectID))
+                    self.launch(session, tools: resolved)
                 }
             }
         }
@@ -85,6 +91,7 @@ final class AppModel {
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
                 model.updateAttention()
+                model.rememberSessions()
             }
         }
     }
@@ -112,9 +119,15 @@ final class AppModel {
         let s = state(for: id)
         if s.refreshing { s.refreshAgain = true; return }
         s.refreshing = true
+        let transcripts = Transcripts(project: id, claudeHome: Transcripts.claudeHome(environment: tools.environment))
+        let conversation = memory.conversations[id]
         Task.detached(priority: .userInitiated) {
             let result = GenlockCLI.snapshot(of: id, tools: tools)
-            await MainActor.run { self.apply(result, to: s, id: id) }
+            let activity = transcripts.activity(conversation: conversation)
+            await MainActor.run {
+                if s.activity != activity { s.activity = activity }
+                self.apply(result, to: s, id: id)
+            }
         }
     }
 
@@ -246,14 +259,14 @@ final class AppModel {
                 self.settingUp.remove(id)
                 self.refresh(id)
                 if out?.status != 0 {
-                    self.message = "Could not set up \(name): \(out?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? "genlock did not run")"
+                    self.message = "Could not set up \(name): \(out?.stderr.trimmingCharacters(in: .whitespacesAndNewlines) ?? "Genlock did not run")"
                 } else if case .success(let snap) = check, snap.initialized {
                     let running = self.sessions[id]?.isRunning == true
                     self.message = running
                         ? "\(name) is on the signal. End and restart its session to load the new rules."
                         : "\(name) is on the signal. Open its session and start working. Claude will track goals as you go."
                 } else {
-                    self.message = "Setup ran in \(name), but genlock still does not see it as set up. Run genlock doctor there."
+                    self.message = "Setup ran in \(name), but Genlock still does not see it as set up. Run genlock doctor there."
                 }
             }
         }.value
@@ -282,6 +295,7 @@ final class AppModel {
             let isNew = (report?.at ?? 0) > session.lastReportAt
             if let report, isNew {
                 session.lastReportAt = report.at
+                if let id = report.session { session.conversation = id }
                 session.phase = report.state
                 session.attentionMessage = report.message
             }
@@ -339,8 +353,8 @@ final class AppModel {
 
     // MARK: Sessions
 
-    func openSessions(_ ids: [String], resume: Bool = false) {
-        for id in ids { ensureSession(id, resume: resume) }
+    func openSessions(_ ids: [String]) {
+        for id in ids { ensureSession(id) }
         visible = ids
         route = .sessions
         focus(ids.first)
@@ -352,21 +366,77 @@ final class AppModel {
     }
 
     @discardableResult
-    private func ensureSession(_ id: String, resume: Bool) -> TerminalSession {
+    private func ensureSession(_ id: String) -> TerminalSession {
         if let existing = sessions[id], existing.isRunning || existing.exitCode != nil { return existing }
         let session = sessions[id] ?? TerminalSession(projectID: id)
         sessions[id] = session
-        if let tools { session.start(tools: tools, resume: resume, voice: voice.speakReplies, spinoffs: spinoffsAllowed(id)) }
+        if let tools { launch(session, tools: tools) }
         return session
     }
 
-    func restart(_ key: String, resume: Bool) {
+    /// Picks up the session's conversation unless `fresh` asks for a new one. A spin-off keeps
+    /// its own either way, because the id holding its claim cannot start over.
+    private func launch(_ session: TerminalSession, tools: ToolEnvironment, fresh: Bool = false) {
+        let transcripts = Transcripts(project: session.projectID, claudeHome: Transcripts.claudeHome(environment: tools.environment))
+        let newID = UUID().uuidString.lowercased()
+        let start = fresh && session.spawn == nil
+            ? ConversationStart.new(newID)
+            : transcripts.start(saved: memory.conversations[session.key], spawnSession: session.spawn?.session, newID: newID)
+        if session.spawn == nil {
+            session.onFailedPickUp = { [weak self, weak session] in
+                guard let self, let session, self.sessions[session.key] === session else { return }
+                self.message = "\(session.label) had no conversation to pick up, so this is a new one."
+                self.restart(session.key, fresh: true)
+            }
+        }
+        session.start(tools: tools, conversation: start, voice: voice.speakReplies, spinoffs: session.spawn != nil || spinoffsAllowed(session.projectID))
+    }
+
+    /// Reopens what was open last time, ready to carry on. Before the tools are found these
+    /// wait, and boot starts them.
+    private func restoreSessions() {
+        memory = SessionMemory.load(from: memoryFile)
+        let back = memory.restorable { project in self.store.project(project)?.exists == true }
+        for open in back.open {
+            let session = TerminalSession(projectID: open.project, spawn: open.spawn, token: open.token)
+            sessions[session.key] = session
+        }
+        visible = back.visible
+        if !visible.isEmpty { route = .sessions }
+    }
+
+    /// Sessions outlive the app, so their channels do too. Only one nothing remembers can go.
+    private func removeForgottenChannels() {
+        let keep = Set(sessions.values.map(\.voiceToken))
+        let base = VoiceChannel.defaultBase
+        for name in (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? [] where !keep.contains(name) {
+            let folder = base.appendingPathComponent(name)
+            SessionHost.end(socket: SessionHost.socket(in: folder))
+            try? FileManager.default.removeItem(at: folder)
+        }
+    }
+
+    /// A session you ended, or that exited, is not reopened. Its conversation is still remembered.
+    func rememberSessions() {
+        var next = memory
+        let open = sessions.values.filter { $0.isRunning || ($0.exitCode == nil && $0.startError == nil) }
+        next.open = open.map { SessionMemory.Open(project: $0.projectID, spawn: $0.spawn, token: $0.voiceToken) }.sorted { $0.key < $1.key }
+        next.visible = visible
+        for session in open { if let id = session.conversation { next.conversations[session.key] = id } }
+        guard next != memory else { return }
+        memory = next
+        try? next.save(to: memoryFile)
+    }
+
+    func restart(_ key: String, fresh: Bool) {
         let project = sessions[key]?.projectID ?? key
         let spawn = sessions[key]?.spawn
+        if sessions[key]?.isRunning == true { sessions[key]?.end() }
         sessions[key]?.channel.remove()
+        if fresh && spawn == nil { memory.conversations[key] = nil }
         let session = TerminalSession(projectID: project, spawn: spawn)
         sessions[key] = session
-        if let tools { session.start(tools: tools, resume: resume, voice: voice.speakReplies, spinoffs: spinoffsAllowed(project)) }
+        if let tools { launch(session, tools: tools, fresh: fresh) }
     }
 
     /// An agent's spin-off, which you have already said yes to, joins the split.
@@ -378,10 +448,14 @@ final class AppModel {
 
     private func openSpawn(_ request: SpawnRequest, beside parent: String) {
         guard let tools else { return }
+        if let folder = sessions[parent]?.projectID, !request.belongs(to: folder) {
+            message = "Ignored spin-off \(request.ticket), which came from \(request.project), not this project."
+            return
+        }
         // The parent's id, not the path git reports: they can spell one folder differently (/tmp, /private/tmp).
         let session = TerminalSession(projectID: sessions[parent]?.projectID ?? request.project, spawn: request)
         sessions[session.key] = session
-        session.start(tools: tools, resume: false, voice: voice.speakReplies, spinoffs: true)
+        launch(session, tools: tools)
         var next = visible
         if !next.contains(parent) { next.append(parent) }
         if next.count >= DashSelection.maxPanes {
@@ -400,8 +474,14 @@ final class AppModel {
         sessions[key]?.channel.remove()
         sessions[key] = nil
         visible.removeAll { $0 == key }
-        if visible.isEmpty { route = .dashboard }
+        if visible.isEmpty {
+            // Another open session is closer to where you were than the dashboard.
+            if let next = sessions.keys.sorted().first { visible = [next]; focus(next) } else { route = .dashboard }
+        }
     }
+
+    /// What the bar's new-session menu offers: a project has one main session, so those without.
+    var projectsWithoutSession: [Project] { store.projects.filter { sessions[$0.id] == nil && $0.exists } }
 
     func hasRunningSession(project: String) -> Bool {
         sessions.values.contains { $0.projectID == project && $0.isRunning }
