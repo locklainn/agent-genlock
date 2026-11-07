@@ -21,6 +21,8 @@ enum Driver {
     }
 
     private static var pasteResults: [Bool] = []
+    /// Simulated clicks do not reach panel rows, so a test asks for this state instead.
+    static var expandQuestions = false
 
     private static var window: NSWindow? { NSApp.windows.first { $0.isVisible && $0.contentView != nil && !($0 is CelebrationPanel) } }
 
@@ -99,6 +101,13 @@ enum Driver {
             pasteResults.append(view.pasteAttachment(from: board))
         }
         if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
+        if let name = step["newSession"] as? String, let id = projectID(named: name) { model.newSession(in: id) }
+        if let name = step["closeTab"] as? String, let id = projectID(named: name) { model.tuck(id) }
+        if let name = step["endNoted"] as? String, let id = projectID(named: name), let s = model.sessions[id] {
+            model.recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: s.projectID, spawn: s.spawn, slot: s.slot), in: model.recentlyEnded)
+            model.endSession(id)
+        }
+        if let name = step["reopen"] as? String, let id = projectID(named: name), let open = model.recentlyEnded.first(where: { $0.key == id }) { model.reopen(open) }
         if step["restartToUpdate"] != nil { model.updater.restart() }
         if step["openAssistant"] != nil { model.openAssistant() }
         if step["pressRightArrow"] != nil { postKey(.keyDown) }
@@ -122,6 +131,7 @@ enum Driver {
             model.completingGoal = nil
         }
         if let args = step["answerFirst"] as? [String], let id = projectID(named: args[0]), let q = model.state(for: id).snapshot?.questionsForUser.first { model.answerQuestion(q, args[1], in: id) }
+        if step["expandQuestions"] != nil { expandQuestions = true }
         if let v = step["showCompleted"] as? Bool { model.showingCompleted = v }
         if step["clickCelebration"] != nil { CelebrationPresenter.clickForTest() }
         if let path = step["celebrationCapture"] as? String { CelebrationPresenter.capture(to: path) }
@@ -226,6 +236,9 @@ enum Driver {
             "message": model.message ?? "",
             "initialized": Dictionary(uniqueKeysWithValues: model.store.projects.map { ($0.name, model.state(for: $0.id).snapshot?.initialized ?? false) }),
             "needing": model.needingAttention.map(\.label),
+            "tucked": model.tucked.sorted(),
+            "recentlyEnded": model.recentlyEnded.map(\.key),
+            "tabLabels": model.sessions.keys.sorted().map { model.tabLabel($0) },
             "dockBadge": NSApp.dockTile.badgeLabel ?? "",
             "active": NSApp.isActive,
             "cards": cards,

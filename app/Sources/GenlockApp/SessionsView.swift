@@ -21,82 +21,53 @@ struct SessionsView: View {
     }
 }
 
-/// Every session you have open, so you can move between them without the dashboard.
+/// Two rows: your projects, then the sessions in the one you picked. Nothing scrolls out of
+/// sight; what does not fit is in the menu at the end of each row.
 struct SessionBar: View {
     @Environment(AppModel.self) private var model
     @State private var showingSpeech = false
+    @State private var showingSwitcher = false
+    /// The width each row has, measured, so it knows how many tabs fit.
+    @State private var projectsWidth: CGFloat = 0
+    @State private var sessionsWidth: CGFloat = 0
 
     var body: some View {
         let voice = model.voice
-        HStack(spacing: 10) {
-            Button { model.route = .dashboard } label: {
-                HStack(spacing: 7) {
-                    SignalMark(size: 18, animated: false)
-                    Text("Dashboard")
-                }
-            }
-            .buttonStyle(GlassButtonStyle())
-
-            ScrollView(.horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(model.sessions.keys.sorted(), id: \.self) { id in
-                        let shown = model.visible.contains(id)
-                        let running = model.sessions[id]?.isRunning == true
-                        Button {
-                            if NSEvent.modifierFlags.contains(.shift) { model.toggleInSplit(id) }
-                            else { model.visible = [id]; model.focus(id) }
-                        } label: {
-                            HStack(spacing: 6) {
-                                let need = model.sessions[id]?.attention
-                                let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (running ? Theme.green : Theme.textTertiary))
-                                Circle().fill(dot).frame(width: 7, height: 7)
-                                    .shadow(color: running || need != nil ? dot : .clear, radius: 4)
-                                if let p = model.sessions[id].flatMap({ model.store.project($0.projectID) }) {
-                                    ProjectIconView(project: p, size: 16)
-                                }
-                                Text(model.sessions[id]?.label ?? id).lineLimit(1)
-                                Color.clear.frame(width: 12, height: 1) // room for the close button
-                            }
-                        }
-                        .buttonStyle(GlassButtonStyle(active: shown))
-                        .help("Click to show. Shift-click to add to the split.")
-                        .contextMenu {
-                            if model.sessions[id]?.spawn == nil {
-                                Button("Start New Conversation") { model.restart(id, fresh: true); model.visible = [id]; model.focus(id) }
-                            }
-                            Button("End Session") { model.endSession(id) }
-                        }
-                        .overlay(alignment: .trailing) {
-                            Button { model.endSession(id) } label: {
-                                Image(systemName: "xmark").font(.system(size: 8.5, weight: .bold)).frame(width: 18, height: 18).contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .foregroundStyle(Theme.textSecondary)
-                            .padding(.trailing, 5)
-                            .help("End this session. Opening the project again picks the conversation back up.")
-                            .accessibilityLabel("End session \(model.sessions[id]?.label ?? "")")
-                        }
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button { model.route = .dashboard } label: {
+                    HStack(spacing: 7) {
+                        SignalMark(size: 18, animated: false)
+                        if model.projectsWithTabs.count <= 5 { Text("Dashboard") }
                     }
-                    newSessionMenu
                 }
-            }
-            .scrollIndicators(.never)
-            Spacer(minLength: 0)
-            UpdatePill()
-            Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
-                .help("One session across all your projects")
-            Button { showingSpeech.toggle() } label: {
-                Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .help("Dashboard")
+
+                projectTabs
+                UpdatePill()
+                Button { showingSwitcher = true } label: { Image(systemName: "magnifyingglass") }
+                    .buttonStyle(GlassButtonStyle(compact: true))
+                    .keyboardShortcut("k", modifiers: .command)
+                    .help("Jump to any session (⌘K). Control-Tab goes back to the last one.")
+                    .popover(isPresented: $showingSwitcher, arrowEdge: .bottom) { SessionSwitcher(close: { showingSwitcher = false }) }
+                Button { model.showPrevious() } label: { EmptyView() }
+                    .keyboardShortcut(.tab, modifiers: .control).frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+                Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
+                    .buttonStyle(GlassButtonStyle())
+                    .help("One session across all your projects")
+                Button { showingSpeech.toggle() } label: {
+                    Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                }
+                .buttonStyle(GlassButtonStyle(active: voice.speakReplies, compact: true))
+                .popover(isPresented: $showingSpeech, arrowEdge: .bottom) { SpeechSettings(voice: voice) }
+                .help(voice.speakReplies
+                      ? "Agents read short replies aloud after you dictate. Voice: \(voice.chosenVoice?.name ?? "system default"). Sessions started from now on follow this setting. \(VoiceOption.upgradeHint(for: voice.chosenVoice) ?? "")"
+                      : "Spoken replies are off")
+                .accessibilityLabel("Spoken replies")
             }
-            .buttonStyle(GlassButtonStyle(active: voice.speakReplies, compact: true))
-            .popover(isPresented: $showingSpeech, arrowEdge: .bottom) { SpeechSettings(voice: voice) }
-            .help(voice.speakReplies
-                  ? "Agents read short replies aloud after you dictate. Voice: \(voice.chosenVoice?.name ?? "system default"). Sessions started from now on follow this setting. \(VoiceOption.upgradeHint(for: voice.chosenVoice) ?? "")"
-                  : "Spoken replies are off")
-            .accessibilityLabel("Spoken replies")
+            .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
         }
-        .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
         .background(Color.black.opacity(0.25))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
     }
@@ -128,24 +99,346 @@ struct SpeechSettings: View {
 }
 
 extension SessionBar {
-    /// Opens another project beside what you have, without going back to the dashboard.
-    private var newSessionMenu: some View {
-        Menu {
-            ForEach(model.projectsWithoutSession) { project in
-                Button(project.name) { model.openSessions(model.visible + [project.id]) }
-                    .disabled(model.visible.count >= DashSelection.maxPanes)
+    private func measured(_ width: Binding<CGFloat>) -> some View {
+        GeometryReader { geo in
+            Color.clear
+                .onAppear { width.wrappedValue = geo.size.width }
+                .onChange(of: geo.size.width) { _, w in width.wrappedValue = w }
+        }
+    }
+
+    /// One tab per project. Its dot is the most urgent of its sessions.
+    private var projectTabs: some View {
+        let order = model.projectsWithTabs
+        let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.projectName($0))) + 14 }
+        var layout = TabOverflow.layout(order: order, priority: model.currentProject.map { [$0] } ?? [], room: projectsWidth - 40, natural: natural)
+        if !layout.hidden.isEmpty {
+            layout = TabOverflow.layout(order: order, priority: model.currentProject.map { [$0] } ?? [], room: projectsWidth - 160, natural: natural)
+        }
+        return HStack(spacing: 6) {
+            ForEach(layout.shown, id: \.self) { project in
+                ProjectTab(project: project, width: layout.width, dot: projectDot(project))
             }
-            if !model.projectsWithoutSession.isEmpty { Divider() }
+            moreProjects(layout.hidden)
+            openProjectMenu
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(measured($projectsWidth))
+    }
+
+    private func projectDot(_ project: String) -> SwiftUI.Color {
+        let keys = model.sessionKeys(in: project)
+        let needs = keys.compactMap { model.sessions[$0]?.attention }
+        if needs.contains(.waiting) { return Theme.red }
+        if needs.contains(.done) { return Theme.amber }
+        return keys.contains { model.sessions[$0]?.isRunning == true } ? Theme.green : Theme.textTertiary
+    }
+
+    private func dotColor(_ id: String) -> SwiftUI.Color {
+        let need = model.sessions[id]?.attention
+        let running = model.sessions[id]?.isRunning == true
+        return need == .waiting ? Theme.red : (need == .done ? Theme.amber : (running ? Theme.green : Theme.textTertiary))
+    }
+
+    private func statusWord(_ id: String) -> String {
+        switch model.sessions[id]?.attention {
+        case .waiting: return "needs you"
+        case .done: return "your turn"
+        default: return model.sessions[id]?.isRunning == true ? (model.sessions[id]?.phase == "working" ? "working" : "idle") : "stopped"
+        }
+    }
+
+    /// Projects with no room in the bar. Only projects: sessions live in each pane's header.
+    @ViewBuilder
+    private func moreProjects(_ hidden: [String]) -> some View {
+        if !hidden.isEmpty {
+            let urgent = hidden.map(projectDot).first { $0 == Theme.red } ?? hidden.map(projectDot).first { $0 == Theme.amber }
+            Menu {
+                ForEach(hidden, id: \.self) { project in
+                    Button { model.showProject(project) } label: {
+                        Image(nsImage: TabOverflow.dot(NSColor(projectDot(project))))
+                        Text(model.projectName(project))
+                    }
+                }
+            } label: {
+                HStack(spacing: 5) {
+                    if let urgent { Circle().fill(urgent).frame(width: 7, height: 7).shadow(color: urgent, radius: 4) }
+                    Text("+\(hidden.count) project\(hidden.count == 1 ? "" : "s")").font(.system(size: 12, weight: .semibold))
+                }
+                .foregroundStyle(urgent ?? Theme.textSecondary)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .padding(.horizontal, 6)
+            .accessibilityLabel("More projects")
+        }
+    }
+
+    private func menuRow(_ id: String) -> some View {
+        Button { model.show(id) } label: {
+            Image(nsImage: TabOverflow.dot(NSColor(dotColor(id))))
+            Text("\(model.tabLabel(id))  ·  \(statusWord(id))")
+        }
+    }
+}
+
+/// Which sessions get a tab when not all fit: the ones on screen and the ones needing you first,
+/// then the rest in order. Tabs keep their usual order either way.
+enum TabOverflow {
+    /// The narrowest a tab gets: status dot, project icon and a few letters.
+    static let minWidth: CGFloat = 92
+
+    /// Like browser tabs: natural width while they fit, then all shrink evenly, and only below
+    /// the narrowest do the rest move to the menu, the ones on screen and needing you kept first.
+    static func layout(order: [String], priority: [String], room: CGFloat, natural: (String) -> CGFloat) -> (shown: [String], hidden: [String], width: CGFloat?) {
+        let gap: CGFloat = 6
+        if order.reduce(0, { $0 + natural($1) + gap }) <= room { return (order, [], nil) }
+        let fits = max(1, Int((room + gap) / (minWidth + gap)))
+        if order.count <= fits { return (order, [], max(minWidth, (room + gap) / CGFloat(order.count) - gap)) }
+        var keep: [String] = []
+        for id in priority + order where order.contains(id) && !keep.contains(id) && keep.count < fits { keep.append(id) }
+        return (order.filter(keep.contains), order.filter { !keep.contains($0) }, minWidth)
+    }
+
+    /// Long names end in an ellipsis; the whole name is in the tooltip and the menu.
+    static let maxCharacters = 22
+    static func short(_ label: String) -> String {
+        label.count <= maxCharacters ? label : String(label.prefix(maxCharacters - 1)).trimmingCharacters(in: .whitespaces) + "…"
+    }
+
+    /// A tab's width: its name in the bar's font, plus the dot, icon, close button and padding.
+    static func width(of label: String) -> CGFloat {
+        let font = NSFont.systemFont(ofSize: 12.5, weight: .medium)
+        return ceil((label as NSString).size(withAttributes: [.font: font]).width) + 79
+    }
+
+    /// A coloured dot that menus show in colour rather than as a template.
+    static func dot(_ color: NSColor) -> NSImage {
+        let image = NSImage(size: NSSize(width: 10, height: 10), flipped: false) { rect in
+            color.setFill()
+            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
+            return true
+        }
+        image.isTemplate = false
+        return image
+    }
+}
+
+extension SessionBar {
+    /// Opens another project beside what you have, without going back to the dashboard.
+    /// Projects with no session yet, and adding a folder.
+    private var openProjectMenu: some View {
+        Menu {
+            Section("Open a project") {
+                ForEach(model.projectsWithoutSession) { project in
+                    Button(project.name) { model.newSession(in: project.id) }
+                }
+            }
+            let shownProjects = Set(model.projectsWithTabs)
+            let closed = model.sessions.keys.sorted().filter { model.tucked.contains($0) && !shownProjects.contains(model.sessions[$0]?.projectID ?? "") }
+            if !closed.isEmpty {
+                Section("Closed tabs, still running") { ForEach(closed, id: \.self) { menuRow($0) } }
+            }
+            let ended = model.recentlyEnded.filter { model.sessions[$0.key] == nil && !shownProjects.contains($0.project) }
+            if !ended.isEmpty {
+                Section("Recently ended") {
+                    ForEach(ended, id: \.key) { open in
+                        Button("Reopen \(model.projectName(open.project)): \(model.label(project: open.project, spawn: open.spawn) ?? "")") { model.reopen(open) }
+                    }
+                }
+            }
+            Divider()
             Button("Add a Folder…") { model.chooseFolders() }
         } label: {
-            Image(systemName: "plus").font(.system(size: 11, weight: .bold))
+            Image(systemName: "plus").font(.system(size: 11, weight: .bold)).foregroundStyle(Theme.textSecondary)
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)
         .fixedSize()
         .padding(.horizontal, 6)
-        .help("Open a session for another project")
-        .accessibilityLabel("New session")
+        .help("Open another project")
+        .accessibilityLabel("Open a project")
+    }
+}
+
+/// The project's sessions, in the pane header beside its name. Underlined text rather than
+/// capsules, so they read as part of this project and not as more projects.
+struct HeaderSessionTabs: View {
+    @Environment(AppModel.self) private var model
+    let projectID: String
+    let paneKey: String
+    @State private var room: CGFloat = 0
+
+    var body: some View {
+        let order = model.sessionKeys(in: projectID)
+        let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.tabLabel($0))) - 40 }
+        let layout = TabOverflow.layout(order: order, priority: [paneKey], room: room - 90, natural: natural)
+        let closed = model.sessions.keys.sorted().filter { model.tucked.contains($0) && model.sessions[$0]?.projectID == projectID }
+        let ended = model.recentlyEnded.filter { $0.project == projectID && model.sessions[$0.key] == nil }
+        HStack(spacing: 2) {
+            ForEach(layout.shown, id: \.self) { key in
+                SessionStripTab(key: key, paneKey: paneKey, width: layout.width)
+            }
+            if !layout.hidden.isEmpty || !closed.isEmpty || !ended.isEmpty {
+                Menu {
+                    if !layout.hidden.isEmpty {
+                        Section("No room here") { ForEach(layout.hidden, id: \.self) { key in Button(model.tabLabel(key)) { model.showInPane(key, replacing: paneKey) } } }
+                    }
+                    if !closed.isEmpty {
+                        Section("Closed tabs, still running") { ForEach(closed, id: \.self) { key in Button(model.tabLabel(key)) { model.showInPane(key, replacing: paneKey) } } }
+                    }
+                    if !ended.isEmpty {
+                        Section("Recently ended") {
+                            ForEach(ended, id: \.key) { open in Button("Reopen \(model.label(project: open.project, spawn: open.spawn) ?? "session")") { model.reopen(open) } }
+                        }
+                    }
+                } label: {
+                    Text(layout.hidden.isEmpty ? "\(closed.count + ended.count) closed" : "+\(layout.hidden.count + closed.count)")
+                        .font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textTertiary)
+                }
+                .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+                .help("Sessions in this project without a tab here")
+            }
+            Button { model.newSession(in: projectID) } label: {
+                Image(systemName: "plus").font(.system(size: 10.5, weight: .bold)).frame(width: 22, height: 22).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+            .help("New session in \(model.projectName(projectID)), with its own conversation")
+            .accessibilityLabel("New session")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(GeometryReader { geo in
+            Color.clear.onAppear { room = geo.size.width }.onChange(of: geo.size.width) { _, w in room = w }
+        })
+    }
+}
+
+/// One session in a pane header: a dot and its name, underlined when it is the one shown.
+struct SessionStripTab: View {
+    @Environment(AppModel.self) private var model
+    let key: String
+    let paneKey: String
+    let width: CGFloat?
+    @State private var hovering = false
+
+    var body: some View {
+        let current = key == paneKey
+        let session = model.sessions[key]
+        let need = session?.attention
+        let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (session?.isRunning == true ? Theme.green : Theme.textTertiary))
+        let label = model.tabLabel(key)
+        Button { model.showInPane(key, replacing: paneKey) } label: {
+            HStack(spacing: 5) {
+                Circle().fill(dot).frame(width: 6, height: 6)
+                if session?.spawn != nil { Image(systemName: "arrow.triangle.branch").font(.system(size: 9.5)).foregroundStyle(Theme.cyan) }
+                Text(width == nil ? TabOverflow.short(label) : label)
+                    .font(.system(size: 12, weight: current ? .semibold : .regular))
+                    .foregroundStyle(current ? Theme.textPrimary : (hovering ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))
+                    .lineLimit(1).truncationMode(.tail)
+                    .fixedSize(horizontal: width == nil, vertical: false)
+                if hovering && !current {
+                    Button { withAnimation(.spring(duration: 0.3)) { model.tuck(key) } } label: {
+                        Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
+                    }
+                    .buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
+                    .help("Close this tab. The session keeps running.")
+                }
+            }
+            .padding(.horizontal, 7).padding(.vertical, 4)
+            .frame(width: width, alignment: .leading)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(current ? Theme.textPrimary.opacity(0.85) : .clear).frame(height: 2).padding(.horizontal, 6).offset(y: 5)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("\(label). Right-click for more.")
+        .contextMenu {
+            if session?.spawn == nil {
+                Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
+            }
+            Button("Close Tab (keeps running)") { model.tuck(key) }
+            Divider()
+            Button("End Session…") { model.confirmEnd(key) }
+        }
+    }
+}
+
+/// A project in the top row. Clicking it shows the session you were last in there.
+struct ProjectTab: View {
+    @Environment(AppModel.self) private var model
+    let project: String
+    let width: CGFloat?
+    let dot: SwiftUI.Color
+
+    var body: some View {
+        let active = model.currentProject == project
+        let count = model.sessionKeys(in: project).count
+        let name = model.projectName(project)
+        Button { model.showProject(project) } label: {
+            HStack(spacing: 6) {
+                Circle().fill(dot).frame(width: 7, height: 7).shadow(color: dot == Theme.textTertiary ? .clear : dot, radius: 4)
+                if let p = model.store.project(project) { ProjectIconView(project: p, size: 16) }
+                else { Image(systemName: "sparkles").font(.system(size: 12)) }
+                if width == nil { Text(TabOverflow.short(name)).lineLimit(1).fixedSize() }
+                else { Text(name).lineLimit(1).truncationMode(.tail); Spacer(minLength: 0) }
+                if count > 1 && width == nil {
+                    Text("\(count)").font(.system(size: 10.5, weight: .bold)).monospacedDigit()
+                        .padding(.horizontal, 5).padding(.vertical, 1)
+                        .background(Color.white.opacity(0.12), in: Capsule())
+                }
+            }
+            .frame(width: width.map { max(0, $0 - 24) }, alignment: .leading)
+        }
+        .buttonStyle(GlassButtonStyle(active: active))
+        .help("\(name): \(count) session\(count == 1 ? "" : "s")")
+        .contextMenu {
+            Button("New Session in \(name)") { model.newSession(in: project) }
+            Button("Close All Its Tabs (they keep running)") { model.sessionKeys(in: project).forEach(model.tuck) }
+        }
+    }
+}
+
+/// Type to find any session, in any project. Return opens the first match.
+struct SessionSwitcher: View {
+    @Environment(AppModel.self) private var model
+    let close: () -> Void
+    @State private var query = ""
+    @FocusState private var typing: Bool
+
+    private var matches: [String] {
+        let all = model.sessions.keys.sorted { model.projectName(model.sessions[$0]!.projectID) < model.projectName(model.sessions[$1]!.projectID) }
+        let words = query.lowercased().split(separator: " ")
+        return all.filter { key in
+            let text = "\(model.projectName(model.sessions[key]?.projectID ?? "")) \(model.tabLabel(key))".lowercased()
+            return words.allSatisfy { text.contains($0) }
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Find a session", text: $query)
+                .textFieldStyle(.roundedBorder).focused($typing)
+                .onSubmit { if let first = matches.first { model.show(first); close() } }
+            ForEach(matches.prefix(12), id: \.self) { key in
+                Button { model.show(key); close() } label: {
+                    HStack(spacing: 8) {
+                        if let p = model.sessions[key].flatMap({ model.store.project($0.projectID) }) { ProjectIconView(project: p, size: 16) }
+                        Text(model.projectName(model.sessions[key]?.projectID ?? "")).foregroundStyle(Theme.textSecondary)
+                        Text(model.tabLabel(key)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        Spacer(minLength: 0)
+                        if model.tucked.contains(key) { Text("closed tab").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(12)
+        .frame(width: 380)
+        .onAppear { typing = true }
     }
 }
 
@@ -200,22 +493,17 @@ struct PaneView: View {
     private var header: some View {
         let voice = model.voice
         let listeningHere = voice.isListening && voice.target == sessionKey
-        let snap = model.state(for: projectID).snapshot
         return HStack(spacing: 10) {
             if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 20) }
             Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
+            Rectangle().fill(Theme.hairline).frame(width: 1, height: 16)
+            HeaderSessionTabs(projectID: projectID, paneKey: sessionKey)
             if let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
                 switch phase {
                 case "working": WorkingIndicator()
                 case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
                 default: Pill(text: "Your turn", symbol: "person.fill", color: Theme.green)
                 }
-            }
-            if let spawn {
-                Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
-                if !isSplit { Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1) }
-            } else if !isSplit, let goal = snap.flatMap({ s in model.sessions[sessionKey]?.focus(in: s).goal ?? s.goal(s.currentGoal) }) {
-                Text(goal.heading).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }

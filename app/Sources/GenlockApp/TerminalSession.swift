@@ -10,6 +10,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     let key: String
     let projectID: String
     let spawn: SpawnRequest?
+    /// Set when this is not the project's main session.
+    let slot: String?
     let voiceToken: String
     let channel: VoiceChannel
     private(set) var isRunning = false
@@ -40,19 +42,20 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
 
     var label: String {
         let name = displayName ?? URL(fileURLWithPath: projectID).lastPathComponent
-        return spawn.map { "\(name) · \($0.ticket)" } ?? name
+        return spawn != nil ? "\(name) spin-off" : (slot != nil ? "\(name), another session" : name)
     }
 
     static func key(project: String, ticket: String?) -> String {
-        ticket.map { "\(project)#\($0)" } ?? project
+        SessionMemory.key(project: project, ticket: ticket, slot: nil)
     }
 
     /// `token` finds a session's host again after a restart.
-    init(projectID: String, spawn: SpawnRequest? = nil, token: String? = nil) {
+    init(projectID: String, spawn: SpawnRequest? = nil, slot: String? = nil, token: String? = nil) {
         self.projectID = projectID
         self.spawn = spawn
         voiceToken = token ?? UUID().uuidString
-        key = Self.key(project: projectID, ticket: spawn?.ticket)
+        self.slot = slot
+        key = SessionMemory.key(project: projectID, ticket: spawn?.ticket, slot: slot)
         channel = VoiceChannel(session: voiceToken)
         view = PaneTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
         super.init()
@@ -82,7 +85,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         startError = nil
         exitCode = nil
         try? channel.prepare()
-        channel.recordOwner(SessionMemory.Open(project: projectID, spawn: spawn, token: voiceToken))
+        channel.recordOwner(SessionMemory.Open(project: projectID, spawn: spawn, token: voiceToken, slot: slot))
         var env = tools.environment
         env["GENLOCK_APP_CHANNEL"] = channel.folder.path
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }

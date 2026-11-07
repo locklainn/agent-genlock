@@ -55,8 +55,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
     private static let rightArrowKey: UInt16 = 124
 
     @MainActor func applicationDidFinishLaunching(_ note: Notification) {
-        NSApp.setActivationPolicy(.regular)
-        NSApp.activate(ignoringOtherApps: true)
+        // A scripted test run stays in the background, so whoever is working is not interrupted.
+        // Steps that post real clicks or keys need the front: GENLOCK_APP_FOREGROUND=1.
+        if Driver.isActive && ProcessInfo.processInfo.environment["GENLOCK_APP_FOREGROUND"] == nil {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+        }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .flagsChanged, .keyDown, .keyUp]) { [weak self] event in
             nonisolated(unsafe) let event = event
             // A nil from handle means the event was used up, so it must not fall back to the event.

@@ -316,6 +316,7 @@ struct QuestionRow: View {
     let changed: Bool
     @State private var answering = false
     @State private var answer = ""
+    @State private var expanded = Driver.expandQuestions
     @FocusState private var typing: Bool
 
     private func send() {
@@ -328,8 +329,21 @@ struct QuestionRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(question.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
-                .lineLimit(answering ? nil : 3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            // Selectable text ignores a line limit once clicked and draws over what follows, so
+            // only text already shown whole can be selected.
+            if expanded || answering {
+                Text(question.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                if expanded && !answering {
+                    Button("Show less") { withAnimation(.spring(duration: 0.28)) { expanded = false } }.buttonStyle(LinkButtonStyle())
+                }
+            } else {
+                Text(question.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                    .contentShape(Rectangle())
+                    .onTapGesture { withAnimation(.spring(duration: 0.28)) { expanded = true } }
+                    .help("Show the whole question")
+            }
             if answering {
                 TextField("Your answer", text: $answer, axis: .vertical)
                     .textFieldStyle(.roundedBorder).lineLimit(1...5).focused($typing).onSubmit(send)
@@ -350,6 +364,7 @@ struct QuestionRow: View {
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(9)
         .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         .livePulse(changed)

@@ -12,22 +12,44 @@ public struct SessionMemory: Codable, Equatable {
         public var spawn: SpawnRequest?
         /// Names its channel folder, and so the host still running it after a restart.
         public var token: String?
+        /// Set for a second or later session in the same project, which has its own conversation.
+        public var slot: String?
 
-        public init(project: String, spawn: SpawnRequest? = nil, token: String? = nil) {
+        public init(project: String, spawn: SpawnRequest? = nil, token: String? = nil, slot: String? = nil) {
             self.project = project
             self.spawn = spawn
             self.token = token
+            self.slot = slot
         }
 
-        public var key: String { spawn.map { "\(project)#\($0.ticket)" } ?? project }
+        public var key: String { SessionMemory.key(project: project, ticket: spawn?.ticket, slot: slot) }
     }
 
     public var open: [Open] = []
     public var visible: [String] = []
     /// Session key to Claude Code's conversation id. Outlives the session, so a later click resumes it.
     public var conversations: [String: String] = [:]
+    /// Closed from the tab bar but still running. Optional, so a file written before it existed still loads.
+    public var tucked: [String]? = nil
+    /// Sessions you ended lately, newest first, so one ended by accident can be reopened.
+    public var ended: [Open]? = nil
 
     public init() {}
+
+    public static let endedKept = 5
+
+    /// A project's main session is keyed by its folder, a spin-off by its task, and any other
+    /// session by a slot of its own.
+    public static func key(project: String, ticket: String?, slot: String?) -> String {
+        if let ticket { return "\(project)#\(ticket)" }
+        if let slot { return "\(project)#+\(slot)" }
+        return project
+    }
+
+    /// Puts a session at the front of the recently ended list, once, keeping the newest few.
+    public static func noteEnded(_ open: Open, in list: [Open]) -> [Open] {
+        Array(([open] + list.filter { $0.key != open.key }).prefix(endedKept))
+    }
 
     public static func file(beside store: URL) -> URL {
         store.deletingLastPathComponent().appendingPathComponent("sessions.json")

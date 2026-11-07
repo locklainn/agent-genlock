@@ -1198,4 +1198,31 @@ final class CoreTests: XCTestCase {
         let rules = try String(contentsOfFile: repo + "/AGENTS.md", encoding: .utf8)
         XCTAssertTrue(rules.contains("genlock review PATH"))
     }
+
+    func testSessionMemoryWrittenBeforeTabsCouldCloseStillLoads() throws {
+        let old = #"{"conversations":{"/p":"abc"},"open":[{"project":"/p","token":"t1"}],"visible":["/p"]}"#
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("old-\(UUID()).json")
+        try Data(old.utf8).write(to: file)
+        let memory = SessionMemory.load(from: file)
+        XCTAssertEqual(memory.open.map(\.key), ["/p"])
+        XCTAssertNil(memory.tucked)
+        XCTAssertNil(memory.ended)
+    }
+
+    func testRecentlyEndedKeepsNewestFewOnce() {
+        var list: [SessionMemory.Open] = []
+        for i in 0..<7 { list = SessionMemory.noteEnded(.init(project: "/p\(i)"), in: list) }
+        list = SessionMemory.noteEnded(.init(project: "/p4"), in: list)
+        XCTAssertEqual(list.map(\.key), ["/p4", "/p6", "/p5", "/p3", "/p2"])
+    }
+
+    func testAnotherSessionInAProjectKeepsItsOwnKeyThroughARestart() throws {
+        var m = SessionMemory()
+        m.open = [.init(project: "/p", token: "a"), .init(project: "/p", token: "b", slot: "x1")]
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("slot-\(UUID()).json")
+        try m.save(to: file)
+        let back = SessionMemory.load(from: file)
+        XCTAssertEqual(back.open.map(\.key), ["/p", "/p#+x1"])
+        XCTAssertEqual(Set(back.open.map(\.key)).count, 2)
+    }
 }

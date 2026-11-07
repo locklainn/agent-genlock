@@ -33,6 +33,15 @@ final class AppModel {
     @ObservationIgnored private var memoryFile: URL { SessionMemory.file(beside: store.file) }
     var route: Route = .dashboard
     var visible: [String] = []
+    /// Sessions closed from the tab bar. They keep running and wait in the bar's overflow menu.
+    var tucked: Set<String> = []
+    /// The project whose sessions the bar's second row lists.
+    var activeProject: String?
+    @ObservationIgnored var lastShown: [String: String] = [:]
+    /// Where Control-Tab goes back to.
+    @ObservationIgnored var previousSession: String?
+    /// Ended lately, newest first. Reopening one picks its conversation back up.
+    var recentlyEnded: [SessionMemory.Open] = []
     var message: String? {
         didSet {
             messageTimer?.cancel()
@@ -372,6 +381,8 @@ final class AppModel {
 
     func openSessions(_ ids: [String]) {
         for id in ids { ensureSession(id) }
+        tucked.subtract(ids)
+        if let first = ids.first { activeProject = sessions[first]?.projectID ?? first }
         visible = ids
         route = .sessions
         focus(ids.first)
@@ -396,10 +407,13 @@ final class AppModel {
     private func launch(_ session: TerminalSession, tools: ToolEnvironment, fresh: Bool = false) {
         let transcripts = Transcripts(project: session.projectID, claudeHome: Transcripts.claudeHome(environment: tools.environment))
         let newID = UUID().uuidString.lowercased()
-        let start = fresh && session.spawn == nil
+        // Another session in a project has its own conversation, never the folder's latest one.
+        let own = session.slot.map { _ in fresh ? newID : (memory.conversations[session.key] ?? newID) }
+        let start = fresh && session.spawn == nil && session.slot == nil
             ? ConversationStart.new(newID)
-            : transcripts.start(saved: memory.conversations[session.key], spawnSession: session.spawn?.session, newID: newID)
-        if session.spawn == nil {
+            : transcripts.start(saved: memory.conversations[session.key], spawnSession: session.spawn?.session ?? own, newID: newID)
+        if let own, session.slot != nil { memory.conversations[session.key] = own }
+        if session.spawn == nil && session.slot == nil {
             session.onFailedPickUp = { [weak self, weak session] in
                 guard let self, let session, self.sessions[session.key] === session else { return }
                 self.message = "\(session.label) had no conversation to pick up, so this is a new one."
@@ -419,10 +433,12 @@ final class AppModel {
         memory = SessionMemory.load(from: memoryFile)
         let back = memory.restorable { project in project == self.assistantFolder || self.store.project(project)?.exists == true }
         for open in back.open {
-            let session = TerminalSession(projectID: open.project, spawn: open.spawn, token: open.token)
+            let session = TerminalSession(projectID: open.project, spawn: open.spawn, slot: open.slot, token: open.token)
             sessions[session.key] = session
         }
         visible = back.visible
+        tucked = Set(memory.tucked ?? []).intersection(sessions.keys).subtracting(visible)
+        recentlyEnded = memory.ended ?? []
         if !visible.isEmpty { route = .sessions }
         adoptRunningSessions()
     }
@@ -436,7 +452,7 @@ final class AppModel {
             guard let owner = channel.owner, owner.token == name,
                   owner.project == assistantFolder || store.project(owner.project)?.exists == true,
                   SessionHost.isAlive(socket: SessionHost.socket(in: channel.folder)) else { continue }
-            let session = TerminalSession(projectID: owner.project, spawn: owner.spawn, token: name)
+            let session = TerminalSession(projectID: owner.project, spawn: owner.spawn, slot: owner.slot, token: name)
             if sessions[session.key] == nil { sessions[session.key] = session }
         }
     }
@@ -472,8 +488,11 @@ final class AppModel {
     func rememberSessions() {
         var next = memory
         let open = sessions.values.filter { SessionMemory.stillOpen(isRunning: $0.isRunning, exitCode: $0.exitCode) }
-        next.open = open.map { SessionMemory.Open(project: $0.projectID, spawn: $0.spawn, token: $0.voiceToken) }.sorted { $0.key < $1.key }
+        next.open = open.map { SessionMemory.Open(project: $0.projectID, spawn: $0.spawn, token: $0.voiceToken, slot: $0.slot) }.sorted { $0.key < $1.key }
         next.visible = visible
+        let tuckedNow = tucked.intersection(open.map(\.key)).sorted()
+        next.tucked = tuckedNow.isEmpty && memory.tucked == nil ? nil : tuckedNow
+        next.ended = recentlyEnded.isEmpty && memory.ended == nil ? nil : recentlyEnded
         for session in open { if let id = session.conversation { next.conversations[session.key] = id } }
         guard next != memory else { return }
         memory = next
@@ -483,6 +502,7 @@ final class AppModel {
     func restart(_ key: String, fresh: Bool) {
         let project = sessions[key]?.projectID ?? key
         let spawn = sessions[key]?.spawn
+        let slot = sessions[key]?.slot
         // Not attached does not mean not running. Resuming a session that is still going is attaching to it.
         if let current = sessions[key], !current.isRunning, SessionHost.isAlive(socket: SessionHost.socket(in: current.channel.folder)) {
             if !fresh, let tools {
@@ -494,7 +514,7 @@ final class AppModel {
         if sessions[key]?.isRunning == true { sessions[key]?.end() }
         sessions[key]?.channel.remove()
         if fresh && spawn == nil { memory.conversations[key] = nil }
-        let session = TerminalSession(projectID: project, spawn: spawn)
+        let session = TerminalSession(projectID: project, spawn: spawn, slot: slot)
         sessions[key] = session
         if let tools { launch(session, tools: tools, fresh: fresh) }
     }
@@ -529,7 +549,128 @@ final class AppModel {
         }
     }
 
+    /// Closing a tab hides it. The session keeps running and stays one click away in the bar's menu.
+    func tuck(_ key: String) {
+        tucked.insert(key)
+        visible.removeAll { $0 == key }
+        if visible.isEmpty {
+            if let next = sessions.keys.sorted().first(where: { !tucked.contains($0) }) { visible = [next]; focus(next) } else { route = .dashboard }
+        }
+    }
+
+    /// Brings a session to the front, from a tab or from the overflow menu.
+    func show(_ key: String) {
+        tucked.remove(key)
+        if let now = visible.first, now != key { previousSession = now }
+        if let project = sessions[key]?.projectID { activeProject = project; lastShown[project] = key }
+        visible = [key]
+        route = .sessions
+        focus(key)
+    }
+
+    /// Asks first, because ending stops Claude. The conversation stays saved either way.
+    func confirmEnd(_ key: String) {
+        guard let session = sessions[key] else { return }
+        let alert = NSAlert()
+        alert.messageText = "End \(tabLabel(key))?"
+        alert.informativeText = "This stops Claude in this session. The conversation is saved: you can reopen it from Recently ended in the tab bar's menu."
+        alert.addButton(withTitle: "End Session")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: session.projectID, spawn: session.spawn, slot: session.slot), in: recentlyEnded)
+        endSession(key)
+    }
+
+    /// The way back from ending a session by accident: same conversation, new process.
+    func reopen(_ ended: SessionMemory.Open) {
+        recentlyEnded.removeAll { $0.key == ended.key }
+        if sessions[ended.key] == nil {
+            let session = TerminalSession(projectID: ended.project, spawn: ended.spawn, slot: ended.slot)
+            sessions[session.key] = session
+            if let tools { launch(session, tools: tools) }
+        }
+        show(ended.key)
+    }
+
+    /// Switches one pane to another session, leaving the rest of the split as it is.
+    func showInPane(_ key: String, replacing pane: String) {
+        tucked.remove(key)
+        if let project = sessions[key]?.projectID { activeProject = project; lastShown[project] = key }
+        if visible.contains(key) { focus(key); return }
+        previousSession = pane
+        if let i = visible.firstIndex(of: pane) { visible[i] = key } else { visible = [key] }
+        route = .sessions
+        focus(key)
+    }
+
+    /// The project in front of you: the one picked last, else the first on screen.
+    var currentProject: String? {
+        if let activeProject, sessions.values.contains(where: { $0.projectID == activeProject }) { return activeProject }
+        return visible.first.flatMap { sessions[$0]?.projectID }
+    }
+
+    /// Projects with a session that has a tab, alphabetically by name.
+    var projectsWithTabs: [String] {
+        Array(Set(sessions.filter { !tucked.contains($0.key) }.map(\.value.projectID))).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
+    }
+
+    /// A project's sessions with tabs, its main session first.
+    func sessionKeys(in project: String) -> [String] {
+        sessions.keys.filter { sessions[$0]?.projectID == project && !tucked.contains($0) }.sorted()
+    }
+
+    func projectName(_ project: String) -> String {
+        if project == assistantFolder { return assistantName }
+        return store.project(project)?.name ?? URL(fileURLWithPath: project).lastPathComponent
+    }
+
+    /// Back to the session you were last in there, else its first.
+    func showProject(_ project: String) {
+        let keys = sessionKeys(in: project)
+        guard let key = lastShown[project].flatMap({ keys.contains($0) ? $0 : nil }) ?? keys.first else { return }
+        show(key)
+    }
+
+    /// Control-Tab: the session before this one.
+    func showPrevious() {
+        guard let previous = previousSession, sessions[previous] != nil else { return }
+        show(previous)
+    }
+
+    /// Another session in a project that already has one: its own tab and its own conversation.
+    func newSession(in project: String) {
+        guard sessions[project] != nil else { return openSessions([project]) }
+        let session = TerminalSession(projectID: project, slot: String(UUID().uuidString.prefix(6)).lowercased())
+        sessions[session.key] = session
+        if let tools { launch(session, tools: tools) }
+        show(session.key)
+    }
+
+    /// What a tab says beside its project icon: what the session is for, never an id. A spin-off
+    /// by its task, a main session by its goal, else its task, else the project's name.
+    func tabLabel(_ key: String) -> String {
+        guard let session = sessions[key] else { return key }
+        if session.spawn != nil { return label(project: session.projectID, spawn: session.spawn) ?? session.label }
+        let snap = state(for: session.projectID).snapshot
+        let focus = snap.flatMap { $0.initialized ? session.focus(in: $0) : nil }
+        if let task = focus?.working?.heading { return task }
+        // Only the main session goes by the project's goal; the others would all read the same.
+        if session.slot == nil, let goal = focus?.goal?.heading { return goal }
+        let keys = sessions.keys.filter { sessions[$0]?.projectID == session.projectID && sessions[$0]?.spawn == nil }.sorted()
+        if session.slot == nil && keys.count == 1 { return projectName(session.projectID) }
+        return "Session \((keys.firstIndex(of: key) ?? 0) + 1)"
+    }
+
+    func label(project: String, spawn: SpawnRequest?) -> String? {
+        if let spawn {
+            return state(for: project).snapshot?.ticket(spawn.ticket)?.heading ?? "Spin-off task"
+        }
+        return sessions[project]?.label ?? store.project(project)?.name
+    }
+
     func endSession(_ key: String) {
+        tucked.remove(key)
         sessions[key]?.end()
         sessions[key]?.channel.remove()
         sessions[key] = nil
@@ -631,6 +772,7 @@ final class AppModel {
         try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
         ensureSession(assistantFolder)
         if !visible.contains(assistantFolder) { visible = [assistantFolder] }
+        activeProject = assistantFolder
         route = .sessions
         focus(assistantFolder)
     }
