@@ -46,6 +46,10 @@ struct SessionBar: View {
 
                 projectTabs
                 UpdatePill()
+                Button { showEverything() } label: { Image(systemName: showingEverything ? "rectangle" : "square.grid.2x2") }
+                    .buttonStyle(GlassButtonStyle(active: showingEverything, compact: true))
+                    .help(showingEverything ? "Back to one session" : "Show every session at once")
+                    .accessibilityLabel("Show every session")
                 Button { showingSwitcher = true } label: { Image(systemName: "magnifyingglass") }
                     .buttonStyle(GlassButtonStyle(compact: true))
                     .keyboardShortcut("k", modifiers: .command)
@@ -99,6 +103,27 @@ struct SpeechSettings: View {
 }
 
 extension SessionBar {
+    /// Every session with a tab, grouped by project, as many as a split holds.
+    private var everySession: [String] {
+        model.projectsWithTabs.flatMap { model.sessionKeys(in: $0) }
+    }
+
+    private var showingEverything: Bool {
+        model.visible.count > 1 && Set(model.visible) == Set(everySession.prefix(SplitLayout.maxPanes))
+    }
+
+    private func showEverything() {
+        if showingEverything {
+            if let first = model.visible.first { model.show(first) }
+            return
+        }
+        let all = everySession
+        if all.count > SplitLayout.maxPanes {
+            model.message = "Showing \(SplitLayout.maxPanes) of \(all.count) sessions; a split holds \(SplitLayout.maxPanes)."
+        }
+        withAnimation(.spring(duration: 0.35)) { model.openSessions(Array(all.prefix(SplitLayout.maxPanes))) }
+    }
+
     private func measured(_ width: Binding<CGFloat>) -> some View {
         GeometryReader { geo in
             Color.clear
@@ -155,7 +180,14 @@ extension SessionBar {
             let urgent = hidden.map(projectDot).first { $0 == Theme.red } ?? hidden.map(projectDot).first { $0 == Theme.amber }
             Menu {
                 ForEach(hidden, id: \.self) { project in
-                    Button { model.showProject(project) } label: {
+                    Button {
+            // In a split that already shows this project, go to its pane rather than collapse the split.
+            if let onScreen = model.visible.first(where: { model.sessions[$0]?.projectID == project }), model.visible.count > 1 {
+                model.focus(onScreen)
+            } else {
+                model.showProject(project)
+            }
+        } label: {
                         Image(nsImage: TabOverflow.dot(NSColor(projectDot(project))))
                         Text(model.projectName(project))
                     }
@@ -300,6 +332,17 @@ struct HeaderSessionTabs: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Sessions in this project without a tab here")
             }
+            if order.count + closed.count > 1 {
+                Button {
+                    let keys = model.sessionKeys(in: projectID) + closed
+                    withAnimation(.spring(duration: 0.35)) { model.openSessions(Array(keys.prefix(SplitLayout.maxPanes))) }
+                } label: {
+                    Image(systemName: "square.grid.2x2").font(.system(size: 10.5, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
+                .help("Show all of \(model.projectName(projectID))'s sessions side by side")
+                .accessibilityLabel("Show all sessions in this project")
+            }
             Button { model.newSession(in: projectID) } label: {
                 Image(systemName: "plus").font(.system(size: 10.5, weight: .bold)).frame(width: 22, height: 22).contentShape(Rectangle())
             }
@@ -394,6 +437,9 @@ struct ProjectTab: View {
         .buttonStyle(GlassButtonStyle(active: active))
         .help("\(name): \(count) session\(count == 1 ? "" : "s")")
         .contextMenu {
+            if count > 1 {
+                Button("Show All Its Sessions") { model.openSessions(Array(model.sessionKeys(in: project).prefix(SplitLayout.maxPanes))) }
+            }
             Button("New Session in \(name)") { model.newSession(in: project) }
             Button("Close All Its Tabs (they keep running)") { model.sessionKeys(in: project).forEach(model.tuck) }
         }
@@ -493,11 +539,18 @@ struct PaneView: View {
         let voice = model.voice
         let listeningHere = voice.isListening && voice.target == sessionKey
         return HStack(spacing: 10) {
-            if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 20) }
-            Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
-            Rectangle().fill(Theme.hairline).frame(width: 1, height: 16)
-            HeaderSessionTabs(projectID: projectID, paneKey: sessionKey)
-            if let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
+            if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 20).help(name) }
+            if isSplit {
+                // Several panes: each says only which session it is. Switching is the bar's job.
+                Circle().fill(paneDot).frame(width: 7, height: 7)
+                Text(model.tabLabel(sessionKey)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    .lineLimit(1).truncationMode(.tail).help("\(name): \(model.tabLabel(sessionKey))")
+            } else {
+                Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
+                Rectangle().fill(Theme.hairline).frame(width: 1, height: 16)
+                HeaderSessionTabs(projectID: projectID, paneKey: sessionKey)
+            }
+            if !isSplit, let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
                 switch phase {
                 case "working": WorkingIndicator()
                 case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
@@ -505,7 +558,7 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
-            MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }
+            MicButton(listening: listeningHere, compact: isSplit) { model.pressVoice(for: sessionKey) }
             if projectID != model.assistantFolder {
                 Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
                     .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
@@ -517,6 +570,17 @@ struct PaneView: View {
         .background(Color.white.opacity(0.03))
         .contentShape(Rectangle())
         .onTapGesture { model.focus(sessionKey) }
+    }
+
+    /// The pane's status in split view, where there is no room for the pill.
+    private var paneDot: SwiftUI.Color {
+        let session = model.sessions[sessionKey]
+        switch session?.isRunning == true ? session?.phase : nil {
+        case "working": return Theme.cyan
+        case "waiting": return Theme.red
+        case .some: return Theme.green
+        default: return Theme.textTertiary
+        }
     }
 
     private func toggleInspector() {
@@ -548,6 +612,8 @@ struct PaneView: View {
 /// Talk. The obvious, unmissable thing to press, which turns red and pulses when it is on.
 struct MicButton: View {
     let listening: Bool
+    /// Icon only, for a narrow pane.
+    var compact = false
     let action: () -> Void
     @State private var hovering = false
 
@@ -555,15 +621,16 @@ struct MicButton: View {
         Button(action: action) {
             HStack(spacing: 6) {
                 Image(systemName: listening ? "stop.fill" : "mic.fill").font(.system(size: 11, weight: .bold))
-                Text(listening ? "Send" : "Talk").font(.system(size: 12, weight: .semibold))
+                if !compact { Text(listening ? "Send" : "Talk").font(.system(size: 12, weight: .semibold)).fixedSize() }
             }
             .foregroundStyle(.white)
-            .padding(.horizontal, 11).padding(.vertical, 5)
+            .padding(.horizontal, compact ? 8 : 11).padding(.vertical, 5)
             .background(listening ? AnyShapeStyle(Theme.hot) : AnyShapeStyle(hovering ? Theme.brand : LinearGradient(colors: [Color.white.opacity(0.14)], startPoint: .leading, endPoint: .trailing)), in: Capsule())
             .overlay(Capsule().strokeBorder(Color.white.opacity(0.22), lineWidth: 1))
             .shadow(color: listening ? Color(hex: 0xFF4D6D).opacity(0.8) : .clear, radius: 10)
         }
         .buttonStyle(.plain)
+        .fixedSize()
         .onHover { hovering = $0 }
         .help(listening ? "Send what you said (right Option)" : "Talk to this session. Press again to send (right Option)")
         .accessibilityLabel(listening ? "Send dictation" : "Start dictation")

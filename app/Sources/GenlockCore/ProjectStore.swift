@@ -191,6 +191,9 @@ public enum CardGrid {
 }
 
 public enum SplitLayout {
+    /// Showing every session at once fills up to this many panes. Marking cards by hand stops at six.
+    public static let maxPanes = 12
+
     /// How many panes go in each row.
     public static func rows(count: Int) -> [Int] {
         switch count {
@@ -200,7 +203,19 @@ public enum SplitLayout {
         case 3: return [3]
         case 4: return [2, 2]
         case 5: return [3, 2]
-        default: return [3, 3]
+        case 6: return [3, 3]
+        default:
+            // Past six, a grid at most four across, so each terminal keeps enough columns to read.
+            let across = count <= 9 ? (count <= 8 ? 4 : 3) : 4
+            var left = count
+            var rows: [Int] = []
+            let lines = Int((Double(count) / Double(across)).rounded(.up))
+            for line in 0..<lines {
+                let n = Int((Double(left) / Double(lines - line)).rounded(.up))
+                rows.append(n)
+                left -= n
+            }
+            return rows
         }
     }
 

@@ -144,6 +144,8 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | S6 | When a session's process ends, the pane says so and offers a restart, and the app does not crash | drive |
 | S7 | Sessions never stop because the app did. Quitting, restarting, updating or a crash leaves every session running, and reopening shows each as it is, with its history. Only ending a session stops it. Quitting therefore asks nothing | auto, drive |
 | S8 | A split holds up to 6 panes. A seventh is refused with a message | auto |
+| S8b | One button in the top bar shows every session at once, up to 12, as columns then a grid at most four across; clicking it again goes back to one. A project's header has the same for its own sessions, and clicking a project tab in a split goes to its pane rather than collapsing the split | drive, eye |
+| S8c | In a split, a pane's header shows only its project icon, a status dot and its own session's name, with icon-only buttons; nothing wraps | eye |
 | S9 | Keyboard input, paste, selection, colours and resize work in the terminal as in Terminal | eye |
 | S10 | A context menu and the session-ended screen can start a new conversation instead | drive |
 | S11 | Launching reopens every session that was open, spin-offs included, each in its own conversation, with the split as you left it. A session you ended or that exited stays closed. A folder that has gone is skipped | auto, drive |
@@ -268,6 +270,7 @@ for every session, tied to goals, and only on the user's yes.
 | F4 | The old conversation stays reachable from Recently ended, so nothing is lost if the swap was wrong | drive |
 | F5 | Without the user's yes nothing closes. Outside the Mac app the agent tells the user what to run instead | auto |
 | F6 | Sessions are never labelled spin-offs in the app: every session is just a session | read the code |
+| F7 | Each session shows its **follow-up work**: what it identified and has not finished — goals it added or proposed, tasks it opened, sessions it proposed (with Launch where the check says it is safe) or launched, questions to the user, and requirements it could not verify. Computed from records by the session that wrote them (`by` on every event), so it is exact. It is what the swap offer summarises and what you read before closing. TJ: *"i dont realize what you (the agent) has or hasnt done, what open things have been identified. showing the open things found in the session is critical"* | auto, drive, eye |
 
 ### General
 

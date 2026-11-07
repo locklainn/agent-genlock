@@ -101,6 +101,7 @@ enum Driver {
             pasteResults.append(view.pasteAttachment(from: board))
         }
         if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
+        if let names = step["split"] as? [String] { model.openSessions(names.compactMap { projectID(named: $0) }) }
         if let name = step["newSession"] as? String, let id = projectID(named: name) { model.newSession(in: id) }
         if let name = step["closeTab"] as? String, let id = projectID(named: name) { model.tuck(id) }
         if let name = step["endNoted"] as? String, let id = projectID(named: name), let s = model.sessions[id] {
