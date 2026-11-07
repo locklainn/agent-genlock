@@ -38,7 +38,7 @@ data class Pairing(val relay: String, val room: String, val key: String) {
     }
 }
 
-enum class Who { ME, LAPTOP_PROMPT, ASSISTANT, NOTE }
+enum class Who { ME, LAPTOP_PROMPT, ASSISTANT, NOTE, INFO }
 
 data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false)
 
@@ -94,7 +94,8 @@ class Link(app: Application) : AndroidViewModel(app) {
         _pairing.value = p
         socket?.close(1000, "re-paired")
         socket = null
-        lines.value = emptyList()
+        lines.value = listOf(Line(UUID.randomUUID().toString(), Who.INFO, "Paired with your laptop.", System.currentTimeMillis()))
+        android.widget.Toast.makeText(getApplication(), "Paired with your laptop", android.widget.Toast.LENGTH_SHORT).show()
         if (wantOpen) open()
     }
 

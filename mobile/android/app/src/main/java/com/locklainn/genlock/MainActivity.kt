@@ -220,8 +220,9 @@ fun TalkScreen(link: Link) {
 @Composable
 fun Bubble(line: Line, name: String) {
     val mine = line.who == Who.ME || line.who == Who.LAPTOP_PROMPT
-    if (line.who == Who.NOTE) {
-        Text(line.text, Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+    if (line.who == Who.NOTE || line.who == Who.INFO) {
+        Text(line.text, Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium,
+            color = if (line.who == Who.NOTE) MaterialTheme.colorScheme.error else Color(0xFF9ECE6A))
         return
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {

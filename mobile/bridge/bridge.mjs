@@ -38,6 +38,7 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
 
   async function handle(msg) {
     if (msg.kind === 'say') {
+      log('phone said', String(msg.text || '').slice(0, 60));
       try {
         sendToAssistant(String(msg.text || ''), home);
         send({ kind: 'ack', of: msg.id });
@@ -47,6 +48,7 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     } else if (msg.kind === 'status') {
       send({ kind: 'status', of: msg.id, projects: await status(home, snap) });
     } else if (msg.kind === 'hello') {
+      log('phone connected');
       send(stateMsg());
     }
   }
