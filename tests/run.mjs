@@ -782,6 +782,34 @@ voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 r = rv('session-state');
 check('with no app listening it does nothing', r.code === 0, r.all);
 
+/* ---- a session working off the record is told, out of sight, to take a task ---- */
+
+const quiet = { GENLOCK_SESSION: '', CLAUDE_CODE_SESSION_ID: '', GENLOCK_APP_PROJECTS: '' };
+const hook = (event, extra = {}, env = {}) => voiceRun(['session-state'], JSON.stringify({ hook_event_name: event, session_id: 'nudge-1', ...extra }), { ...quiet, ...env });
+const nudged = (res) => { try { return /no task recorded/.test(JSON.parse(res.out).hookSpecificOutput.additionalContext); } catch { return false; } };
+hook('UserPromptSubmit');
+r = hook('PostToolUse', { tool_name: 'Read', tool_input: { file_path: 'seed' } });
+check('reads are not nudged', r.code === 0 && r.out === '', r.out);
+r = hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'cd /x && genlock new "t"' } });
+check('genlock commands are not nudged', r.out === '', r.out);
+r = hook('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: 'seed' } }, { GENLOCK_APP_PROJECTS: '/projects' });
+check('the Assistant is never nudged', r.out === '', r.out);
+r = hook('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: 'seed' } });
+check('an untracked edit is nudged', r.code === 0 && nudged(r) && JSON.parse(r.out).hookSpecificOutput.hookEventName === 'PostToolUse', r.out + r.err);
+check('...and the app still hears it is working', stateOf().state === 'working');
+r = hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'make' } });
+check('once per turn: a second change in the same turn is silent', r.out === '', r.out);
+hook('UserPromptSubmit');
+r = hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'make' } });
+check('once per turn: the next prompt re-arms it', nudged(r), r.out);
+const NT = idOf(run(RV, 'nudge-1', ['new', 'The nudge stays quiet for a session on a task', '--loose']));
+hook('UserPromptSubmit');
+r = hook('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: 'seed' } });
+check('a session with a task is not nudged', NT && r.out === '', `${NT} ${r.out}`);
+r = voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Edit' }), { ...quiet });
+check('...nor one with no session id at all', r.out === '', r.out);
+run(RV, 'nudge-1', ['abandon', NT, '--because', 'test done']);
+
 /* ---- first contact: setup, reads leave no trace ------------------------------- */
 
 const SETUP = path.join(ROOT, 'setup');
