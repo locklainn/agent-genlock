@@ -55,7 +55,7 @@ struct InspectorView: View {
     @ViewBuilder private func footer(_ snap: Snapshot?) -> some View {
         if let s = snap, s.initialized, let session = sessionKey.flatMap({ model.sessions[$0] }) {
             let scope = sessionScope(s, session)
-            WholeProjectButton(projectID: projectID, snapshot: s, shownHere: scope.ids,
+            WholeProjectButton(projectID: projectID, sessionKey: sessionKey, snapshot: s, shownHere: scope.ids,
                                shownQuestions: scope.questions.reduce(0) { $0 + $1.questions.count }, shownReviews: scope.reviews.count)
                 .padding(12)
                 .background(Color(hex: 0x0B0D16))
@@ -178,6 +178,8 @@ struct InspectorView: View {
 /// The way from one session to the rest of its project, saying what is waiting there.
 struct WholeProjectButton: View {
     let projectID: String
+    /// The session whose panel this is, which picks are typed into.
+    var sessionKey: String?
     let snapshot: Snapshot
     /// Tasks and goals already in the session panel, so the count is only what is elsewhere.
     let shownHere: Set<String>
@@ -215,7 +217,7 @@ struct WholeProjectButton: View {
         }
         .buttonStyle(.plain)
         .help("Everything in this project beyond this session: its goals, other work, every question and review, backlog and completed goals")
-        .wholeProjectSheet(projectID: projectID, isPresented: $showing)
+        .wholeProjectSheet(projectID: projectID, session: sessionKey, isPresented: $showing)
     }
 }
 
@@ -223,6 +225,8 @@ struct WholeProjectButton: View {
 struct WholeProjectView: View {
     @Environment(AppModel.self) private var model
     let projectID: String
+    /// Where picked tasks and goals are typed. Nil from the dashboard: the session shown last.
+    var session: String?
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -232,37 +236,82 @@ struct WholeProjectView: View {
                 Text(model.store.project(projectID)?.name ?? "Project").font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
                 Text("Whole project").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
                 Spacer()
+                Label("Shift-click for several", systemImage: "text.badge.plus")
+                    .font(.system(size: 11)).foregroundStyle(Theme.textTertiary).lineLimit(1)
                 Button("Done") { dismiss() }.buttonStyle(GlassButtonStyle()).keyboardShortcut(.cancelAction)
             }
             .padding(12)
             .background(Color(hex: 0x0B0D16))
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
             InspectorView(projectID: projectID, sessionKey: nil)
+                .environment(\.promptPicking, PickContext(project: projectID, session: session))
         }
+        // Once picks are typed, the prompt is where you carry on.
+        .onChange(of: model.picksTyped) { dismiss() }
         .frame(minWidth: 420, idealWidth: 460, minHeight: 480, idealHeight: 640)
     }
 }
 
 extension View {
-    func wholeProjectSheet(projectID: String, isPresented: Binding<Bool>) -> some View {
-        modifier(WholeProjectSheet(projectID: projectID, isPresented: isPresented))
+    func wholeProjectSheet(projectID: String, session: String? = nil, isPresented: Binding<Bool>) -> some View {
+        modifier(WholeProjectSheet(projectID: projectID, session: session, isPresented: isPresented))
     }
 }
 
 private struct WholeProjectSheet: ViewModifier {
     @Environment(AppModel.self) private var model
     let projectID: String
+    var session: String?
     @Binding var isPresented: Bool
 
     func body(content: Content) -> some View {
-        content.sheet(isPresented: $isPresented) { WholeProjectView(projectID: projectID).environment(model) }
+        content.sheet(isPresented: $isPresented) { WholeProjectView(projectID: projectID, session: session).environment(model) }
     }
 }
 
 /// A goal or task with its place in the order. Drag the handle onto another of its kind to take
 /// that place. The order itself lives in `genlock rank`, shared with every agent.
+/// Where a pick from Whole project is typed. Absent everywhere else, so rows there have no pick button.
+struct PickContext: Equatable {
+    var project: String
+    var session: String?
+}
+
+extension EnvironmentValues {
+    @Entry var promptPicking: PickContext? = nil
+}
+
+/// Types a task or goal into the prompt; Shift-click several and they go in together when Shift comes up.
+struct PickButton: View {
+    @Environment(AppModel.self) private var model
+    let pick: PromptPick
+    let context: PickContext
+    @State private var hovering = false
+
+    var body: some View {
+        let order = model.pickOrder(pick)
+        Button { model.clickPick(pick, project: context.project, session: context.session) } label: {
+            Group {
+                if let order {
+                    Text("\(order)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(.black)
+                        .frame(width: 18, height: 18).background(Theme.cyan, in: Circle())
+                } else {
+                    Image(systemName: "text.badge.plus").font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(hovering ? Theme.textPrimary : Theme.textTertiary)
+                }
+            }
+            .frame(width: 24, height: 22).contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .help("Type into the prompt as \(PromptPicks.text(for: [pick]).trimmingCharacters(in: .whitespaces)). Shift-click to pick several")
+        .accessibilityLabel(order.map { "Picked \($0)" } ?? "Add to prompt")
+    }
+}
+
 struct RankedRow<Content: View>: View {
     @Environment(AppModel.self) private var model
+    @Environment(\.promptPicking) private var picking
     let id: String
     let title: String
     let rank: Int?
@@ -272,6 +321,14 @@ struct RankedRow<Content: View>: View {
     @ViewBuilder let content: Content
     @State private var targeted = false
     @State private var hovering = false
+
+    /// Open tasks and goals only: there is nothing to ask an agent to do about a finished one.
+    private var pick: PromptPick? {
+        let snap = model.state(for: projectID).snapshot
+        if id.hasPrefix("G-"), let g = snap?.goal(id), ["active", "parked", "proposed"].contains(g.status) { return PromptPick(kind: .goal, id: id, short: g.short) }
+        if id.hasPrefix("T-"), let t = snap?.ticket(id), !["done", "abandoned"].contains(t.status) { return PromptPick(kind: .task, id: id, short: t.short) }
+        return nil
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 7) {
@@ -292,6 +349,7 @@ struct RankedRow<Content: View>: View {
                 DueControl(id: id, due: due, daysUntil: daysUntil, projectID: projectID, offerAdding: hovering)
             }
             Spacer(minLength: 0)
+            if let picking, let pick { PickButton(pick: pick, context: picking) }
         }
         .onHover { hovering = $0 }
         .overlay(alignment: .top) {

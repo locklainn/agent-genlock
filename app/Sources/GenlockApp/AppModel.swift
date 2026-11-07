@@ -369,8 +369,54 @@ final class AppModel {
     }
 
     func shiftReleased() {
+        if let picked = picks.shiftReleased(), let to = picksTo { return typePicks(picked, project: to.project, session: to.session) }
         guard route == .dashboard, let open = selection.shiftReleased() else { return }
         openSessions(open)
+    }
+
+    // MARK: Picking tasks and goals into a prompt
+
+    private(set) var picks = PromptPicks()
+    /// Where Shift-clicked picks go when Shift comes up.
+    @ObservationIgnored private var picksTo: (project: String, session: String?)?
+    /// Counts each time picks are typed, so Whole project knows to close and hand you the prompt.
+    private(set) var picksTyped = 0
+
+    /// A click types a task or goal into the prompt; Shift-clicks mark several for when Shift comes up.
+    func clickPick(_ pick: PromptPick, project: String, session: String?) {
+        let shift = lastClickHadShift
+        lastClickHadShift = false
+        // Marks belong to one project's list; picking in another starts over.
+        if let to = picksTo, to.project != project || to.session != session { picks.clear() }
+        picksTo = (project, session)
+        if let now = picks.click(pick, shift: shift) { typePicks(now, project: project, session: session) }
+    }
+
+    func pickOrder(_ pick: PromptPick) -> Int? { picks.order(of: pick) }
+
+    /// Types, never submits, so you can say what to do with them. With no session in the
+    /// project, a new one starts and gets them once Claude Code is up.
+    func typePicks(_ picked: [PromptPick], project: String, session: String?) {
+        picks.clear()
+        picksTo = nil
+        let text = PromptPicks.text(for: picked)
+        guard !text.isEmpty else { return }
+        let open = sessions.keys.filter { sessions[$0]?.projectID == project }.sorted()
+        picksTyped += 1
+        if let key = PromptPicks.target(from: session, lastShown: lastShown[project], open: open), let target = sessions[key] {
+            if !visible.contains(key) || route != .sessions { show(key) }
+            target.view.send(txt: text)
+            focus(key)
+            return
+        }
+        newSession(in: project)
+        guard let key = lastShown[project] ?? sessions.keys.first(where: { sessions[$0]?.projectID == project }) else { return }
+        // Claude Code takes a moment to draw its prompt; typing before then is lost.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
+            guard let self, let target = self.sessions[key], target.isRunning else { return }
+            target.view.send(txt: text)
+            self.focus(key)
+        }
     }
 
     func clearMarks() { selection.clear() }
@@ -658,15 +704,13 @@ final class AppModel {
     }
 
     /// What a tab says beside its project icon: what the session is for, never an id. A spin-off
-    /// by its task, a main session by its goal, else its task, else the project's name.
+    /// by its task, any other by the task it is working on, else the project's name.
     func tabLabel(_ key: String) -> String {
         guard let session = sessions[key] else { return key }
         if session.spawn != nil { return label(project: session.projectID, spawn: session.spawn) ?? session.label }
         let snap = state(for: session.projectID).snapshot
         let focus = snap.flatMap { $0.initialized ? session.focus(in: $0) : nil }
         if let task = focus?.working?.heading { return task }
-        // Only the main session goes by the project's goal; the others would all read the same.
-        if session.slot == nil, let goal = focus?.goal?.heading { return goal }
         let keys = sessions.keys.filter { sessions[$0]?.projectID == session.projectID && sessions[$0]?.spawn == nil }.sorted()
         if session.slot == nil && keys.count == 1 { return projectName(session.projectID) }
         return "Session \((keys.firstIndex(of: key) ?? 0) + 1)"

@@ -1,4 +1,5 @@
 import AppKit
+import SwiftUI
 import GenlockCore
 import AVFoundation
 import Speech
@@ -68,6 +69,8 @@ enum Driver {
         }
         if let at = step["clickAt"] as? [Double] { postClick(at: CGRect(x: at[0], y: at[1], width: 0, height: 0), shift: false) }
         if step["releaseShift"] != nil { postFlags([], keyCode: 56) }
+        // What the event monitor calls on Shift coming up, for runs in the background where no key event arrives.
+        if step["shiftUp"] != nil { model.shiftReleased() }
         if step["tapRightOption"] != nil {
             postFlags(.option, keyCode: 61)
             postFlags([], keyCode: 61)
@@ -136,6 +139,22 @@ enum Driver {
         if let v = step["showCompleted"] as? Bool { model.showingCompleted = v }
         if step["clickCelebration"] != nil { CelebrationPresenter.clickForTest() }
         if let path = step["celebrationCapture"] as? String { CelebrationPresenter.capture(to: path) }
+        // A click on a task or goal in Whole project: [project, task|goal, id, short, shift, from-panel].
+        if let args = step["pick"] as? [String], args.count >= 5, let id = projectID(named: args[0]), let kind = PromptPick.Kind(rawValue: args[1]) {
+            model.lastClickHadShift = args[4] == "shift"
+            model.clickPick(PromptPick(kind: kind, id: args[2], short: args[3]), project: id, session: args.count > 5 && args[5] == "panel" ? id : nil)
+        }
+        // Whole project drawn off screen, as its sheet shows it: [project, png path].
+        if let args = step["renderWholeProject"] as? [String], let id = projectID(named: args[0]) {
+            let host = NSHostingView(rootView: WholeProjectView(projectID: id, session: id).environment(model).frame(width: 460, height: 640))
+            host.frame = NSRect(x: 0, y: 0, width: 460, height: 640)
+            host.layoutSubtreeIfNeeded()
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[1]))
+            }
+        }
         // The real `genlock swap`, run as the session's agent would: in its folder, through its channel.
         if let args = step["swap"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id], let cli = model.tools?.genlockArgv {
             let p = Process()
