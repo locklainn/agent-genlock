@@ -141,7 +141,8 @@ fun TalkScreen(link: Link) {
     val conn by link.conn.collectAsStateWithLifecycle()
     var draft by rememberSaveable { mutableStateOf("") }
     val list = rememberLazyListState()
-    LaunchedEffect(lines.size) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1) }
+    val waiting by link.waiting.collectAsStateWithLifecycle()
+    LaunchedEffect(lines.size, waiting) { if (lines.isNotEmpty()) list.animateScrollToItem(lines.size - 1 + if (waiting) 1 else 0) }
 
     val ctx = LocalContext.current
     var listening by remember { mutableStateOf(false) }
@@ -177,6 +178,13 @@ fun TalkScreen(link: Link) {
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             items(lines, key = { it.id + it.who }) { Bubble(it, name) }
+            if (waiting) item(key = "waiting") {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.width(10.dp))
+                    Text("$name is thinking…", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
         }
         problem?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
         // Stop and Send do opposite things, so they sit at opposite ends of the row, never side by side.

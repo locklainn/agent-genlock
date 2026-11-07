@@ -75,6 +75,9 @@ class Link(app: Application) : AndroidViewModel(app) {
     val lines = MutableStateFlow<List<Line>>(emptyList())
     val projects = MutableStateFlow<List<Project>?>(null)
     val statusAt = MutableStateFlow(0L)
+    /** A message was sent and the Assistant has not answered yet. */
+    val waiting = MutableStateFlow(false)
+    private val giveUp = Runnable { waiting.value = false }
 
     /** Each reply as it arrives, for reading aloud. */
     var onReply: ((String) -> Unit)? = null
@@ -164,6 +167,9 @@ class Link(app: Application) : AndroidViewModel(app) {
         }
         val id = send(JSONObject().put("kind", "say").put("text", clean))
         lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true) }
+        waiting.value = true
+        main.removeCallbacks(giveUp)
+        main.postDelayed(giveUp, 15 * 60_000L)
     }
 
     fun askStatus() {
@@ -202,6 +208,7 @@ class Link(app: Application) : AndroidViewModel(app) {
                 if (lines.value.any { it.id == id }) return
                 val text = m.optString("text")
                 lines.update { it + Line(id, Who.ASSISTANT, text, t) }
+                waiting.value = false
                 onReply?.invoke(text)
             }
             "prompt" -> {
@@ -213,6 +220,7 @@ class Link(app: Application) : AndroidViewModel(app) {
                 statusAt.value = System.currentTimeMillis()
             }
             "error" -> {
+                waiting.value = false
                 val of = m.optString("of")
                 lines.update { list -> list.filterNot { it.id == of && it.who == Who.ME && it.pending } +
                     Line(UUID.randomUUID().toString(), Who.NOTE, m.optString("text"), t) }
