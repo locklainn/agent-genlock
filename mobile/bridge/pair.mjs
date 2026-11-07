@@ -2,6 +2,7 @@
 // Pair the phone: makes a room on the relay and shows the QR code the phone scans.
 //   node mobile/bridge/pair.mjs --relay https://genlock-relay.<you>.workers.dev
 //   node mobile/bridge/pair.mjs            show the existing pairing's QR again
+//   node mobile/bridge/pair.mjs --png FILE  also save the QR as an image (to show on screen)
 //   node mobile/bridge/pair.mjs --revoke   forget the pairing; the phone must scan a new one
 
 import fs from 'node:fs';
@@ -17,6 +18,12 @@ async function show(p) {
     console.log(await QR.toString(link, { type: 'terminal', small: true }));
   } catch {
     console.log('(install the QR printer with: cd mobile/bridge && npm install)');
+  }
+  const png = flag('--png');
+  if (png) {
+    const QR = (await import('qrcode')).default;
+    await QR.toFile(png, link, { width: 640, margin: 2 });
+    console.log(`QR image: ${png}`);
   }
   console.log('Scan this with the Genlock phone app, or paste this link into it:\n');
   console.log(link, '\n');
