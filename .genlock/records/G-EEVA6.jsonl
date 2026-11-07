@@ -3,3 +3,4 @@
 {"e":"54fad0b06657","at":"2026-11-07T14:31:27.270Z","by":"98b1c65b-6ac9-419d-bcd7-56622a75f020","op":"next_add","nid":"25a627","text":"Show each session's follow-up work in its panel (F7 display), from snapshot.followups; needs InspectorView/Snapshot.swift once session-only-panel releases them","due":null}
 {"e":"bbae9733e408","at":"2026-11-07T14:31:27.513Z","by":"98b1c65b-6ac9-419d-bcd7-56622a75f020","op":"next_add","nid":"037fdb","text":"Drive reopening a swapped-out main session from Recently ended","due":null}
 {"e":"10863988543b","at":"2026-11-07T14:31:27.919Z","by":"98b1c65b-6ac9-419d-bcd7-56622a75f020","op":"update","text":"Swap works: genlock swap + followups, app replaces the session in place, agents told to offer it. Panel display of follow-ups still to do."}
+{"e":"3c49cf19c537","at":"2026-11-07T14:46:24.824Z","by":"644921a9-2104-4a4b-8711-6ad55b63f931","op":"next_keep"}
