@@ -262,9 +262,14 @@ extension SessionBar {
     /// Projects with no session yet, and adding a folder.
     private var openProjectMenu: some View {
         Menu {
-            Section("Open a project") {
-                ForEach(model.projectsWithoutSession) { project in
-                    Button(project.name) { model.newSession(in: project.id) }
+            Section("Projects") {
+                ForEach(model.store.projects.filter(\.exists)) { project in
+                    Button {
+                        model.openProject(project.id)
+                    } label: {
+                        Image(nsImage: TabOverflow.dot(NSColor(projectDot(project.id))))
+                        Text(project.name)
+                    }
                 }
             }
             let shownProjects = Set(model.projectsWithTabs)
@@ -380,7 +385,7 @@ struct SessionStripTab: View {
                     .lineLimit(1).truncationMode(.tail)
                     .fixedSize(horizontal: width == nil, vertical: false)
                 if hovering && !current {
-                    Button { withAnimation(.spring(duration: 0.3)) { model.tuck(key) } } label: {
+                    Button { withAnimation(.spring(duration: 0.3)) { model.closeTab(key) } } label: {
                         Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
                     }
                     .buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
@@ -401,9 +406,9 @@ struct SessionStripTab: View {
             if session?.spawn == nil {
                 Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
             }
-            Button("Close Tab (keeps running)") { model.tuck(key) }
+            Button("Close Tab (keeps running)") { model.closeTab(key) }
             Divider()
-            Button("End Session…") { model.confirmEnd(key) }
+            Button("End Session…") { model.endAndKeepProject(key) }
         }
     }
 }
