@@ -36,22 +36,92 @@ struct InspectorView: View {
             .frame(maxWidth: .infinity, alignment: .leading)
         }
         .scrollIndicators(.never)
+        .safeAreaInset(edge: .bottom, spacing: 0) { footer(state.snapshot) }
         .background(Color(hex: 0x0B0D16))
         .overlay(alignment: .leading) { Rectangle().fill(Theme.hairline).frame(width: 1) }
     }
 
+    /// What this session's panel shows, so the way to the whole project counts only the rest.
+    private func sessionScope(_ s: Snapshot, _ session: TerminalSession) -> (focus: Snapshot.SessionFocus, ids: Set<String>, reviews: [Snapshot.Review], questions: [Snapshot.QuestionGroup]) {
+        let found = session.focus(in: s)
+        // The goal its own task serves, never the project's goal standing in for one.
+        let goal = s.goal(found.working?.goal)
+        let own = Snapshot.SessionFocus(goal: goal, mine: found.mine, lastFinished: found.lastFinished)
+        let ids = Set(own.mine.map(\.id) + [goal?.id].compactMap { $0 })
+        return (own, ids, s.openReviews.filter { $0.about.map(ids.contains) == true }, s.questionGroups(focus: own).filter(\.isCurrent))
+    }
+
+    /// Pinned to the bottom of a session's panel, whatever the cards above are doing.
+    @ViewBuilder private func footer(_ snap: Snapshot?) -> some View {
+        if let s = snap, s.initialized, let session = sessionKey.flatMap({ model.sessions[$0] }) {
+            let scope = sessionScope(s, session)
+            WholeProjectButton(projectID: projectID, snapshot: s, shownHere: scope.ids,
+                               shownQuestions: scope.questions.reduce(0) { $0 + $1.questions.count }, shownReviews: scope.reviews.count)
+                .padding(12)
+                .background(Color(hex: 0x0B0D16))
+                .overlay(alignment: .top) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+        }
+    }
+
     @ViewBuilder private func content(_ s: Snapshot, changed: Set<String>) -> some View {
-        let session = sessionKey.flatMap { model.sessions[$0] }
-        let own = session?.focus(in: s) ?? Snapshot.SessionFocus(goal: s.goal(s.currentGoal), mine: [])
-        let mine = Set(own.mine.map(\.id))
+        if let session = sessionKey.flatMap({ model.sessions[$0] }) {
+            sessionContent(s, session: session, changed: changed)
+        } else {
+            projectContent(s, changed: changed)
+        }
+    }
+
+    /// Only what this session's agent is on. Everything project-wide is behind Whole project.
+    @ViewBuilder private func sessionContent(_ s: Snapshot, session: TerminalSession, changed: Set<String>) -> some View {
+        let scope = sessionScope(s, session)
+        let own = scope.focus, goal = own.goal, reviews = scope.reviews, questions = scope.questions
+        let stops = (goal?.forbids ?? []) + own.mine.flatMap(\.forbids)
+
+        let status = session.status(in: s)
+        // The status row already names the task it is on; list only the others it holds.
+        let rest = status.task == nil ? own.mine : Array(own.mine.dropFirst())
+        InspectorCard(title: "This session", symbol: "bolt.fill", count: own.mine.count > 1 ? own.mine.count : nil, color: Theme.tint(tier)[0]) {
+            SessionStatusRow(status: status, tier: tier)
+            ForEach(rest) { t in
+                RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
+                    TaskRow(ticket: t, changed: changed.contains(t.id))
+                }
+            }
+        }
+        if let goal {
+            InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
+                RankedRow(id: goal.id, title: goal.title, rank: goal.rank, due: goal.due, daysUntil: goal.daysUntil, projectID: projectID) {
+                    GoalBlock(goal: goal, projectID: projectID, changed: changed, tier: tier)
+                }
+            }
+        }
+        if !questions.isEmpty {
+            QuestionsCard(groups: questions, session: session, projectID: projectID, changed: changed)
+        }
+        if !reviews.isEmpty {
+            InspectorCard(title: "To review", symbol: "doc.text.magnifyingglass", count: reviews.count, color: Theme.cyan) {
+                ForEach(reviews) { ReviewRow(review: $0, projectID: projectID, root: s.root, changed: changed.contains($0.id)) }
+            }
+        }
+        if !stops.isEmpty {
+            InspectorCard(title: "Do not", symbol: "hand.raised.fill", color: Theme.red) {
+                ForEach(stops.indices, id: \.self) { i in
+                    Text(stops[i].text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
+    /// Everything in the project: its goals, all open work, every question and review, and what is held.
+    @ViewBuilder private func projectContent(_ s: Snapshot, changed: Set<String>) -> some View {
+        let own = Snapshot.SessionFocus(goal: s.goal(s.currentGoal), mine: [])
         let current = own.goal
         let others = s.rankedGoals.filter { ($0.status == "active" || $0.status == "parked") && $0.id != current?.id }
         let focus = s.taskFocus()
         let open = s.rankedTasks
         let reviews = s.openReviews
-        let elsewhere = focus.active.filter { !mine.contains($0.id) }
 
-        InspectorCard(title: own.working == nil && session != nil ? "Project goal" : "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
+        InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
             if let current {
                 RankedRow(id: current.id, title: current.title, rank: current.rank, due: current.due, daysUntil: current.daysUntil, projectID: projectID) {
                     GoalBlock(goal: current, projectID: projectID, changed: changed, tier: tier)
@@ -61,29 +131,19 @@ struct InspectorView: View {
                     .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
         }
-        if let session {
-            InspectorCard(title: "This session", symbol: "bolt.fill", count: own.mine.isEmpty ? nil : own.mine.count, color: Theme.tint(tier)[0]) {
-                SessionStatusRow(status: session.status(in: s), tier: tier)
-                ForEach(own.mine) { t in
-                    RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
-                        TaskRow(ticket: t, changed: changed.contains(t.id))
-                    }
-                }
-            }
+        if !s.questionsForUser.isEmpty {
+            QuestionsCard(groups: s.questionGroups(focus: own), session: nil, projectID: projectID, changed: changed)
         }
         if !reviews.isEmpty {
             InspectorCard(title: "To review", symbol: "doc.text.magnifyingglass", count: reviews.count, color: Theme.cyan) {
                 ForEach(reviews) { ReviewRow(review: $0, projectID: projectID, root: s.root, changed: changed.contains($0.id)) }
             }
         }
-        if !s.questionsForUser.isEmpty {
-            QuestionsCard(groups: s.questionGroups(focus: own), session: session, projectID: projectID, changed: changed)
-        }
-        InspectorCard(title: session == nil ? "Now" : "Rest of the project", symbol: session == nil ? "bolt.fill" : "square.stack.3d.up", count: elsewhere.isEmpty ? nil : elsewhere.count, color: Theme.cyan) {
-            if elsewhere.isEmpty && focus.justFinished.isEmpty {
+        InspectorCard(title: "Now", symbol: "bolt.fill", count: focus.active.isEmpty ? nil : focus.active.count, color: Theme.cyan) {
+            if focus.active.isEmpty && focus.justFinished.isEmpty {
                 Text(open.isEmpty ? "Nothing going on." : "Nothing going on right now.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
-            ForEach(elsewhere) { t in
+            ForEach(focus.active) { t in
                 RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
                     TaskRow(ticket: t, changed: changed.contains(t.id))
                 }
@@ -106,12 +166,96 @@ struct InspectorView: View {
                 }
             }
         }
-        if focus.backlog.contains(where: { !mine.contains($0.id) }) || !others.isEmpty {
-            BacklogCard(tasks: focus.backlog.filter { !mine.contains($0.id) }, goals: others, changed: changed, tier: tier, projectID: projectID)
+        if !focus.backlog.isEmpty || !others.isEmpty {
+            BacklogCard(tasks: focus.backlog, goals: others, changed: changed, tier: tier, projectID: projectID)
         }
         if !s.completedGoals.isEmpty {
             CompletedCard(goals: s.completedGoals, projectID: projectID)
         }
+    }
+}
+
+/// The way from one session to the rest of its project, saying what is waiting there.
+struct WholeProjectButton: View {
+    let projectID: String
+    let snapshot: Snapshot
+    /// Tasks and goals already in the session panel, so the count is only what is elsewhere.
+    let shownHere: Set<String>
+    let shownQuestions: Int
+    let shownReviews: Int
+    @State private var showing = false
+
+    private var summary: String? {
+        let s = snapshot
+        var parts: [String] = []
+        let tasks = s.rankedTasks.filter { !shownHere.contains($0.id) }.count
+        let questions = s.questionsForUser.count - shownQuestions
+        let reviews = s.openReviews.count - shownReviews
+        if questions > 0 { parts.append(questions == 1 ? "1 question" : "\(questions) questions") }
+        if reviews > 0 { parts.append("\(reviews) to review") }
+        if tasks > 0 { parts.append(tasks == 1 ? "1 other task" : "\(tasks) other tasks") }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    var body: some View {
+        Button { showing = true } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "square.stack.3d.up").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Whole project").font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    if let summary { Text(summary).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1) }
+                }
+                Spacer(minLength: 4)
+                Image(systemName: "chevron.right").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.textTertiary)
+            }
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(Color.white.opacity(0.04), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Everything in this project beyond this session: its goals, other work, every question and review, backlog and completed goals")
+        .wholeProjectSheet(projectID: projectID, isPresented: $showing)
+    }
+}
+
+/// Everything project-wide, in a sheet: the panel with no session to narrow it.
+struct WholeProjectView: View {
+    @Environment(AppModel.self) private var model
+    let projectID: String
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                if let project = model.store.project(projectID) { ProjectIconView(project: project, size: 22) }
+                Text(model.store.project(projectID)?.name ?? "Project").font(.system(size: 14, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary)
+                Text("Whole project").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
+                Spacer()
+                Button("Done") { dismiss() }.buttonStyle(GlassButtonStyle()).keyboardShortcut(.cancelAction)
+            }
+            .padding(12)
+            .background(Color(hex: 0x0B0D16))
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+            InspectorView(projectID: projectID, sessionKey: nil)
+        }
+        .frame(minWidth: 420, idealWidth: 460, minHeight: 480, idealHeight: 640)
+    }
+}
+
+extension View {
+    func wholeProjectSheet(projectID: String, isPresented: Binding<Bool>) -> some View {
+        modifier(WholeProjectSheet(projectID: projectID, isPresented: isPresented))
+    }
+}
+
+private struct WholeProjectSheet: ViewModifier {
+    @Environment(AppModel.self) private var model
+    let projectID: String
+    @Binding var isPresented: Bool
+
+    func body(content: Content) -> some View {
+        content.sheet(isPresented: $isPresented) { WholeProjectView(projectID: projectID).environment(model) }
     }
 }
 

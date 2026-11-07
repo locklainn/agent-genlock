@@ -331,7 +331,6 @@ struct SessionStripTab: View {
         Button { model.showInPane(key, replacing: paneKey) } label: {
             HStack(spacing: 5) {
                 Circle().fill(dot).frame(width: 6, height: 6)
-                if session?.spawn != nil { Image(systemName: "arrow.triangle.branch").font(.system(size: 9.5)).foregroundStyle(Theme.cyan) }
                 Text(width == nil ? TabOverflow.short(label) : label)
                     .font(.system(size: 12, weight: current ? .semibold : .regular))
                     .foregroundStyle(current ? Theme.textPrimary : (hovering ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))

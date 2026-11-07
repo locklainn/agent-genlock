@@ -539,7 +539,7 @@ final class AppModel {
         var next = visible
         if !next.contains(parent) { next.append(parent) }
         if next.count >= DashSelection.maxPanes {
-            message = "\(request.ticket) is running, but the split is full. Find it in the bar above."
+            message = "\(tabLabel(session.key)) is running, but the split is full. Find it in \(projectName(session.projectID))'s tabs."
         } else {
             next.append(session.key)
         }
@@ -578,7 +578,8 @@ final class AppModel {
         alert.addButton(withTitle: "Cancel")
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn else { return }
-        recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: session.projectID, spawn: session.spawn, slot: session.slot), in: recentlyEnded)
+        recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: session.projectID, spawn: session.spawn, slot: session.slot,
+                                                                    conversation: session.conversation ?? memory.conversations[key]), in: recentlyEnded)
         endSession(key)
     }
 
@@ -586,6 +587,7 @@ final class AppModel {
     func reopen(_ ended: SessionMemory.Open) {
         recentlyEnded.removeAll { $0.key == ended.key }
         if sessions[ended.key] == nil {
+            if let conversation = ended.conversation { memory.conversations[ended.key] = conversation }
             let session = TerminalSession(projectID: ended.project, spawn: ended.spawn, slot: ended.slot)
             sessions[session.key] = session
             if let tools { launch(session, tools: tools) }
@@ -639,8 +641,15 @@ final class AppModel {
     }
 
     /// Another session in a project that already has one: its own tab and its own conversation.
+    /// New means a new conversation. Picking up an old one is Recently ended's job.
     func newSession(in project: String) {
-        guard sessions[project] != nil else { return openSessions([project]) }
+        guard sessions[project] != nil else {
+            memory.conversations[project] = nil
+            let session = TerminalSession(projectID: project)
+            sessions[project] = session
+            if let tools { launch(session, tools: tools, fresh: true) }
+            return show(project)
+        }
         let session = TerminalSession(projectID: project, slot: String(UUID().uuidString.prefix(6)).lowercased())
         sessions[session.key] = session
         if let tools { launch(session, tools: tools) }
@@ -664,7 +673,7 @@ final class AppModel {
 
     func label(project: String, spawn: SpawnRequest?) -> String? {
         if let spawn {
-            return state(for: project).snapshot?.ticket(spawn.ticket)?.heading ?? "Spin-off task"
+            return state(for: project).snapshot?.ticket(spawn.ticket)?.heading ?? "New session"
         }
         return sessions[project]?.label ?? store.project(project)?.name
     }

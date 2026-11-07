@@ -251,6 +251,24 @@ When a rabbit hole comes up, the agent offers to move it to its own session, so 
 | C3 | Finishing a goal covers the screen with a celebration, whoever finished it, once per finish, including one finished while the app was closed. Goals already finished when a project is first seen do not celebrate | auto, drive, eye |
 | C4 | The celebration ends on a click or a key, or by itself after 8 seconds, and never takes the keyboard from another app. Several finished together show one at a time | drive |
 
+### Swapping in a fresh session
+
+A long conversation costs more every turn and loses detail when it is compressed. When a
+session's workload is done, a fresh session on the next goal is cheaper and sharper, but only
+if everything the old one knew is in tasks and goals. TJ, 7 November 2026: *"this constant swap
+out is an optimization feature. but it DEPENDS fully on making sure all details are saved into
+tasks/goals."* The Assistant already does this with `genlock clear-context`; this is the same
+for every session, tied to goals, and only on the user's yes.
+
+| id | requirement | check |
+|---|---|---|
+| F1 | When its workload is done, an agent says so and offers the swap in one short message: what was finished, the next goal it would open, and a yes/no. Agent instructions push for this at every natural finish | read agent/*.md, eye |
+| F2 | The swap refuses while anything a fresh session would need is missing (`genlock checkpoint` gaps: stale latest, goals without next things, open tickets with no account), and names the gaps | auto |
+| F3 | On the user's yes the agent asks the app, with their words recorded; after its turn ends the app replaces the session in the same tab with a fresh conversation that starts on the named goal (`genlock continue G`) | auto, drive |
+| F4 | The old conversation stays reachable from Recently ended, so nothing is lost if the swap was wrong | drive |
+| F5 | Without the user's yes nothing closes. Outside the Mac app the agent tells the user what to run instead | auto |
+| F6 | Sessions are never labelled spin-offs in the app: every session is just a session | read the code |
+
 ### General
 
 | id | requirement | check |

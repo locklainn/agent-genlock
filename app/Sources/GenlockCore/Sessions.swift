@@ -14,12 +14,16 @@ public struct SessionMemory: Codable, Equatable {
         public var token: String?
         /// Set for a second or later session in the same project, which has its own conversation.
         public var slot: String?
+        /// For a session you ended: its conversation, so reopening it is that conversation and
+        /// not whatever the project's main session has moved on to.
+        public var conversation: String?
 
-        public init(project: String, spawn: SpawnRequest? = nil, token: String? = nil, slot: String? = nil) {
+        public init(project: String, spawn: SpawnRequest? = nil, token: String? = nil, slot: String? = nil, conversation: String? = nil) {
             self.project = project
             self.spawn = spawn
             self.token = token
             self.slot = slot
+            self.conversation = conversation
         }
 
         public var key: String { SessionMemory.key(project: project, ticket: spawn?.ticket, slot: slot) }

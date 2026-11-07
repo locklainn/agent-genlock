@@ -42,7 +42,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
 
     var label: String {
         let name = displayName ?? URL(fileURLWithPath: projectID).lastPathComponent
-        return spawn != nil ? "\(name) spin-off" : (slot != nil ? "\(name), another session" : name)
+        return spawn != nil || slot != nil ? "\(name), another session" : name
     }
 
     static func key(project: String, ticket: String?) -> String {

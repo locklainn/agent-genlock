@@ -23,28 +23,31 @@ struct SessionStrip: View {
     let openPanel: () -> Void
 
     private func questionLabel(_ snap: Snapshot, _ own: Snapshot.SessionFocus) -> String {
-        let here = snap.questionGroups(focus: own).filter(\.isCurrent).reduce(0) { $0 + $1.questions.count }
-        let all = snap.questionsForUser.count
-        return here > 0 ? "\(here) for this goal" : (all == 1 ? "1 question" : "\(all) questions")
+        let here = questionCount(snap, own)
+        return here == 1 ? "1 question" : "\(here) questions"
+    }
+
+    /// Only questions about this session's own task or the goal it serves.
+    private func questionCount(_ snap: Snapshot, _ own: Snapshot.SessionFocus) -> Int {
+        snap.questionGroups(focus: own).filter(\.isCurrent).reduce(0) { $0 + $1.questions.count }
     }
 
     var body: some View {
         if let snap = model.state(for: session.projectID).snapshot, snap.initialized {
-            let own = session.focus(in: snap)
+            let found = session.focus(in: snap)
+            // Only the goal its own task serves: with no task, nothing project-wide stands in.
+            let own = Snapshot.SessionFocus(goal: snap.goal(found.working?.goal), mine: found.mine, lastFinished: found.lastFinished)
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
-                    Image(systemName: "scope").font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(own.working == nil ? Theme.textTertiary : Theme.tint(tier)[0])
-                    // With no task of its own, the goal is the project's and not what this session is on.
-                    if own.working == nil { Text("Project goal").font(.system(size: 11)).foregroundStyle(Theme.textTertiary) }
-                    Text(own.goal?.heading ?? "No goal yet")
-                        .font(.system(size: 12.5, weight: own.working == nil ? .medium : .bold, design: .rounded))
-                        .foregroundStyle(own.working == nil ? Theme.textSecondary : Theme.textPrimary).lineLimit(1)
-                    if own.working != nil, let progress = own.goal?.progress, progress.total > 0 {
-                        Text("\(progress.done)/\(progress.total)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textTertiary)
+                    if let goal = own.goal {
+                        Image(systemName: "scope").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.tint(tier)[0])
+                        Text(goal.heading).font(.system(size: 12.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+                        if goal.progress.total > 0 {
+                            Text("\(goal.progress.done)/\(goal.progress.total)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textTertiary)
+                        }
                     }
                     Spacer(minLength: 6)
-                    if !snap.questionsForUser.isEmpty {
+                    if questionCount(snap, own) > 0 {
                         Button(action: openPanel) {
                             Label(questionLabel(snap, own), systemImage: "person.fill.questionmark")
                                 .font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.violet)
@@ -74,7 +77,8 @@ struct SessionStatusRow: View {
         case .workingUnrecorded: return ("bolt.fill", Theme.amber)
         case .needsYou: return ("bell.fill", Theme.red)
         case .paused: return ("pause.fill", Theme.textSecondary)
-        case .nothing: return ("moon.zzz.fill", Theme.textTertiary)
+        case .untracked: return ("exclamationmark.triangle.fill", Theme.amber)
+        case .waitingForWork: return ("hourglass", Theme.textTertiary)
         case .ended: return ("powerplug.fill", Theme.textTertiary)
         }
     }
@@ -111,9 +115,9 @@ private struct StatusSurface: ViewModifier {
         switch kind {
         case .working: content.modifier(WorkingGlow(active: true, tier: tier))
         case .needsYou: content.background(Theme.red.opacity(0.14), in: shape).overlay(shape.strokeBorder(Theme.red.opacity(0.8), lineWidth: 1))
-        case .workingUnrecorded: content.background(Theme.amber.opacity(0.1), in: shape).overlay(shape.strokeBorder(Theme.amber.opacity(0.6), lineWidth: 1))
+        case .workingUnrecorded, .untracked: content.background(Theme.amber.opacity(0.1), in: shape).overlay(shape.strokeBorder(Theme.amber.opacity(0.6), lineWidth: 1))
         case .paused: content.background(Color.white.opacity(0.05), in: shape).overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
-        case .nothing, .ended: content
+        case .waitingForWork, .ended: content
         }
     }
 }

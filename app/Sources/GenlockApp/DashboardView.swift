@@ -361,6 +361,7 @@ struct ProjectCard: View {
     let tier: Tier
     @State private var isHovered = false
     @State private var isDropTarget = false
+    @State private var showingInfo = false
 
     /// The height of a full card, so a card with little to say still lines up with one that has plenty.
     private static let minHeight: CGFloat = 184
@@ -389,6 +390,16 @@ struct ProjectCard: View {
                 .accessibilityLabel("Change \(project.name)'s icon")
                 Text(project.name).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                 Spacer(minLength: 4)
+                if state.snapshot?.initialized == true {
+                    Button { showingInfo = true } label: {
+                        Image(systemName: "info.circle").font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(isHovered ? Theme.textPrimary : Theme.textTertiary)
+                            .frame(width: 22, height: 22).contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Whole project: goals, all open work, questions, reviews, backlog and completed goals")
+                    .accessibilityLabel("\(project.name): whole project")
+                }
                 if isHovered && !marked {
                     HStack(spacing: 3) {
                         Text("Open").font(.system(size: 11, weight: .semibold))
@@ -443,6 +454,7 @@ struct ProjectCard: View {
             return true
         } isTargeted: { isDropTarget = $0 }
         .contextMenu { menu }
+        .wholeProjectSheet(projectID: project.id, isPresented: $showingInfo)
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
     }
@@ -561,6 +573,7 @@ struct ProjectCard: View {
         }
         Divider()
         Button("Open Session") { model.openSessions([project.id]) }
+        if state.snapshot?.initialized == true { Button("Whole Project…") { showingInfo = true } }
         Button("Start New Conversation") { model.restart(project.id, fresh: true); model.openSessions([project.id]) }
         if model.sessions[project.id] != nil {
             Button("End Session") { model.endSession(project.id) }

@@ -252,7 +252,9 @@ public struct Snapshot: Decodable, Equatable {
 
     /// What a session is doing, in one answer, from what its agent is doing and what it holds.
     public struct SessionStatus: Equatable {
-        public enum Kind: Equatable { case working, workingUnrecorded, needsYou, paused, nothing, ended }
+        /// `waitingForWork` is said only when nothing suggests the agent did work off the record;
+        /// `untracked` is a turn that ran with no task at all, which is worth a look.
+        public enum Kind: Equatable { case working, workingUnrecorded, needsYou, paused, untracked, waitingForWork, ended }
         public var kind: Kind
         public var headline: String
         public var task: Ticket?
@@ -273,8 +275,13 @@ public struct Snapshot: Decodable, Equatable {
             return SessionStatus(kind: .needsYou, headline: "Needs you", task: task, detail: said)
         default:
             if task != nil { return SessionStatus(kind: .paused, headline: "Paused on", task: task, detail: said ?? progress) }
-            let last = focus.lastFinished.map { "Last finished: \($0.heading)" }
-            return SessionStatus(kind: .nothing, headline: "Nothing going on", task: nil, detail: last)
+            // No turn yet, or its last turn closed a task: there is no sign of work off the record.
+            if phase == nil { return SessionStatus(kind: .waitingForWork, headline: "Waiting for work", task: nil, detail: nil) }
+            if let last = focus.lastFinished {
+                return SessionStatus(kind: .waitingForWork, headline: "Waiting for work", task: nil, detail: "Last finished: \(last.heading)")
+            }
+            // It ran a turn and has never had a task. It may have done real work nobody recorded.
+            return SessionStatus(kind: .untracked, headline: "No task recorded", task: nil, detail: said ?? "It has run, but never on a task. Check what it did.")
         }
     }
 
