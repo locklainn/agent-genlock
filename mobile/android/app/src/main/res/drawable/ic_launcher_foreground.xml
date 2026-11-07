@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Generated from assets/logo/genlock-mark.svg: the same three locked signals as the Mac app icon. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:scaleX="0.06510" android:scaleY="0.06510" android:translateX="20.667" android:translateY="20.667">
+        <path android:strokeColor="#FF8D28" android:strokeWidth="43.008" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" android:pathData="M204.8 394.24 L307.2 394.24 L307.2 302.08 L409.6 302.08 L409.6 394.24 L512 394.24 L512 302.08 L614.4 302.08 L614.4 394.24 L716.8 394.24 L716.8 302.08 L819.2 302.08 L819.2 394.24" />
+        <path android:strokeColor="#00C3D0" android:strokeWidth="43.008" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" android:pathData="M204.8 558.08 L307.2 558.08 L307.2 465.92 L409.6 465.92 L409.6 558.08 L512 558.08 L512 465.92 L614.4 465.92 L614.4 558.08 L716.8 558.08 L716.8 465.92 L819.2 465.92 L819.2 558.08" />
+        <path android:strokeColor="#CB30E0" android:strokeWidth="43.008" android:strokeLineCap="round" android:strokeLineJoin="round" android:fillColor="#00000000" android:pathData="M204.8 721.92 L307.2 721.92 L307.2 629.76 L409.6 629.76 L409.6 721.92 L512 721.92 L512 629.76 L614.4 629.76 L614.4 721.92 L716.8 721.92 L716.8 629.76 L819.2 629.76 L819.2 721.92" />
+    </group>
+</vector>

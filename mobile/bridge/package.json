@@ -1,0 +1,13 @@
+{
+  "name": "genlock-phone-bridge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node bridge.mjs",
+    "pair": "node pair.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "qrcode": "1.5.4"
+  }
+}
