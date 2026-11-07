@@ -77,7 +77,16 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, hush: () -> 
     val pairing by link.pairing.collectAsStateWithLifecycle()
     if (pairing == null) { PairScreen(link); return }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    val snackbar = remember { SnackbarHostState() }
+    val flash by link.flash.collectAsStateWithLifecycle()
+    LaunchedEffect(flash) {
+        // Show first, clear after: clearing changes the key, which would cancel a snackbar still showing.
+        val message = flash ?: return@LaunchedEffect
+        snackbar.showSnackbar(message, duration = SnackbarDuration.Short)
+        link.flash.value = null
+    }
     Scaffold(
+        snackbarHost = { SnackbarHost(snackbar) },
         topBar = { TopBar(link, prefs, hush) },
         bottomBar = {
             NavigationBar {

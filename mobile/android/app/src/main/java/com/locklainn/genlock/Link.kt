@@ -75,6 +75,9 @@ class Link(app: Application) : AndroidViewModel(app) {
     val lines = MutableStateFlow<List<Line>>(emptyList())
     val projects = MutableStateFlow<List<Project>?>(null)
     val statusAt = MutableStateFlow(0L)
+    /** A short message to show once, briefly (a snackbar), then forget. */
+    val flash = MutableStateFlow<String?>(null)
+
     /** A message was sent and the Assistant has not answered yet. */
     val waiting = MutableStateFlow(false)
     private val giveUp = Runnable { waiting.value = false }
@@ -94,8 +97,8 @@ class Link(app: Application) : AndroidViewModel(app) {
         _pairing.value = p
         socket?.close(1000, "re-paired")
         socket = null
-        lines.value = listOf(Line(UUID.randomUUID().toString(), Who.INFO, "Paired with your laptop.", System.currentTimeMillis()))
-        android.widget.Toast.makeText(getApplication(), "Paired with your laptop", android.widget.Toast.LENGTH_SHORT).show()
+        lines.value = emptyList()
+        flash.value = "Paired with your laptop"
         if (wantOpen) open()
     }
 
