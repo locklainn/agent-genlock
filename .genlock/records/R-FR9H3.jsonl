@@ -1,1 +1,2 @@
 {"e":"f06a9fd70e07","at":"2026-11-07T22:31:55.955Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"request","path":"mobile/DESIGN.md","why":"Section 3: OK to go with the Cloudflare relay (A), or would you rather Tailscale (B)? Anything in section 1's three screens you want changed?","about":"T-GBCR9"}
+{"e":"95a1649149c2","at":"2026-11-07T23:22:35.892Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"reviewed","note":"TJ chose on-the-road connection; built and accepted"}
