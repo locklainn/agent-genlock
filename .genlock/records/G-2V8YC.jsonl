@@ -1,0 +1,2 @@
+{"e":"b0b6b6db6d8f","at":"2026-11-07T23:24:28.448Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"add","title":"Pair a phone from the Mac app: a Pair phone button shows the QR code and runs the bridge itself, so nobody runs scripts to set up the phone app","why":"","done_when":"","user_said":"just make sure pair phone is filed as a goal. we dont need to do that now","due":null}
+{"e":"d85dced82caa","at":"2026-11-07T23:24:28.478Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"short","short":"pair-phone"}
