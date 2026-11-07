@@ -51,7 +51,7 @@ struct InspectorView: View {
         let reviews = s.openReviews
         let elsewhere = focus.active.filter { !mine.contains($0.id) }
 
-        InspectorCard(title: "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
+        InspectorCard(title: own.working == nil && session != nil ? "Project goal" : "Goal", symbol: "scope", color: Theme.tint(tier)[0]) {
             if let current {
                 RankedRow(id: current.id, title: current.title, rank: current.rank, due: current.due, daysUntil: current.daysUntil, projectID: projectID) {
                     GoalBlock(goal: current, projectID: projectID, changed: changed, tier: tier)
@@ -61,16 +61,12 @@ struct InspectorView: View {
                     .font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
         }
-        if !own.mine.isEmpty {
-            InspectorCard(title: "This session", symbol: "bolt.fill", count: own.mine.count, color: Theme.tint(tier)[0]) {
+        if let session {
+            InspectorCard(title: "This session", symbol: "bolt.fill", count: own.mine.isEmpty ? nil : own.mine.count, color: Theme.tint(tier)[0]) {
+                SessionStatusRow(status: session.status(in: s), tier: tier)
                 ForEach(own.mine) { t in
-                    let row = RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
+                    RankedRow(id: t.id, title: t.title, rank: t.rank, due: t.due, daysUntil: t.daysUntil, projectID: projectID) {
                         TaskRow(ticket: t, changed: changed.contains(t.id))
-                    }
-                    if t.id == own.working?.id {
-                        row.padding(6).modifier(WorkingGlow(active: session?.phase == "working", tier: tier))
-                    } else {
-                        row
                     }
                 }
             }
@@ -81,11 +77,9 @@ struct InspectorView: View {
             }
         }
         if !s.questionsForUser.isEmpty {
-            InspectorCard(title: "Waiting on you", symbol: "person.fill.questionmark", count: s.questionsForUser.count, color: Theme.violet) {
-                WaitingList(questions: s.questionsForUser, changed: changed)
-            }
+            QuestionsCard(groups: s.questionGroups(focus: own), session: session, projectID: projectID, changed: changed)
         }
-        InspectorCard(title: own.mine.isEmpty ? "Now" : "Rest of the project", symbol: own.mine.isEmpty ? "bolt.fill" : "square.stack.3d.up", count: elsewhere.isEmpty ? nil : elsewhere.count, color: Theme.cyan) {
+        InspectorCard(title: session == nil ? "Now" : "Rest of the project", symbol: session == nil ? "bolt.fill" : "square.stack.3d.up", count: elsewhere.isEmpty ? nil : elsewhere.count, color: Theme.cyan) {
             if elsewhere.isEmpty && focus.justFinished.isEmpty {
                 Text(open.isEmpty ? "Nothing going on." : "Nothing going on right now.").font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary)
             }
@@ -266,24 +260,99 @@ struct BacklogCard: View {
     }
 }
 
-/// Questions only you can answer, short until you ask for all of it.
-struct WaitingList: View {
-    let questions: [Snapshot.Question]
+/// Questions only you can answer, by what they are about. What this session is on comes first,
+/// open. Everything else is one row per goal until you want it.
+struct QuestionsCard: View {
+    let groups: [Snapshot.QuestionGroup]
+    let session: TerminalSession?
+    let projectID: String
     let changed: Set<String>
-    @State private var expanded = false
-    private static let shown = 2
 
     var body: some View {
-        let visible = expanded ? questions : Array(questions.prefix(Self.shown))
-        ForEach(visible) { q in
-            Text(q.text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary)
-                .lineLimit(expanded ? nil : 2)
-                .fixedSize(horizontal: false, vertical: true).livePulse(changed.contains(q.id))
+        InspectorCard(title: "Questions for you", symbol: "person.fill.questionmark", count: groups.reduce(0) { $0 + $1.questions.count }, color: Theme.violet) {
+            ForEach(groups) { QuestionGroupRow(group: $0, session: session, projectID: projectID, changed: changed) }
         }
-        if questions.count > Self.shown || expanded {
-            Button(expanded ? "Show less" : "Show all \(questions.count)") { withAnimation(.spring(duration: 0.28)) { expanded.toggle() } }
-                .buttonStyle(LinkButtonStyle())
+    }
+}
+
+struct QuestionGroupRow: View {
+    let group: Snapshot.QuestionGroup
+    let session: TerminalSession?
+    let projectID: String
+    let changed: Set<String>
+    @State private var expanded: Bool?
+
+    private var isOpen: Bool { expanded ?? group.isCurrent }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Button { withAnimation(.spring(duration: 0.28)) { expanded = !isOpen } } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
+                        .rotationEffect(.degrees(isOpen ? 90 : 0))
+                    Text(group.label).font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(group.isCurrent ? Theme.textPrimary : Theme.textSecondary).lineLimit(1)
+                    if group.isCurrent { Text("this goal").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.violet) }
+                    Spacer(minLength: 4)
+                    Text("\(group.questions.count)").font(.system(size: 11, weight: .bold, design: .rounded)).foregroundStyle(Theme.violet)
+                }
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("\(group.label): \(group.questions.count) questions")
+            if isOpen {
+                ForEach(group.questions) { QuestionRow(question: $0, session: session, projectID: projectID, changed: changed.contains($0.id)) }
+            }
         }
+    }
+}
+
+/// One question and what you can do about it: answer it here, or talk it through with the agent.
+struct QuestionRow: View {
+    @Environment(AppModel.self) private var model
+    let question: Snapshot.Question
+    let session: TerminalSession?
+    let projectID: String
+    let changed: Bool
+    @State private var answering = false
+    @State private var answer = ""
+    @FocusState private var typing: Bool
+
+    private func send() {
+        let text = answer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        model.answerQuestion(question, text, in: projectID)
+        answering = false
+        answer = ""
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            Text(question.text).font(.system(size: 12)).foregroundStyle(Theme.textPrimary)
+                .lineLimit(answering ? nil : 3).fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            if answering {
+                TextField("Your answer", text: $answer, axis: .vertical)
+                    .textFieldStyle(.roundedBorder).lineLimit(1...5).focused($typing).onSubmit(send)
+                    .onAppear { typing = true }
+                HStack(spacing: 8) {
+                    Spacer(minLength: 0)
+                    Button("Cancel") { answering = false }.buttonStyle(GlassButtonStyle())
+                    Button("Send answer", action: send).buttonStyle(GlowButtonStyle())
+                        .disabled(answer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    Button("Answer") { answering = true }.buttonStyle(GlassButtonStyle(active: true))
+                    if let session, session.isRunning {
+                        Button("Ask agent") { model.discuss(question, with: session) }.buttonStyle(GlassButtonStyle())
+                            .help("Puts this question to the agent in this session, so you can talk it through.")
+                    }
+                }
+            }
+        }
+        .padding(9)
+        .background(Color.black.opacity(0.22), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .livePulse(changed)
     }
 }
 
@@ -329,7 +398,7 @@ struct GoalBlock: View {
     let tier: Tier
     @State private var expanded = false
 
-    private var heading: String { Snapshot.heading(short: goal.short, title: goal.title) }
+    private var heading: String { goal.heading }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -374,7 +443,9 @@ struct GoalDetail: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text(goal.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            if goal.heading != goal.title {
+                Text(goal.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+            }
             if let waiting = goal.waitingOn, !waiting.isEmpty {
                 Text("Waiting on: \(waiting)").font(.system(size: 11.5)).foregroundStyle(Theme.amber).fixedSize(horizontal: false, vertical: true)
             }
@@ -411,7 +482,7 @@ struct OtherGoal: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                    Text(goal.heading).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                         .multilineTextAlignment(.leading).lineLimit(2)
                     if goal.status == "parked" { Text("parked").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
                 }
@@ -441,7 +512,7 @@ struct TaskRow: View {
                         .shadow(color: ticket.status == "in_progress" ? symbol.color : .clear, radius: 5)
                         .accessibilityLabel(Status.label(ticket.status))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Snapshot.heading(short: ticket.short, title: ticket.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                        Text(ticket.heading).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                             .multilineTextAlignment(.leading).lineLimit(2)
                         if !expanded, let line = ticket.blockedReason ?? ticket.latest?.text {
                             Text(line).font(.system(size: 11)).foregroundStyle(ticket.blockedReason != nil ? Theme.red : Theme.textSecondary).lineLimit(1)
@@ -459,7 +530,9 @@ struct TaskRow: View {
             }
             if expanded {
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(ticket.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    if ticket.heading != ticket.title {
+                        Text(ticket.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     Text(ticket.summary == "none" ? "Requirements not written yet" : ticket.summary)
                         .font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
                     if let blocked = ticket.blockedReason {

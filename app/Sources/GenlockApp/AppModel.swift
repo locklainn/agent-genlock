@@ -722,6 +722,16 @@ final class AppModel {
         }
     }
 
+    /// Your words are the answer, so they are also what is on record as yours.
+    func answerQuestion(_ question: Snapshot.Question, _ text: String, in project: String) {
+        runCLI(["answer", question.id, text, "--user-said", text], in: project, failure: "Could not send that answer")
+    }
+
+    func discuss(_ question: Snapshot.Question, with session: TerminalSession) {
+        session.submit("About this question you have for me (\(question.id)): \(question.text) Help me decide. Once I have, record it with genlock answer.")
+        focus(session.key)
+    }
+
     func completeGoal(_ goal: Snapshot.Goal, evidence: String, in project: String) {
         runCLI(["goal", "done", goal.id, "--evidence", evidence, "--user-said", "Marked complete in the Genlock app"],
                in: project, failure: "Could not complete it")

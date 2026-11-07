@@ -772,6 +772,13 @@ check('a dictated turn with no spoken reply is sent back and not called done', r
 fs.writeFileSync(path.join(VOICE, 'pending'), '');
 r = voiceRun(['session-state'], '{"hook_event_name":"Stop","stop_hook_active":true}');
 check('...only once, then it is done', r.code === 0 && stateOf().state === 'done', r.err);
+voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"Fire calls is in"}');
+voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude is waiting for your input"}');
+check('an idle reminder leaves a finished turn alone', stateOf().state === 'done' && stateOf().message === 'Fire calls is in', JSON.stringify(stateOf()));
+voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
+voiceRun(['session-state'], '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"x"}');
+check('an idle reminder ends a turn that never reported ending', stateOf().state === 'done');
+voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 r = rv('session-state');
 check('with no app listening it does nothing', r.code === 0, r.all);
 
@@ -1163,6 +1170,34 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('reopening an active goal is refused', f('goal', 'reopen', first, '--user-said', 'y').code !== 0);
   r = f('goal', 'done', 'billing page', '--evidence', 'live now', '--user-said', 'done');
   check('reopened goal completes by its name', r.code === 0, r.all);
+}
+
+/* ---- naming what you create ---------------------------------------------------- */
+
+{
+  const repo = path.join(ROOT, 'naming');
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q');
+  const f = (...args) => run(repo, 'parent', args);
+  f('init', '--with-agents-md');
+  const req = ['-r', 'the refund button exists on the page', '-c', 'manual: look at it'];
+  let r = f('new', 'What the refund button actually does today', ...req);
+  check('an unnamed task says to name it', /Give it a real one: genlock short T-/.test(r.out), r.all);
+  r = f('new', 'The invoice export handles every currency we bill', '--short', 'invoice export', ...req);
+  check('a task can be named as it opens', r.code === 0 && /invoice-export/.test(r.out), r.all);
+  check('...with no nudge', !/Give it a real one/.test(r.out), r.all);
+  r = f('new', 'Another export of the invoices for the auditors', '--short', 'invoice export', ...req);
+  check('a taken name refuses before anything is created', r.code !== 0 && /already/.test(r.err), r.all);
+  let snap = JSON.parse(f('snapshot').out);
+  check('the refused task was not created', snap.tickets.length === 2, JSON.stringify(snap.tickets.map((t) => t.title)));
+  check('snapshot says which names were chosen', snap.tickets.find((t) => t.short === 'invoice-export').named === true && snap.tickets.find((t) => t.short !== 'invoice-export').named === false);
+  r = f('goal', 'add', 'Everyone gets paid on time every month', '--user-said', 'yes', '--short', 'payroll');
+  check('a goal can be named as it is set', /goal payroll /.test(r.out) && !/Give it a real one/.test(r.out), r.all);
+  r = f('goal', 'add', 'Refunds settle within two days', '--user-said', 'yes');
+  check('an unnamed goal says to name it', /Give it a real one: genlock short G-/.test(r.out), r.all);
+  r = f('goal', 'propose', 'A public status page for outages', '--why', 'asked twice', '--short', 'status page');
+  check('a proposed goal can be named', /status-page/.test(f('goal', 'list', '--all').out), r.all);
+  check('the agents are told to name things', /--short "NAME"/.test(fs.readFileSync(path.join(path.dirname(CLI), '..', 'agent', 'tickets.md'), 'utf8')));
 }
 
 /* ---- report ------------------------------------------------------------------- */

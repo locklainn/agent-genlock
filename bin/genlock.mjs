@@ -42,7 +42,7 @@ START HERE
   genlock orient                                what is going on here
 
 TICKETS   requirements first; done is proved, not asserted
-  genlock new "TITLE" -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--due YYYY-MM-DD] [--ask ..] [--draft]
+  genlock new "TITLE" [--short "NAME"] -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--due YYYY-MM-DD] [--ask ..] [--draft]
   genlock list [--open] [--status S] [--goal G]  |  genlock show ID [--json]  |  genlock status ID
   genlock start ID  |  genlock req ID -r ".." -c ".."  |  genlock assign ID SESSION  |  genlock link ID GOAL
   genlock update ID "THE LATEST"   (600 characters at most; findings go in files)

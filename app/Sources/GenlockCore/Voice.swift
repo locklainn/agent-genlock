@@ -283,6 +283,8 @@ public enum SessionLaunch {
     """
 
     public static let namesRule = """
+    When you open a task or goal, name it with --short "NAME": two or three words that name the thing on their own, such as "billing page", and never just the first words of the title. If you see one without a real name, fix it with genlock short ID "NAME".
+
     With the user, call Genlock goals and tasks by their short names, shown first wherever they are listed, and never read out ids such as G-K4XB2. When the user says something like "continue billing page" or "the refund one", pass their words to genlock, which accepts a short name or words from a title anywhere an ID goes. If the user calls something by another name, save it with genlock short ID "NAME".
     """
 
@@ -473,7 +475,13 @@ public struct VoiceChannel {
     /// What the session last reported, or nil if it has said nothing yet.
     public func readState() -> SessionReport? {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("state.json")) else { return nil }
-        return try? JSONDecoder().decode(SessionReport.self, from: data)
+        guard var report = try? JSONDecoder().decode(SessionReport.self, from: data) else { return nil }
+        // Written by an older genlock, which took Claude Code's idle reminder for a question.
+        if report.state == "waiting", report.message.localizedCaseInsensitiveContains("waiting for your input") {
+            report.state = "done"
+            report.message = ""
+        }
+        return report
     }
 
     public func remove() { try? FileManager.default.removeItem(at: folder) }

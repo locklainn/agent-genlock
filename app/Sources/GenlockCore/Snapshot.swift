@@ -19,6 +19,9 @@ public struct Snapshot: Decodable, Equatable {
     public var uncommitted: Int?
 
     public struct Goal: Decodable, Equatable, Identifiable {
+        /// Whether someone chose its short name. Otherwise that is just the start of the title.
+        public var named: Bool?
+        public var heading: String { Snapshot.heading(short: named == false ? nil : short, title: title) }
         /// Its place in the strict order, from 1. Nil once closed.
         public var rank: Int?
         public var due: String?
@@ -73,6 +76,9 @@ public struct Snapshot: Decodable, Equatable {
     }
 
     public struct Ticket: Decodable, Equatable, Identifiable {
+        /// Whether someone chose its short name. Otherwise that is just the start of the title.
+        public var named: Bool?
+        public var heading: String { Snapshot.heading(short: named == false ? nil : short, title: title) }
         /// The session working on it.
         public var owner: String?
         /// Its place in the strict order, from 1. Nil once closed.
@@ -202,11 +208,14 @@ public struct Snapshot: Decodable, Equatable {
     public struct SessionFocus: Equatable {
         public var goal: Goal?
         public var mine: [Ticket]
+        /// What it most recently finished, for when it is on nothing now.
+        public var lastFinished: Ticket?
         public var working: Ticket? { mine.first }
 
-        public init(goal: Goal?, mine: [Ticket]) {
+        public init(goal: Goal?, mine: [Ticket], lastFinished: Ticket? = nil) {
             self.goal = goal
             self.mine = mine
+            self.lastFinished = lastFinished
         }
     }
 
@@ -215,7 +224,65 @@ public struct Snapshot: Decodable, Equatable {
         let mine = rankedTasks
             .filter { $0.id == ticket || $0.owner.map(agents.contains) == true }
             .sorted { (($0.id == ticket ? 0 : 1), order[$0.status] ?? 2, $0.rank ?? .max) < (($1.id == ticket ? 0 : 1), order[$1.status] ?? 2, $1.rank ?? .max) }
-        return SessionFocus(goal: goal(mine.first?.goal) ?? goal(currentGoal), mine: mine)
+        let finished = tickets.filter { $0.status == "done" && $0.owner.map(agents.contains) == true }.max { $0.updated < $1.updated }
+        return SessionFocus(goal: goal(mine.first?.goal) ?? goal(currentGoal), mine: mine, lastFinished: finished)
+    }
+
+    /// Questions for you, by the goal or task each is about. `isCurrent` marks what the session is on.
+    public struct QuestionGroup: Equatable, Identifiable {
+        public var about: String?
+        public var label: String
+        public var isCurrent: Bool
+        public var questions: [Question]
+        public var id: String { about ?? "general" }
+    }
+
+    public func questionGroups(focus: SessionFocus) -> [QuestionGroup] {
+        let current = Set([focus.goal?.id].compactMap { $0 } + focus.mine.flatMap { [$0.id, $0.goal].compactMap { $0 } })
+        var order: [String?] = []
+        for q in questionsForUser where !order.contains(q.about) { order.append(q.about) }
+        let groups = order.map { about -> QuestionGroup in
+            let label = about.flatMap { id in goal(id)?.heading ?? tickets.first { $0.id == id }?.heading } ?? "General"
+            return QuestionGroup(about: about, label: label, isCurrent: about.map(current.contains) ?? false,
+                                 questions: questionsForUser.filter { $0.about == about })
+        }
+        func place(_ g: QuestionGroup) -> Int { goal(g.about)?.rank ?? tickets.first { $0.id == g.about }?.rank ?? .max }
+        return groups.sorted { ($0.isCurrent ? 0 : 1, place($0)) < ($1.isCurrent ? 0 : 1, place($1)) }
+    }
+
+    /// What a session is doing, in one answer, from what its agent is doing and what it holds.
+    public struct SessionStatus: Equatable {
+        public enum Kind: Equatable { case working, workingUnrecorded, needsYou, paused, nothing, ended }
+        public var kind: Kind
+        public var headline: String
+        public var task: Ticket?
+        public var detail: String?
+    }
+
+    public static func sessionStatus(phase: String?, isRunning: Bool, message: String?, focus: SessionFocus) -> SessionStatus {
+        let task = focus.working
+        let said = message.map(plainLine).flatMap { $0.isEmpty ? nil : $0 }
+        let progress = task?.blockedReason ?? task?.latest?.text
+        if !isRunning { return SessionStatus(kind: .ended, headline: "Session ended", task: task, detail: nil) }
+        switch phase {
+        case "working":
+            return task == nil
+                ? SessionStatus(kind: .workingUnrecorded, headline: "Working, no task recorded", task: nil, detail: nil)
+                : SessionStatus(kind: .working, headline: "Working on", task: task, detail: progress)
+        case "waiting":
+            return SessionStatus(kind: .needsYou, headline: "Needs you", task: task, detail: said)
+        default:
+            if task != nil { return SessionStatus(kind: .paused, headline: "Paused on", task: task, detail: said ?? progress) }
+            let last = focus.lastFinished.map { "Last finished: \($0.heading)" }
+            return SessionStatus(kind: .nothing, headline: "Nothing going on", task: nil, detail: last)
+        }
+    }
+
+    /// What an agent said, as a line to read: no status label, no markdown.
+    static func plainLine(_ text: String) -> String {
+        var line = text.replacingOccurrences(of: #"\[[A-Z-]+\]\s*"#, with: "", options: .regularExpression)
+        line = line.replacingOccurrences(of: "**", with: "").replacingOccurrences(of: "`", with: "")
+        return line.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Finished goals, newest first.

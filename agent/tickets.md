@@ -4,7 +4,7 @@
 
 **Open a ticket before any work** that spans more than a couple of tool calls, touches several files, changes visible behaviour, or could be half-done. Not for questions, reads, explanations or one-liners.
 
-    genlock new "TITLE" -r "REQUIREMENT" -c "CHECK" [-r .. -c ..] [--goal G]
+    genlock new "TITLE" --short "NAME" -r "REQUIREMENT" -c "CHECK" [-r .. -c ..] [--goal G]
     genlock start ID
     genlock update ID "what just happened, and where it stands"
     genlock met ID N --evidence "WHAT YOU OBSERVED"

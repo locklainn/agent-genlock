@@ -208,14 +208,14 @@ struct PaneView: View {
                 switch phase {
                 case "working": WorkingIndicator()
                 case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
-                default: Pill(text: "Done", symbol: "checkmark", color: Theme.green)
+                default: Pill(text: "Your turn", symbol: "person.fill", color: Theme.green)
                 }
             }
             if let spawn {
                 Pill(text: "spin-off", symbol: "arrow.triangle.branch", color: Theme.cyan)
                 if !isSplit { Text(spawn.title).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1) }
             } else if !isSplit, let goal = snap.flatMap({ s in model.sessions[sessionKey]?.focus(in: s).goal ?? s.goal(s.currentGoal) }) {
-                Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
+                Text(goal.heading).font(.system(size: 12.5)).foregroundStyle(Theme.textSecondary).lineLimit(1)
             }
             Spacer(minLength: 8)
             MicButton(listening: listeningHere) { model.pressVoice(for: sessionKey) }

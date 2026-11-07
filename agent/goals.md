@@ -2,11 +2,13 @@
 
 Goals are the one layer the user sees, because only the user can say what they are.
 
+**Name what you create, with `--short "NAME"`:** two or three words that name the thing on their own, such as "billing page", never just the first words of the title. Without one, the app shows the whole title.
+
 **Say short names, never ids.** Every goal and ticket has a short name, shown first wherever it is listed. Use it with the user, because nobody can say or remember `G-K4XB2`. Say it as plain words, without dashes or code formatting: "do you want me to continue on the billing page goal?" A name has to work out loud, so keep it to the two or three words a person would say. When they say "continue billing page" or "the refund one", pass their words to genlock, which accepts a short name or words from a title anywhere an ID goes. If their words are looser than that and genlock finds nothing, work out which one they mean from the list and use its name. Choose a better name with `genlock short ID "NAME"` when the automatic one reads badly, or when the user calls something by another name.
 
     genlock goal list                       # also what to run when asked "what are the goals?"
-    genlock goal add "TITLE" --user-said ".."
-    genlock goal propose "TITLE" --why ".."
+    genlock goal add "TITLE" --short "NAME" --user-said ".."
+    genlock goal propose "TITLE" --short "NAME" --why ".."
     genlock goal accept G --user-said ".."  |  genlock goal reject G --user-said ".."
     genlock goal next G "NEXT THING"  |  genlock goal next G --done N  |  genlock goal next G --still-right
     genlock goal next G "THING" --due YYYY-MM-DD  |  genlock goal next G --move N --to M

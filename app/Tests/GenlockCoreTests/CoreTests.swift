@@ -1089,6 +1089,58 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(none.goal?.id, "G-OTHER", "with nothing of its own it shows the project's goal")
     }
 
+    func testAHeadingIsARealNameOrTheRealTitle() { // S27
+        var goal = finishedGoal()
+        goal.title = "What the unlanded tables actually are"
+        goal.short = "what-unlanded-tables"
+        goal.named = false
+        XCTAssertEqual(goal.heading, "What the unlanded tables actually are", "the start of a title is not a name")
+        goal.named = true
+        goal.short = "unlanded-tables"
+        XCTAssertEqual(goal.heading, "Unlanded tables")
+        goal.named = nil
+        XCTAssertEqual(goal.heading, "Unlanded tables", "an older genlock does not say, so its name is used")
+        XCTAssertTrue(SessionLaunch.namesRule.contains("--short"), "agents are told to name what they open")
+    }
+
+    func testASessionSaysWhatItIsDoing() throws { // S28
+        let d = JSONDecoder(); d.keyDecodingStrategy = .convertFromSnakeCase
+        let json = #"{"named":true,"short":"report-families","id":"T-A","title":"Report families","status":"in_progress","created":"2026-01-01T00:00:00Z","updated":"2026-01-01T00:00:00Z","summary":"none","requirements":[],"hazards":[],"forbids":[],"decisions":[],"refs":[],"log":[]}"#
+        let task = try d.decode(Snapshot.Ticket.self, from: Data(json.utf8))
+        let busy = Snapshot.SessionFocus(goal: nil, mine: [task])
+        let free = Snapshot.SessionFocus(goal: nil, mine: [], lastFinished: task)
+        func status(_ phase: String?, _ focus: Snapshot.SessionFocus, running: Bool = true, said: String? = nil) -> Snapshot.SessionStatus {
+            Snapshot.sessionStatus(phase: phase, isRunning: running, message: said, focus: focus)
+        }
+        XCTAssertEqual(status("working", busy).kind, .working)
+        XCTAssertEqual(status("working", free).kind, .workingUnrecorded, "busy with nothing recorded is said, not hidden")
+        XCTAssertEqual(status("waiting", busy).kind, .needsYou)
+        XCTAssertEqual(status("waiting", free).kind, .needsYou)
+        XCTAssertEqual(status("done", busy).kind, .paused, "a turn ending does not finish the task")
+        XCTAssertEqual(status(nil, busy).kind, .paused)
+        XCTAssertEqual(status("done", free).kind, .nothing)
+        XCTAssertEqual(status("done", free).headline, "Nothing going on")
+        XCTAssertEqual(status("done", free).detail, "Last finished: Report families")
+        XCTAssertNil(status("done", Snapshot.SessionFocus(goal: nil, mine: [])).detail)
+        XCTAssertEqual(status("working", busy, running: false).kind, .ended)
+        XCTAssertEqual(status("done", busy, said: "[TASK-COMPLETE] **Fire calls** is in `the` database").detail, "Fire calls is in the database", "what it said, as a line to read")
+    }
+
+    func testQuestionsGroupByWhatTheyAreAbout() throws { // S29
+        var s = try XCTUnwrap(GenlockCLI.snapshot(of: repo, tools: tools).get())
+        var first = finishedGoal("G-FIRST", at: nil, status: "active"); first.rank = 1; first.short = "first-goal"; first.named = true
+        var mine = finishedGoal("G-MINE1", at: nil, status: "active"); mine.rank = 2; mine.short = "my-goal"; mine.named = true
+        s.goals = [first, mine]
+        s.tickets = []
+        s.questionsForUser = [.init(id: "Q-1", text: "a", about: "G-FIRST"), .init(id: "Q-2", text: "b", about: "G-MINE1"),
+                              .init(id: "Q-3", text: "c", about: nil), .init(id: "Q-4", text: "d", about: "G-MINE1")]
+        let groups = s.questionGroups(focus: Snapshot.SessionFocus(goal: mine, mine: []))
+        XCTAssertEqual(groups.map(\.label), ["My goal", "First goal", "General"], "this goal first, then by rank")
+        XCTAssertEqual(groups.map(\.isCurrent), [true, false, false])
+        XCTAssertEqual(groups[0].questions.map(\.id), ["Q-2", "Q-4"])
+        XCTAssertEqual(groups.reduce(0) { $0 + $1.questions.count }, 4, "none lost")
+    }
+
     func testOnlyASessionThatEndedCountsAsClosed() { // S25
         XCTAssertTrue(SessionMemory.stillOpen(isRunning: true, exitCode: nil))
         XCTAssertTrue(SessionMemory.stillOpen(isRunning: false, exitCode: nil), "could not start or reach it yet, which does not make it over")

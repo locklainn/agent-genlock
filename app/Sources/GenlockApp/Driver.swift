@@ -121,6 +121,7 @@ enum Driver {
             model.completeGoal(c.goal, evidence: GoalCompletion.defaultEvidence(c.goal), in: c.projectID)
             model.completingGoal = nil
         }
+        if let args = step["answerFirst"] as? [String], let id = projectID(named: args[0]), let q = model.state(for: id).snapshot?.questionsForUser.first { model.answerQuestion(q, args[1], in: id) }
         if let v = step["showCompleted"] as? Bool { model.showingCompleted = v }
         if step["clickCelebration"] != nil { CelebrationPresenter.clickForTest() }
         if let path = step["celebrationCapture"] as? String { CelebrationPresenter.capture(to: path) }

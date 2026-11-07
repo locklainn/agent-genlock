@@ -158,6 +158,9 @@ Each one is either true or false once built, and says how it is checked. Checks 
 | S24 | A goal or task reads at a glance: a short bold name and at most one small line. Its full wording, next things, requirements and history are a click away, and "Add due date" appears only on hover | auto, eye |
 | S25 | Nothing but you ends a session. A launch that cannot find Claude Code still reconnects to what is running and starts the rest when it appears; cleanup never ends anything; a session running with nothing remembering it comes back; and a host that is slow to answer cannot be replaced, because each session has one lock and one host | drive, auto |
 | S26 | Each session shows its own work. A task belongs to the session that owns it, and a spin-off owns its ticket. Side by side, a thin strip above each terminal gives its goal and its task, glowing while it works, and the full panel opens on request. A single pane keeps the panel, with this session's goal and tasks first | auto, drive, eye |
+| S27 | A goal or task reads as its chosen short name, or else its real title, never the first words of a title. Agents are told to name what they open, and creating something unnamed tells them to | auto |
+| S28 | Each session gives one plain answer: working on a task, working with no task recorded, needs you, paused on a task, or nothing going on with what it last finished. Only real work moves. A session with no task shows the goal as the project's. Claude Code's idle reminder is not a question: it changes nothing about a finished turn | auto, eye |
+| S29 | Questions for you are answered where you read them: Answer records your words with `genlock answer`, and Ask agent puts the question to this session's agent. They are labelled by goal or task, this session's goal first and open, each other goal one row with a count | auto, drive, eye |
 | S18 | The pane's status (Working, Needs you, Done) sits beside its name, away from the mic | eye |
 | S19 | A changed source tree rebuilds itself in the background and offers "Restart to update". A failed build says why and retries on the next change | auto, drive |
 | S12 | The conversation is the session's own, by id, so a spin-off or a Terminal session in the same folder cannot take its place, and `/clear` is followed | auto, drive |
@@ -344,11 +347,11 @@ Each is what I chose, and what would change if you disagree.
 
 ## Out of scope for this version
 
-Editing goals or tasks in the app (ask the agent); viewing files inside the app; answering waiting questions from the panel; other agents such as Cursor or Codex; multiple windows; Windows or Linux.
+Editing goals or tasks in the app (ask the agent); viewing files inside the app; other agents such as Cursor or Codex; multiple windows; Windows or Linux.
 
 ## Later
 
-- Answering questions and accepting proposed goals from the inspector.
+- Accepting proposed goals from the inspector.
 - Notifications when a deadline nears or an agent asks for review.
 
 ## Verification

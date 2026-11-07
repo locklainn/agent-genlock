@@ -74,7 +74,7 @@ struct CompleteGoalSheet: View {
                     Text(open.count == 1 ? "1 task has to finish or be dropped first:" : "\(open.count) tasks have to finish or be dropped first:")
                         .font(.system(size: 12.5)).foregroundStyle(Theme.amber)
                     ForEach(open) { t in
-                        Text(Snapshot.heading(short: t.short, title: t.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(2)
+                        Text(t.heading).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(2)
                     }
                 }
                 HStack {
@@ -105,7 +105,7 @@ struct CompletedCard: View {
                 HStack(spacing: 6) {
                     Image(systemName: "chevron.right").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.textTertiary)
                         .rotationEffect(.degrees(expanded ? 90 : 0))
-                    Text(expanded ? "Latest first" : "Latest: \(Snapshot.heading(short: goals[0].short, title: goals[0].title))")
+                    Text(expanded ? "Latest first" : "Latest: \(goals[0].heading)")
                         .font(.system(size: 12.5, weight: .medium)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                     Spacer(minLength: 0)
                 }
@@ -133,7 +133,7 @@ struct CompletedRow: View {
                 HStack(alignment: .top, spacing: 7) {
                     Image(systemName: "checkmark.seal.fill").font(.system(size: 13)).foregroundStyle(Theme.green)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(Snapshot.heading(short: goal.short, title: goal.title)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                        Text(goal.heading).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                             .multilineTextAlignment(.leading).lineLimit(2)
                         Text([projectName, completedDay(goal), GoalCompletion.summary(goal)].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
                             .font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1)
@@ -145,7 +145,9 @@ struct CompletedRow: View {
             .buttonStyle(.plain)
             if expanded {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text(goal.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    if goal.heading != goal.title {
+                        Text(goal.title).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
+                    }
                     if let evidence = goal.evidence, !evidence.isEmpty {
                         Text(evidence).font(.system(size: 11.5)).foregroundStyle(Theme.textSecondary).fixedSize(horizontal: false, vertical: true)
                     }
