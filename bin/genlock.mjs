@@ -21,7 +21,8 @@ import {
 } from '../lib/tickets.mjs';
 import { cmdGoal } from '../lib/goals.mjs';
 import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, liveBase, liveClaims } from '../lib/claims.mjs';
-import { cmdCheckpoint, cmdContinue, cmdOrient } from '../lib/continuity.mjs';
+import { cmdCheckpoint, cmdContinue, cmdOrient, cmdSwap } from '../lib/continuity.mjs';
+import { cmdFollowups } from '../lib/followups.mjs';
 import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
 import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
@@ -79,6 +80,8 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock orient                                  what a session should know as it starts
   genlock checkpoint [--uncommitted ".."]         REFUSES until goals and tickets are current
   genlock continue [GOAL|TICKET]                  everything needed to carry on
+  genlock followups [--json]                      what this session identified and has not finished
+  genlock swap GOAL --user-said ".."              on the user's yes: checkpoint, then a fresh session on GOAL
 
 REVIEWS   files the user should look at, kept findable
   genlock review PATH --why ".." [--about GOAL|TICKET]  |  genlock review list [--all]  |  genlock review done R [--note ..]
@@ -208,6 +211,8 @@ const COMMANDS = {
   orient: cmdOrient,
   checkpoint: cmdCheckpoint,
   continue: cmdContinue,
+  swap: cmdSwap,
+  followups: cmdFollowups,
   ask: cmdAsk,
   answer: cmdAnswer,
   inbox: cmdInbox,

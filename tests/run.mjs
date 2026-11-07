@@ -1200,6 +1200,73 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('the agents are told to name things', /--short "NAME"/.test(fs.readFileSync(path.join(path.dirname(CLI), '..', 'agent', 'tickets.md'), 'utf8')));
 }
 
+/* ---- follow-ups and swapping in a fresh session --------------------------------- */
+
+{
+  const repo = path.join(ROOT, 'swaps');
+  fs.mkdirSync(repo, { recursive: true });
+  git(repo, 'init', '-q');
+  const me = (...args) => run(repo, 'swapper', args);
+  const other = (...args) => run(repo, 'other', args);
+  const req = ['-r', 'the refund button exists on the page', '-c', 'manual: look at it'];
+  me('init', '--private');
+  let r = me('followups');
+  check('a session that started nothing has no follow-ups', r.code === 0 && /Nothing this session identified/.test(r.out), r.all);
+
+  const G = goalOf(me('goal', 'add', 'Refunds settle within two days', '--user-said', 'yes', '--short', 'refunds'));
+  const T = idOf(me('new', 'The refund button refunds the whole order', '--goal', G, ...req));
+  me('start', T);
+  const OT = idOf(other('new', 'The invoice export lists every currency', ...req));
+  const P = goalOf(me('goal', 'propose', 'A public status page for outages', '--why', 'asked twice'));
+  const Q = qOf(me('ask', 'user', 'Should partial refunds be allowed?', '--about', G));
+  me('claim', T, '--path', 'src/refunds');
+  r = me('spinoff', 'propose', 'The refund email names the amount', '--parent', T, '--why', 'separate', '--context', 'x',
+    '--path', 'src/email', '--needs', 'none', '--blocks', 'none');
+  const S = idOf(r);
+
+  let fu = JSON.parse(me('followups', '--json').out);
+  check('follow-ups list the goals it added and proposed', fu.goals.map((x) => x.id).sort().join() === [G, P].sort().join(), JSON.stringify(fu.goals));
+  check('...the tasks it opened', fu.tickets.some((x) => x.id === T), JSON.stringify(fu.tickets));
+  check('...but not another session\'s', !fu.tickets.some((x) => x.id === OT) && !JSON.parse(other('followups', '--json').out).goals.length);
+  check('...the spin-off it proposed, and whether it is safe to launch', fu.spinoffs.some((x) => x.id === S && x.state === 'proposed' && x.safe === true), JSON.stringify(fu.spinoffs));
+  check('...a spin-off is not listed again as a task', !fu.tickets.some((x) => x.id === S));
+  check('...its questions to the user', fu.questions.some((x) => x.id === Q), JSON.stringify(fu.questions));
+  check('...and requirements it has not proved', fu.unproved.some((x) => x.ticket === T && x.n === 1), JSON.stringify(fu.unproved));
+  r = me('followups');
+  check('...readably, with names rather than ids', /refunds: Refunds settle/.test(r.out) && /safe to launch/.test(r.out), r.out);
+  me('answer', Q, 'Yes', '--user-said', 'yes');
+  check('an answered question is no longer a follow-up', !JSON.parse(me('followups', '--json').out).questions.length);
+  const snap = JSON.parse(me('snapshot').out);
+  check('snapshot carries each session\'s follow-ups', snap.followups.swapper?.tickets.some((x) => x.id === T)
+    && snap.followups.other?.tickets.some((x) => x.id === OT), JSON.stringify(Object.keys(snap.followups || {})));
+
+  const CHAN = path.join(ROOT, 'swap-channel');
+  const inApp = (args) => {
+    const x = spawnSync(process.execPath, [CLI, ...args], { cwd: repo, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'swapper', GENLOCK_APP_CHANNEL: CHAN } });
+    return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
+  };
+  const asked = () => fs.existsSync(path.join(CHAN, 'swap.json'));
+  r = inApp(['swap', 'refunds']);
+  check('a swap needs the user\'s yes', r.code !== 0 && /user's yes/.test(r.err) && !asked(), r.all);
+  r = inApp(['swap', 'refunds', '--user-said', 'yes, swap']);
+  check('a swap refuses while a fresh session would be missing something', r.code === 3 && r.err.includes(`${T} has no latest`) && !asked(), r.all);
+  me('update', T, 'Button wired, not yet proved');
+  me('goal', 'next', G, 'Prove the refund button');
+  r = inApp(['swap', 'nothing-like-this', '--user-said', 'yes']);
+  check('a swap refuses a goal that is not there', r.code !== 0 && !asked(), r.all);
+  r = inApp(['swap', 'refunds', '--user-said', 'yes, swap', '--uncommitted', 'none of mine']);
+  check('a swap passes once everything is current', r.code === 0 && /fresh session on refunds/.test(r.out), r.all);
+  const sw = asked() ? JSON.parse(fs.readFileSync(path.join(CHAN, 'swap.json'), 'utf8')) : {};
+  check('...and asks the app for a fresh session that continues the goal', sw.goal === G && sw.prompt?.includes(`genlock continue ${G}`) && sw.user_said === 'yes, swap', JSON.stringify(sw));
+  const projectLog = [path.join(repo, '.genlock', 'records', 'project.jsonl'), path.join(repo, '.git', 'genlock', 'records', 'project.jsonl')].find((x) => fs.existsSync(x));
+  const recorded = fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  check('...with a checkpoint and the user\'s words on record', recorded.some((e) => e.op === 'checkpoint') && recorded.some((e) => e.op === 'swap' && e.user_said === 'yes, swap' && e.goal === G));
+  me('update', T, 'Still the same');
+  me('goal', 'next', G, '--still-right');
+  r = me('swap', 'refunds', '--user-said', 'ok', '--uncommitted', 'none of mine');
+  check('outside the app a swap says what the user runs instead', r.code === 0 && /run \/clear, then say "continue refunds"/.test(r.out), r.all);
+}
+
 /* ---- report ------------------------------------------------------------------- */
 
 fs.rmSync(ROOT, { recursive: true, force: true });

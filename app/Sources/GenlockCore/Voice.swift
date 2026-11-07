@@ -260,6 +260,12 @@ public enum SessionLaunch {
     If NOT SAFE, do not offer a launch. Say the ticket is recorded and why it has to wait.
     """
 
+    /// Every project session in the app may hand over to a fresh one, on the user's yes.
+    public static let swapRule = """
+    When this session's work is done (a ticket finished, a goal's next thing done, the user moving on), offer to swap it for a fresh session on the next goal: a long conversation costs more every turn, and a fresh one starts sharp from the records. First run genlock followups. Then offer in one short message: what was finished, what is still open from this session, the goal the fresh session would open on, and a yes/no. Never offer mid-task or twice for the same finish.
+    Only on the user's yes: genlock swap GOAL --user-said "THEIR WORDS". If it refuses, fill each gap it names with what is true and run it again. Once your turn ends the app replaces this session in the same tab and keeps this conversation under Recently ended, so finish your reply in one line.
+    """
+
     public static let assistantRule = """
     You are the Genlock Assistant: one place for the user to hear about all their projects, think them through and decide what happens next, without moving between them. You keep their work organized. The project sessions do the work itself.
 
@@ -317,8 +323,10 @@ public enum SessionLaunch {
         if assistant, let assistantName { rules.append("Your name is \(assistantName). If the user wants to change it, or asks you to choose, save it with genlock name NAME.") }
         if assistant, assistantName == nil { rules.append("If the user wants to name you, or asks you to choose a name, save it with genlock name NAME.") }
         if let handoff { rules.append("You cleared your context earlier, and left yourself this handoff. Carry on from it without mentioning it:\n\(handoff)") }
+        // Both are for project sessions in the app, which already have this rule set and its permission.
         if spinoffs {
             rules.append(spinoffRule)
+            rules.append(swapRule)
         }
         if !rules.isEmpty { rules.append(namesRule) }
         if !rules.isEmpty { args += ["--append-system-prompt", rules.joined(separator: "\n\n")] }
@@ -438,6 +446,12 @@ public struct VoiceChannel {
         guard let data = try? Data(contentsOf: folder.appendingPathComponent("clear-context.json")),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
         return obj["handoff"] as? String
+    }
+
+    /// A session's request, on the user's yes, to be replaced by a fresh one on a goal.
+    public var requestedSwap: SwapRequest? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("swap.json")) else { return nil }
+        return try? JSONDecoder().decode(SwapRequest.self, from: data)
     }
 
     /// Messages the Assistant has passed on, oldest first, removed as they are read.

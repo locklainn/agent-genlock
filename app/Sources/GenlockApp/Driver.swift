@@ -136,6 +136,19 @@ enum Driver {
         if let v = step["showCompleted"] as? Bool { model.showingCompleted = v }
         if step["clickCelebration"] != nil { CelebrationPresenter.clickForTest() }
         if let path = step["celebrationCapture"] as? String { CelebrationPresenter.capture(to: path) }
+        // The real `genlock swap`, run as the session's agent would: in its folder, through its channel.
+        if let args = step["swap"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id], let cli = model.tools?.genlockArgv {
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: cli[0])
+            p.arguments = Array(cli.dropFirst()) + ["swap", args[1], "--user-said", args[2], "--uncommitted", "driven test"]
+            p.currentDirectoryURL = URL(fileURLWithPath: s.projectID)
+            var env = model.tools?.environment ?? [:]
+            env["GENLOCK_APP_CHANNEL"] = s.channel.folder.path
+            env["GENLOCK_SESSION"] = "driven-agent"
+            p.environment = env
+            try? p.run()
+            p.waitUntilExit()
+        }
         if let cmd = step["shell"] as? String {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: "/bin/sh")

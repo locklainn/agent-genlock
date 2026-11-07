@@ -110,6 +110,7 @@ final class AppModel {
                 model.collectSpawns()
                 model.collectTells()
                 model.clearAssistantIfAsked()
+                model.swapSessionsIfAsked()
                 model.refreshAssistantName()
                 model.voice.expireReply()
                 model.updateAttention()
@@ -802,6 +803,38 @@ final class AppModel {
         sessions[assistantFolder] = fresh
         if let tools { launch(fresh, tools: tools, fresh: true) }
         if wasFocused { focus(assistantFolder) }
+    }
+
+    /// A session asked, on your yes, to give way to a fresh one on a goal. Once its turn ends
+    /// the fresh one takes its place in the tab and the split, and opens on that goal. The old
+    /// conversation goes to Recently ended, so a swap made by mistake is one click from undone.
+    func swapSessionsIfAsked() {
+        guard let tools else { return }
+        for old in Array(sessions.values) where old.projectID != assistantFolder && old.isRunning {
+            guard let swap = old.channel.requestedSwap,
+                  SessionSwap.ready(phase: old.phase, repliesWaiting: old.channel.waitingCount,
+                                    dictating: voice.machine.state != .idle) else { continue }
+            let key = old.key
+            let wasFocused = focusedProject == key
+            let conversation = old.conversation ?? old.channel.readState()?.session ?? memory.conversations[key]
+            let newSlot = { String(UUID().uuidString.prefix(6)).lowercased() }
+            recentlyEnded = SessionMemory.noteEnded(SessionSwap.ended(project: old.projectID, spawn: old.spawn, slot: old.slot,
+                                                                      conversation: conversation, keptSlot: newSlot()), in: recentlyEnded)
+            old.end()
+            old.channel.remove()
+            sessions[key] = nil
+            let fresh = TerminalSession(projectID: old.projectID, slot: SessionSwap.freshSlot(spawn: old.spawn, slot: old.slot, newSlot: newSlot()))
+            fresh.openingMessage = swap.prompt
+            if fresh.key == key { memory.conversations[key] = nil }
+            sessions[fresh.key] = fresh
+            launch(fresh, tools: tools, fresh: true)
+            if let i = visible.firstIndex(of: key) { visible[i] = fresh.key }
+            if tucked.remove(key) != nil { tucked.insert(fresh.key) }
+            if lastShown[fresh.projectID] == key { lastShown[fresh.projectID] = fresh.key }
+            if previousSession == key { previousSession = fresh.key }
+            if wasFocused { focus(fresh.key) }
+            message = "Started a fresh session on \(swap.title). The previous conversation is under Recently ended."
+        }
     }
 
     /// When two or more projects have something to say, the Assistant goes through them with you.

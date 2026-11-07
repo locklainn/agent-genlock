@@ -78,7 +78,7 @@ public struct SessionMemory: Codable, Equatable {
     public func restorable(projectExists: (String) -> Bool) -> (open: [Open], visible: [String]) {
         let open = open.filter { projectExists($0.project) }
         let keys = open.map(\.key)
-        let shown = Array(visible.filter(keys.contains).prefix(DashSelection.maxPanes))
+        let shown = Array(visible.filter(keys.contains).prefix(SplitLayout.maxPanes))
         return (open, shown.isEmpty ? Array(keys.prefix(1)) : shown)
     }
 }
@@ -187,5 +187,42 @@ public struct Transcripts {
         var text = prompt.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         if text.hasPrefix("[voice] ") { text.removeFirst("[voice] ".count) }
         return text
+    }
+}
+
+/// A session asking, on the user's yes, to be replaced by a fresh one on a goal. Written by
+/// `genlock swap` after it has checked that the records hold everything the fresh one needs.
+public struct SwapRequest: Codable, Equatable {
+    public var goal: String
+    public var title: String
+    public var prompt: String
+    public var user_said: String?
+
+    public init(goal: String, title: String, prompt: String, user_said: String? = nil) {
+        self.goal = goal
+        self.title = title
+        self.prompt = prompt
+        self.user_said = user_said
+    }
+}
+
+/// How one session gives way to a fresh one in its place.
+public enum SessionSwap {
+    /// Only once its turn has ended and you have heard what it said, as with the Assistant.
+    public static func ready(phase: String?, repliesWaiting: Int, dictating: Bool) -> Bool {
+        SessionLaunch.assistantMayClear(phase: phase, repliesWaiting: repliesWaiting, dictating: dictating)
+    }
+
+    /// The fresh session's slot. A main session stays the main session; anything else becomes
+    /// another session of its own, because a spin-off's id belongs to its ticket.
+    public static func freshSlot(spawn: SpawnRequest?, slot: String?, newSlot: String) -> String? {
+        spawn == nil && slot == nil ? nil : newSlot
+    }
+
+    /// What Recently ended keeps, so reopening it is the old conversation. A main session's key
+    /// passes to the fresh one, so the old conversation is kept under a slot of its own.
+    public static func ended(project: String, spawn: SpawnRequest?, slot: String?, conversation: String?, keptSlot: String) -> SessionMemory.Open {
+        if spawn != nil || slot != nil { return SessionMemory.Open(project: project, spawn: spawn, slot: slot, conversation: conversation) }
+        return SessionMemory.Open(project: project, slot: keptSlot, conversation: conversation)
     }
 }
