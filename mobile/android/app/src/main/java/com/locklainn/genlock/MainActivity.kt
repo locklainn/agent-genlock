@@ -194,6 +194,12 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
             }
         },
         actions = {
+            // One tap for the question asked most. Up here, not by the text box, where it read as an attachment.
+            val waiting by link.waiting.collectAsStateWithLifecycle()
+            FilledTonalButton(
+                onClick = { link.say(STATUS_REQUEST) }, enabled = conn == Conn.CONNECTED && !waiting,
+                contentPadding = PaddingValues(horizontal = 14.dp), modifier = Modifier.height(36.dp),
+            ) { Text("Status update", style = MaterialTheme.typography.labelLarge) }
             IconButton(onClick = {
                 speak = !speak
                 prefs().edit().putBoolean("speak", speak).apply()
@@ -262,14 +268,6 @@ fun TalkScreen(link: Link) {
             }
         }
         problem?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
-        // One tap for the question asked most, so it never has to be dictated.
-        if (!listening && draft.isBlank()) {
-            AssistChip(
-                onClick = { link.say(STATUS_REQUEST) }, enabled = conn == Conn.CONNECTED && !waiting,
-                label = { Text("Status update") }, leadingIcon = { Icon(Icons.Default.Summarize, null, Modifier.size(18.dp)) },
-                modifier = Modifier.padding(start = 16.dp).heightIn(min = 40.dp),
-            )
-        }
         // Stop and Send do opposite things, so they sit at opposite ends of the row, never side by side.
         // The right-hand button is the one next step: Mic when there is nothing yet, Send once there is.
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
