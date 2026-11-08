@@ -1188,14 +1188,14 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('sweep only works in the Assistant', r.code !== 0 && /Assistant/.test(r.err), r.all);
   const TP = idOf(pa('new', 'Proved but open task', '-r', 'The proved page returns 200', '-c', 'node t.mjs'));
   pa('start', TP); pa('met', TP, '1', '--evidence', 'node t.mjs -> 200');
-  const TS = idOf(run(PA, 'spin', ['new', 'Spin-off page loads', '-r', 'The spin page returns 200', '-c', 'node t.mjs']));
+  const TS = idOf(run(PA, 'spin', ['new', 'Side page loads', '-r', 'The spin page returns 200', '-c', 'node t.mjs']));
   run(PA, 'spin', ['start', TS]); run(PA, 'spin', ['met', TS, '1', '--evidence', 'node t.mjs -> 200']); run(PA, 'spin', ['grill', TS, '--observed', 'node t.mjs -> 200', '--cause', 'measured', '--absence', 'n/a', '--assumption', 'none', '--falsify', 'a non-200']); run(PA, 'spin', ['done', TS]);
   const TO = idOf(run(PA, 'gone-session', ['new', 'Left behind page loads', '-r', 'The left page returns 200', '-c', 'node t.mjs']));
   run(PA, 'gone-session', ['start', TO]);
   fs.writeFileSync(path.join(AS, 'sessions.json'), JSON.stringify({
     open: [
       { project: PA, token: 'tok-a' },
-      { project: PA, token: 'tok-s', spawn: { ticket: TS, session: 'spin', title: 'Spin-off page loads', project: PA, prompt: 'x' } },
+      { project: PA, token: 'tok-s', spawn: { ticket: TS, session: 'spin', title: 'Side page loads', project: PA, prompt: 'x' } },
       { project: PA, token: 'tok-x', slot: 'abc123' },
     ],
     conversations: {},
@@ -1205,8 +1205,8 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   fs.writeFileSync(path.join(CH, 'tok-s', 'state.json'), JSON.stringify({ state: 'done', message: 'Finished.', at: Date.now() - 60000, session: 'spin' }));
   fs.writeFileSync(path.join(CH, 'tok-x', 'state.json'), JSON.stringify({ state: 'done', message: 'ok', at: Date.now() - 20 * 3600000, session: 'idle-one' }));
   r = asEnv(['sweep']);
-  check('sweep lists the main session, a spin-off and an extra session', r.code === 0 && /\[main\] main session/.test(r.out)
-    && new RegExp(`\\[${TS}\\] spin-off`).test(r.out) && /\[\+abc123\] extra session/.test(r.out), r.all);
+  check('sweep lists every session the same way, a spawned one too', r.code === 0 && /\[main\] session:/.test(r.out)
+    && new RegExp(`\\[${TS}\\] session:`).test(r.out) && /\[\+abc123\] session:/.test(r.out) && !/spin-off|extra session/.test(r.out), r.all);
   check('...with state and idle time', /NEEDS THE USER, last active 0m ago/.test(r.out) && /last active 20h ago/.test(r.out), r.out);
   check('...and the task it owns with its proof count', /Proved but open task \(in_progress, 1 of 1 proved\)/.test(r.out), r.out);
   check('...suggests answering a session that waits', /SUGGEST: it is waiting on the user/.test(r.out), r.out);
@@ -1215,6 +1215,31 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...suggests closing a session idle for hours with no task', /SUGGEST: idle 20h with no task: close it/.test(r.out), r.out);
   check('...flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
   check('...counts what it found and changes nothing', /3 sessions open, \d+ suggestions\. Nothing has been changed/.test(r.out), r.out);
+
+  // The overview counts every open session and names each by its task, spawned ones included.
+  fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'working', at: Date.now(), session: 'pa' }));
+  fs.writeFileSync(path.join(CH, 'tok-x', 'state.json'), JSON.stringify({ state: 'working', at: Date.now(), session: 'idle-one' }));
+  r = asEnv(['overview', '--all']);
+  check('overview counts every session by state', /^ {2}3 sessions: 2 working, 1 finished$/m.test(r.out), r.out);
+  check('...lists all three, each by its task', (r.out.match(/^ {2}session on /gm) || []).length === 3
+    && /session on \S+ \(Proved but open task\): working now/.test(r.out) && /session on \S+, finished: finished its last turn/.test(r.out)
+    && /session on no task recorded: working now/.test(r.out), r.out);
+  check('...and none is called a spin-off', !/spin-?off/i.test(r.out), r.out);
+  r = asEnv(['overview', 'alpha']);
+  check('one project shows the same count', /^ {2}3 sessions: 2 working, 1 finished$/m.test(r.out), r.out);
+  const QA = (/\b(Q-[0-9A-Z]{5})\b/.exec(pa('ask', 'user', 'Answered already?').out) || [])[1];
+  for (const f of ['old.md', 'new.md']) fs.writeFileSync(path.join(PA, f), 'x\n');
+  const RV = (/\b(R-[0-9A-Z]{5})\b/.exec(pa('review', 'old.md', '--why', 'Already looked at?').out) || [])[1];
+  pa('review', 'new.md', '--why', 'Is the new page right?');
+  let before = asEnv(['overview', '--all']).out;
+  const waiting = (out) => Number((/WAITING ON THE USER: (\d+)/.exec(out) || [])[1]);
+  check('an open question and review wait on the user', /Answered already/.test(before) && /TO REVIEW: 2/.test(before), before);
+  pa('answer', QA, 'yes', '--user-said', 'yes'); pa('review', 'done', RV);
+  r = asEnv(['overview', '--all']);
+  check('...an answered question no longer does', !!QA && waiting(r.out) === waiting(before) - 1 && !/Answered already/.test(r.out), r.out);
+  check('...nor a review marked done, while the open one stays', !!RV && /TO REVIEW: 1, newest: new\.md/.test(r.out), r.out);
+  before = asEnv(['overview', 'alpha']).out;
+  check('one project lists the same', !/Answered already/.test(before) && /1 to review/.test(before), before);
 
   r = asEnv(['tell', 'alpha', 'run done', '--session', TS]);
   check('tell can reach a spin-off by its task', r.code === 0 && fs.readdirSync(path.join(CH, 'tok-s')).some((f) => f.startsWith('tell-')), r.all);
