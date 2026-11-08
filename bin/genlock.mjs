@@ -82,6 +82,7 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock continue [GOAL|TICKET]                  everything needed to carry on
   genlock followups [--json]                      what this session identified and has not finished
   genlock swap GOAL --user-said ".."              on the user's yes: checkpoint, then a fresh session on GOAL
+  genlock swap GOAL --relayed                     ...on a yes the Assistant relayed to this session
 
 REVIEWS   files the user should look at, kept findable
   genlock review PATH --why ".." [--about GOAL|TICKET]  |  genlock review list [--all]  |  genlock review done R [--note ..]
@@ -99,7 +100,7 @@ CLAIMS    who is working on what, right now
 SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock spinoff propose "TITLE" --parent ID --why ".." --context ".." --path P --needs none --blocks none
   genlock spinoff check ID  |  genlock spinoff amend ID ..  |  genlock spinoff park ID "WHY"
-  genlock spinoff launch ID --user-said ".." [--worktree]
+  genlock spinoff launch ID --user-said ".." [--worktree]   (or --relayed, on a yes the Assistant passed on)
 
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
@@ -251,7 +252,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right']);
+const FLAGS = new Set(['open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };
