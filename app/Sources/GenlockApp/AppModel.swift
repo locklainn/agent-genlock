@@ -33,8 +33,9 @@ final class AppModel {
     @ObservationIgnored private var memoryFile: URL { SessionMemory.file(beside: store.file) }
     var route: Route = .dashboard
     var visible: [String] = []
-    /// The plan's usage bars, from the status line of the app's sessions.
+    /// The plan's usage bars, from the server (UsagePoller), or an older session's status line.
     var usage: UsageReading? = UsageReading.load()
+    @ObservationIgnored let usagePoller = UsagePoller()
     /// The project whose sessions the bar's second row lists.
     var activeProject: String?
     @ObservationIgnored var lastShown: [String: String] = [:]
@@ -100,6 +101,7 @@ final class AppModel {
                 for p in AppModel.shared.store.projects { AppModel.shared.refresh(p.id) }
             }
         }
+        usagePoller.start()
         claudeTicker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             MainActor.assumeIsolated {
                 AppModel.shared.lookForClaude()

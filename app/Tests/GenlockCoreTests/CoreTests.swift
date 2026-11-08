@@ -958,8 +958,24 @@ final class CoreTests: XCTestCase {
         let json = try JSONSerialization.jsonObject(with: Data(settings.utf8)) as! [String: Any]
         XCTAssertNotNil((json["hooks"] as? [String: Any])?["Stop"])
         XCTAssertTrue(settings.contains("genlock session-state"))
-        XCTAssertEqual((json["statusLine"] as? [String: Any])?["command"] as? String, "genlock status-line", "the app shows usage itself, so its terminals print no status line")
+        XCTAssertNil(json["statusLine"], "even an empty status line keeps a blank row; the app reads usage from the server")
         XCTAssertTrue(args.contains("Bash(genlock:*)"), "speaking must not stop for a permission prompt")
+    }
+
+    func testUsageFromServer() throws {
+        let reply = #"{"five_hour":{"utilization":18.0,"resets_at":"2026-11-09T02:20:00.019920+00:00","limit_dollars":null},"seven_day":{"utilization":49,"resets_at":"2026-11-13T03:00:00.019946+00:00"},"extra_usage":null}"#
+        let at = Date(timeIntervalSince1970: 1_794_177_000)
+        let r = try XCTUnwrap(UsageReading.fromServer(Data(reply.utf8), at: at))
+        XCTAssertEqual(r.session?.used, 18)
+        XCTAssertEqual(r.weekly?.used, 49)
+        XCTAssertEqual(r.session?.resetsAt, Date(timeIntervalSince1970: 1_794_190_800), "six fractional digits still parse")
+        // After a reset the server names no new one until the model is called: still a reading.
+        let fresh = try XCTUnwrap(UsageReading.fromServer(Data(#"{"five_hour":{"utilization":0,"resets_at":null},"seven_day":{"utilization":49}}"#.utf8)))
+        XCTAssertNil(fresh.session?.resetsAt)
+        XCTAssertNil(UsageReading.fromServer(Data(#"{"error":{"type":"rate_limit_error"}}"#.utf8)), "an error reply is no reading")
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("usage-\(UUID()).json")
+        try r.save(to: url)
+        XCTAssertEqual(UsageReading.load(from: url), r, "the app's file round-trips")
     }
 
     func testUsageReadingAndPace() throws {
