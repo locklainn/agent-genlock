@@ -3,6 +3,9 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_REMOTE_MESSAGING" />
 
     <queries>
         <intent>
@@ -35,5 +38,10 @@
                 <data android:scheme="genlock" android:host="pair" />
             </intent-filter>
         </activity>
+        <!-- Listens to the relay in the background and posts a notification per Assistant reply. -->
+        <service
+            android:name=".Watch"
+            android:exported="false"
+            android:foregroundServiceType="remoteMessaging" />
     </application>
 </manifest>

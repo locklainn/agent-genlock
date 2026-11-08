@@ -98,12 +98,14 @@ class Link(app: Application) : AndroidViewModel(app) {
         socket?.close(1000, "re-paired")
         socket = null
         lines.value = emptyList()
+        Watch.stop(getApplication())   // it holds the old room; MainActivity's App restarts it on the new one
         flash.value = "Paired with your laptop"
         if (wantOpen) open()
     }
 
     fun unpair() {
         prefs.edit().clear().apply()
+        Watch.stop(getApplication())
         socket?.close(1000, "unpaired")
         socket = null
         _pairing.value = null

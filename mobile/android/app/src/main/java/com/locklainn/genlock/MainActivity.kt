@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Bundle
 import android.speech.RecognizerIntent
 import android.speech.tts.TextToSpeech
+import android.speech.tts.UtteranceProgressListener
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -35,23 +36,45 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.codescanner.GmsBarcodeScannerOptions
 import com.google.mlkit.vision.codescanner.GmsBarcodeScanning
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import java.util.Locale
 
 class MainActivity : ComponentActivity() {
     private val link: Link by viewModels()
     private var tts: TextToSpeech? = null
+    // Utterances queued or playing. The Stop button shows while this is non-empty.
+    private val queued = java.util.Collections.synchronizedSet(mutableSetOf<String>())
+    private val speaking = MutableStateFlow(false)
+    private var nextId = 0
+
+    private fun finished(id: String?) { queued.remove(id); speaking.value = queued.isNotEmpty() }
+
+    /** Silence the readout now and drop anything still queued. Read-aloud stays on for the next reply. */
+    private fun hush() { queued.clear(); speaking.value = false; tts?.stop() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
+        tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
+            override fun onStart(id: String?) {}
+            override fun onDone(id: String?) = finished(id)
+            @Deprecated("Deprecated in Java") override fun onError(id: String?) = finished(id)
+            override fun onError(id: String?, code: Int) = finished(id)
+            override fun onStop(id: String?, interrupted: Boolean) = finished(id)
+        })
         link.onReply = { text ->
-            if (prefs().getBoolean("speak", true)) tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, null)
+            if (prefs().getBoolean("speak", true)) {
+                val id = "reply-${nextId++}"
+                queued.add(id); speaking.value = true
+                if (tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
+            }
         }
         handleLink(intent)
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                Surface(Modifier.fillMaxSize()) { App(link, ::prefs) { tts?.stop() } }
+                Surface(Modifier.fillMaxSize()) { App(link, ::prefs, speaking, ::hush) }
             }
         }
     }
@@ -67,18 +90,41 @@ class MainActivity : ComponentActivity() {
         intent?.dataString?.let { Pairing.parse(it) }?.let { link.pair(it) }
     }
 
-    override fun onStart() { super.onStart(); link.open() }
-    override fun onStop() { super.onStop(); link.close() }
+    override fun onStart() {
+        super.onStart()
+        Watch.shown()
+        link.open()
+        Watch.start(this)
+        getSystemService(android.app.NotificationManager::class.java).cancelAll()
+    }
+    override fun onStop() { super.onStop(); Watch.hidden(); link.close() }
     override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
 }
 
+/** Ask once for permission to post notifications (Android 13+), then start listening in the background. */
 @Composable
-fun App(link: Link, prefs: () -> android.content.SharedPreferences, hush: () -> Unit) {
+fun AskForNotifications() {
+    if (android.os.Build.VERSION.SDK_INT < 33) return
+    val ctx = LocalContext.current
+    val ask = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { }
+    LaunchedEffect(Unit) {
+        val granted = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.POST_NOTIFICATIONS) ==
+            android.content.pm.PackageManager.PERMISSION_GRANTED
+        if (!granted) ask.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
+}
+
+@Composable
+fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: StateFlow<Boolean>, hush: () -> Unit) {
+    val ctx = LocalContext.current
     val pairing by link.pairing.collectAsStateWithLifecycle()
     if (pairing == null) { PairScreen(link); return }
+    AskForNotifications()
+    LaunchedEffect(pairing) { Watch.start(ctx) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     val snackbar = remember { SnackbarHostState() }
     val flash by link.flash.collectAsStateWithLifecycle()
+    val reading by speaking.collectAsStateWithLifecycle()
     LaunchedEffect(flash) {
         // Show first, clear after: clearing changes the key, which would cancel a snackbar still showing.
         val message = flash ?: return@LaunchedEffect
@@ -89,14 +135,32 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, hush: () -> 
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = { TopBar(link, prefs, hush) },
         bottomBar = {
-            NavigationBar {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Default.Mic, null) }, label = { Text("Talk") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1; link.askStatus() }, icon = { Icon(Icons.Default.Dashboard, null) }, label = { Text("Status") })
+            // Above the tabs, so it can be reached from either screen while a reply is being read out.
+            Column {
+                if (reading) ReadingBar(hush)
+                NavigationBar {
+                    NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Default.Mic, null) }, label = { Text("Talk") })
+                    NavigationBarItem(selected = tab == 1, onClick = { tab = 1; link.askStatus() }, icon = { Icon(Icons.Default.Dashboard, null) }, label = { Text("Status") })
+                }
             }
         },
     ) { pad ->
         Box(Modifier.padding(pad).consumeWindowInsets(pad).imePadding()) {
             if (tab == 0) TalkScreen(link) else StatusScreen(link) { tab = 0; link.say(it) }
+        }
+    }
+}
+
+@Composable
+fun ReadingBar(hush: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.VolumeUp, null)
+            Spacer(Modifier.width(10.dp))
+            Text("Reading the reply aloud", Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+            Button(onClick = hush, modifier = Modifier.heightIn(min = 48.dp)) {
+                Icon(Icons.Default.Stop, null); Spacer(Modifier.width(6.dp)); Text("Stop")
+            }
         }
     }
 }
@@ -142,6 +206,8 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
         },
     )
 }
+
+const val STATUS_REQUEST = "Status update: what changed since you last told me, what finished, and what is waiting on me."
 
 @Composable
 fun TalkScreen(link: Link) {
@@ -196,6 +262,14 @@ fun TalkScreen(link: Link) {
             }
         }
         problem?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
+        // One tap for the question asked most, so it never has to be dictated.
+        if (!listening && draft.isBlank()) {
+            AssistChip(
+                onClick = { link.say(STATUS_REQUEST) }, enabled = conn == Conn.CONNECTED && !waiting,
+                label = { Text("Status update") }, leadingIcon = { Icon(Icons.Default.Summarize, null, Modifier.size(18.dp)) },
+                modifier = Modifier.padding(start = 16.dp).heightIn(min = 40.dp),
+            )
+        }
         // Stop and Send do opposite things, so they sit at opposite ends of the row, never side by side.
         // The right-hand button is the one next step: Mic when there is nothing yet, Send once there is.
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {

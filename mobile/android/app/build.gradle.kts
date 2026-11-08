@@ -12,8 +12,10 @@ android {
         applicationId = "com.locklainn.genlock"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1"
+        // Minutes since 2026-01-01: every build is newer than the last, so a shipped APK
+        // (mobile/ship_android.sh) installs over the one already on the phone.
+        versionCode = ((System.currentTimeMillis() / 1000 - 1767225600) / 60).toInt()
+        versionName = "0.1." + versionCode
     }
 
     buildTypes {
