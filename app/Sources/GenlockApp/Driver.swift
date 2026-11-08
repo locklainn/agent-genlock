@@ -191,6 +191,7 @@ enum Driver {
                 }
             }
         }
+        if let size = step["windowSize"] as? [Double], size.count == 2 { window?.setContentSize(NSSize(width: size[0], height: size[1])) }
         if let path = step["snapshot"] as? String { snapshot(to: path) }
         if let path = step["report"] as? String { report(to: path) }
         if step["quit"] != nil {

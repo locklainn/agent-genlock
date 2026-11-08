@@ -111,7 +111,7 @@ struct UpdatePill: View {
         case .idle:
             EmptyView()
         case .building:
-            WorkingIndicator(label: "Building update").help("Your sessions are not affected.")
+            EmptyView() // Building is quiet; only a finished update asks for anything.
         case .ready:
             Button("Restart to update") { model.updater.restart() }
                 .buttonStyle(GlowButtonStyle())
@@ -139,25 +139,20 @@ struct UsageMeter: View {
         }
     }
 
+    /// Two short rows in one capsule: the five-hour bar, then the week with a tick at even pace.
     @ViewBuilder
     private func content(_ usage: UsageReading, now: Date) -> some View {
         let session = usage.isCurrent(usage.session, now: now) ? usage.session : nil
         let weekly = usage.isCurrent(usage.weekly, now: now) ? usage.weekly : nil
         let pace = usage.pace(now: now)
-        HStack(spacing: 12) {
-            if let session {
-                meter(label: "Session", used: session.used, mark: nil, color: sessionColor(session.used),
-                      reset: session.resetsAt.map { UsageReading.resetLabel($0, now: now) })
-            }
-            if let weekly {
-                meter(label: "Week", used: weekly.used, mark: pace, color: weeklyColor(usage.overPace(now: now) ?? 0),
-                      reset: pace.map { "pace \($0)%" })
-            }
+        Grid(alignment: .leading, horizontalSpacing: 5, verticalSpacing: 2) {
+            if let session { line("5h", session.used, mark: nil, color: sessionColor(session.used)) }
+            if let weekly { line("wk", weekly.used, mark: pace, color: weeklyColor(usage.overPace(now: now) ?? 0)) }
             if session == nil && weekly == nil {
-                Text("Usage: waiting for a reading").font(.system(size: 11.5)).foregroundStyle(Theme.textTertiary)
+                GridRow { Text("usage –").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
             }
         }
-        .padding(.horizontal, 10).padding(.vertical, 5)
+        .padding(.horizontal, 9).padding(.vertical, 3)
         .background(Color.white.opacity(0.05), in: Capsule())
         .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
         .fixedSize()
@@ -165,19 +160,17 @@ struct UsageMeter: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func meter(label: String, used: Double, mark: Int?, color: Color, reset: String?) -> some View {
-        HStack(spacing: 6) {
-            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+    private func line(_ label: String, _ used: Double, mark: Int?, color: Color) -> some View {
+        GridRow {
+            Text(label).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Theme.textTertiary)
             ZStack(alignment: .leading) {
                 Capsule().fill(Color.white.opacity(0.12))
-                Capsule().fill(color).frame(width: 44 * min(1, max(0, used / 100)))
-                if let mark {
-                    Rectangle().fill(Theme.textPrimary).frame(width: 2, height: 10).offset(x: 44 * Double(mark) / 100 - 1)
-                }
+                Capsule().fill(color).frame(width: 40 * min(1, max(0, used / 100)))
+                if let mark { Rectangle().fill(Theme.textPrimary).frame(width: 1.5, height: 7).offset(x: 40 * Double(mark) / 100 - 0.75) }
             }
-            .frame(width: 44, height: 6)
-            Text("\(Int(used.rounded()))%").font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(color)
-            if let reset { Text(reset).font(.system(size: 11)).foregroundStyle(Theme.textTertiary) }
+            .frame(width: 40, height: 4)
+            Text("\(Int(used.rounded()))%").font(.system(size: 10.5, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(color)
+                .gridColumnAlignment(.trailing)
         }
     }
 

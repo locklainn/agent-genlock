@@ -79,6 +79,7 @@ struct SessionBar: View {
                 .accessibilityLabel("Spoken replies")
             }
             .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
+            .frame(minWidth: 0, maxWidth: .infinity)
         }
         .background(Color.black.opacity(0.25))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
@@ -156,7 +157,10 @@ extension SessionBar {
             moreProjects(layout.hidden)
             openProjectMenu
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+        // minWidth 0: the tabs take the room that is left and fit themselves to it. Without it their
+        // own width set the room they measured, and a crowded bar pushed the window's content off screen.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .background(measured($projectsWidth))
     }
 
