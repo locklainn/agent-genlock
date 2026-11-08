@@ -37,28 +37,30 @@ struct SessionStrip: View {
             let found = session.focus(in: snap)
             // Only the goal its own task serves: with no task, nothing project-wide stands in.
             let own = Snapshot.SessionFocus(goal: snap.goal(found.working?.goal), mine: found.mine, lastFinished: found.lastFinished)
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 6) {
-                    if let goal = own.goal {
-                        Image(systemName: "scope").font(.system(size: 10, weight: .bold)).foregroundStyle(Theme.tint(tier)[0])
-                        Text(goal.heading).font(.system(size: 12.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textPrimary).lineLimit(1)
+            // One line: what it is doing first, the goal it serves after. The detail is in the tooltip.
+            HStack(spacing: 8) {
+                SessionStatusRow(status: session.status(in: snap), more: max(0, own.mine.count - 1), tier: tier, compact: true)
+                    .layoutPriority(1)
+                if let goal = own.goal {
+                    HStack(spacing: 4) {
+                        Image(systemName: "scope").font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.tint(tier)[0])
+                        Text(goal.heading).font(.system(size: 11.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textSecondary).lineLimit(1)
                         if goal.progress.total > 0 {
-                            Text("\(goal.progress.done)/\(goal.progress.total)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textTertiary)
+                            Text("\(goal.progress.done)/\(goal.progress.total)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textTertiary).fixedSize()
                         }
                     }
-                    Spacer(minLength: 6)
-                    if questionCount(snap, own) > 0 {
-                        Button(action: openPanel) {
-                            Label(questionLabel(snap, own), systemImage: "person.fill.questionmark")
-                                .font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.violet)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Questions agents have for you. Opens the panel, where you can answer them.")
-                    }
+                    .help("Goal: \(goal.heading)")
                 }
-                SessionStatusRow(status: session.status(in: snap), more: max(0, own.mine.count - 1), tier: tier)
+                if questionCount(snap, own) > 0 {
+                    Button(action: openPanel) {
+                        Label(questionLabel(snap, own), systemImage: "person.fill.questionmark")
+                            .font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.violet).lineLimit(1).fixedSize()
+                    }
+                    .buttonStyle(.plain)
+                    .help("Questions agents have for you. Opens the panel, where you can answer them.")
+                }
             }
-            .padding(.horizontal, 12).padding(.vertical, 6)
+            .padding(.horizontal, 10).padding(.vertical, 4)
             .background(Color.white.opacity(0.02))
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
         }
@@ -70,6 +72,8 @@ struct SessionStatusRow: View {
     let status: Snapshot.SessionStatus
     var more = 0
     let tier: Tier
+    /// One line, the detail only in the tooltip: for a pane in a grid.
+    var compact = false
 
     private var symbol: (name: String, color: Color) {
         switch status.kind {
@@ -92,15 +96,16 @@ struct SessionStatusRow: View {
                 if let task = status.task {
                     Text(task.heading).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
-                Spacer(minLength: 4)
+                if !compact { Spacer(minLength: 4) }
                 if more > 0 { Text("+\(more)").font(.system(size: 10.5, weight: .bold, design: .rounded)).foregroundStyle(Theme.textSecondary) }
             }
-            if let detail = status.detail {
+            if !compact, let detail = status.detail {
                 Text(detail).font(.system(size: 11)).foregroundStyle(Theme.textSecondary).lineLimit(1).help(detail)
             }
         }
-        .padding(.horizontal, 8).padding(.vertical, 4)
-        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 8).padding(.vertical, compact ? 2 : 4)
+        .frame(maxWidth: compact ? nil : .infinity, alignment: .leading)
+        .help(compact ? (status.detail ?? "") : "")
         .modifier(StatusSurface(kind: status.kind, tier: tier))
         .accessibilityElement(children: .combine)
     }

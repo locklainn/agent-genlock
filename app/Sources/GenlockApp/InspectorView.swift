@@ -95,6 +95,11 @@ struct InspectorView: View {
                 }
             }
         }
+        let left = s.leftOpen(agents: session.agents, shown: scope.ids,
+                              shownQuestions: Set(questions.flatMap { $0.questions.map(\.id) }))
+        if !left.isEmpty {
+            LeftOpenCard(left: left, changed: changed)
+        }
         if !questions.isEmpty {
             QuestionsCard(groups: questions, session: session, projectID: projectID, changed: changed)
         }
@@ -459,6 +464,44 @@ struct BacklogCard: View {
                 }
             }
         }
+    }
+}
+
+/// What this session started and has not finished, beyond what the cards above already show:
+/// what it would read out before offering to swap itself for a fresh one.
+struct LeftOpenCard: View {
+    let left: Snapshot.Followups
+    let changed: Set<String>
+
+    var body: some View {
+        InspectorCard(title: "Left open", symbol: "tray.and.arrow.up.fill", count: left.count, color: Theme.amber) {
+            ForEach(left.goals) { row($0, symbol: "scope", note: $0.status == "active" ? nil : $0.status) }
+            ForEach(left.tickets) { row($0, symbol: "checklist", note: $0.status?.replacingOccurrences(of: "_", with: " ")) }
+            ForEach(left.spinoffs) { row($0, symbol: "arrow.triangle.branch", note: spinoffNote($0)) }
+            ForEach(left.questions) { q in
+                Label { Text(q.text).font(.system(size: 12.5)).foregroundStyle(Theme.textPrimary).fixedSize(horizontal: false, vertical: true) }
+                    icon: { Image(systemName: "person.fill.questionmark").font(.system(size: 10.5)).foregroundStyle(Theme.violet) }
+            }
+        }
+    }
+
+    private func spinoffNote(_ s: Snapshot.Followups.Item) -> String? {
+        guard s.state == "proposed" || s.state == nil else { return s.state }
+        return s.safe == true ? "proposed, safe to launch" : "proposed, not safe yet"
+    }
+
+    private func row(_ item: Snapshot.Followups.Item, symbol: String, note: String?) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: symbol).font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary).frame(width: 14)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.heading).font(.system(size: 12.5, weight: .medium))
+                    .foregroundStyle(changed.contains(item.id) ? Theme.amber : Theme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let note { Text(note).font(.system(size: 11)).foregroundStyle(Theme.textSecondary) }
+            }
+            Spacer(minLength: 0)
+        }
+        .help(item.title)
     }
 }
 

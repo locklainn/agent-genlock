@@ -77,6 +77,28 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: repo + "/.genlock"))
     }
 
+    /// Each session's follow-ups, keyed by its id exactly as written, even one with an underscore
+    /// that snake-case decoding would otherwise rewrite.
+    func testEachSessionsFollowupsReachThePanel() throws {
+        func as_(_ who: String, _ args: String...) throws -> String {
+            String(decoding: try GenlockCLI.run(args, in: repo, tools: tools, extraEnv: ["GENLOCK_SESSION": who]).stdout, as: UTF8.self)
+        }
+        let goal = id("G", try as_("left_opener", "goal", "add", "Refunds settle in two days", "--user-said", "yes"))!
+        let mine = id("T", try as_("left_opener", "new", "The refund button posts a refund", "-r", "clicking it posts one refund", "-c", "node refund.mjs", "--goal", goal, "--quiet"))!
+        let shown = id("T", try as_("left_opener", "new", "Every refund writes one log line", "-r", "the log has one line per refund", "-c", "node log.mjs", "--quiet"))!
+        _ = try as_("left_opener", "ask", "user", "Partial refunds too?", "--about", goal)
+        _ = try as_("someone-else", "new", "The export page lists every invoice", "-r", "the page lists all 12 invoices", "-c", "node export.mjs", "--quiet")
+
+        let s = try snap()
+        let left = s.leftOpen(agents: ["left_opener"], shown: [shown])
+        XCTAssertEqual(left.goals.map(\.id), [goal])
+        XCTAssertEqual(left.tickets.map(\.id), [mine], "a task the panel already lists is not repeated")
+        XCTAssertEqual(left.questions.map(\.text), ["Partial refunds too?"])
+        XCTAssertFalse(left.unproved.isEmpty)
+        XCTAssertTrue(s.leftOpen(agents: ["nobody"]).isEmpty)
+        XCTAssertFalse(s.leftOpen(agents: ["someone-else"]).tickets.contains { $0.id == mine })
+    }
+
     func testAFullSnapshotDecodesIntoACard() throws { // D2, D7, R2
         let goal = id("G", try g("goal", "add", "Ship the report", "--user-said", "ship it"))!
         let ticket = id("T", try g("new", "The report renders every table", "-r", "the build exits zero on 12 tables", "-c", "node build.mjs", "--goal", goal, "--quiet"))!
@@ -559,6 +581,19 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("Your name is Juno"))
     }
 
+    func testRemoteControlIsForTheAssistantOnly() {
+        let named = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", resumeID: "abc",
+                                            assistant: true, assistantName: "Tally", remote: true)
+        XCTAssertEqual(named[named.firstIndex(of: "--remote-control")! + 1], "Tally")
+        XCTAssertTrue(named.contains("--resume"), "turning it on keeps the same conversation")
+        let unnamed = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, remote: true)
+        XCTAssertEqual(unnamed[unnamed.firstIndex(of: "--remote-control")! + 1], AssistantName.fallback)
+        let off = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, assistantName: "Tally")
+        XCTAssertFalse(off.contains("--remote-control"))
+        let project = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock", spinoffs: true, remote: true)
+        XCTAssertFalse(project.contains("--remote-control"), "project sessions are reached through the Assistant")
+    }
+
     func testAppSessionsAreToldToUseShortNames() { // S22
         let args = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock")
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("short names"))
@@ -851,7 +886,30 @@ final class CoreTests: XCTestCase {
         let json = try JSONSerialization.jsonObject(with: Data(settings.utf8)) as! [String: Any]
         XCTAssertNotNil((json["hooks"] as? [String: Any])?["Stop"])
         XCTAssertTrue(settings.contains("genlock session-state"))
+        XCTAssertEqual((json["statusLine"] as? [String: Any])?["command"] as? String, "genlock status-line", "the app shows usage itself, so its terminals print no status line")
         XCTAssertTrue(args.contains("Bash(genlock:*)"), "speaking must not stop for a permission prompt")
+    }
+
+    func testUsageReadingAndPace() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let now = Date(timeIntervalSince1970: 1_800_000_000)
+        let weeklyReset = now.addingTimeInterval(3.5 * 24 * 3600) // half the week gone
+        let json = #"{"at":1800000000000,"session":{"used":19.6,"resetsAt":\#(now.timeIntervalSince1970 + 3600)},"weekly":{"used":62,"resetsAt":\#(weeklyReset.timeIntervalSince1970)}}"#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("usage.json"))
+        let usage = try XCTUnwrap(UsageReading.load(from: UsageReading.file(base: dir)))
+        XCTAssertEqual(usage.session?.used, 19.6)
+        XCTAssertEqual(usage.pace(now: now), 50)
+        XCTAssertEqual(usage.overPace(now: now), 12)
+        XCTAssertTrue(usage.isCurrent(usage.session, now: now))
+        XCTAssertFalse(usage.isCurrent(usage.session, now: now.addingTimeInterval(7200)), "a passed reset is not shown as current")
+        XCTAssertNil(UsageReading.load(from: dir.appendingPathComponent("missing.json")))
+    }
+
+    func testTerminalTextShrinksWithMorePanes() {
+        XCTAssertEqual(SplitLayout.fontSize(panes: 1), 13)
+        XCTAssertGreaterThan(SplitLayout.fontSize(panes: 2), SplitLayout.fontSize(panes: 4))
+        XCTAssertGreaterThan(SplitLayout.fontSize(panes: 4), SplitLayout.fontSize(panes: 9))
     }
 
     func testSessionsReportTheirStateWithSpeechOff() { // N1

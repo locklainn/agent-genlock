@@ -125,3 +125,80 @@ struct UpdatePill: View {
         }
     }
 }
+
+/// The plan's usage, always in sight: the five-hour session bar and the weekly bar with a tick
+/// where even pace would put it. Sessions in the app print no status line, so this replaces it.
+struct UsageMeter: View {
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 60)) { context in
+            if let usage = model.usage {
+                content(usage, now: context.date)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func content(_ usage: UsageReading, now: Date) -> some View {
+        let session = usage.isCurrent(usage.session, now: now) ? usage.session : nil
+        let weekly = usage.isCurrent(usage.weekly, now: now) ? usage.weekly : nil
+        let pace = usage.pace(now: now)
+        HStack(spacing: 12) {
+            if let session {
+                meter(label: "Session", used: session.used, mark: nil, color: sessionColor(session.used),
+                      reset: session.resetsAt.map { UsageReading.resetLabel($0, now: now) })
+            }
+            if let weekly {
+                meter(label: "Week", used: weekly.used, mark: pace, color: weeklyColor(usage.overPace(now: now) ?? 0),
+                      reset: pace.map { "pace \($0)%" })
+            }
+            if session == nil && weekly == nil {
+                Text("Usage: waiting for a reading").font(.system(size: 11.5)).foregroundStyle(Theme.textTertiary)
+            }
+        }
+        .padding(.horizontal, 10).padding(.vertical, 5)
+        .background(Color.white.opacity(0.05), in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+        .fixedSize()
+        .help(detail(usage, session: session, weekly: weekly, pace: pace, now: now))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func meter(label: String, used: Double, mark: Int?, color: Color, reset: String?) -> some View {
+        HStack(spacing: 6) {
+            Text(label).font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.white.opacity(0.12))
+                Capsule().fill(color).frame(width: 44 * min(1, max(0, used / 100)))
+                if let mark {
+                    Rectangle().fill(Theme.textPrimary).frame(width: 2, height: 10).offset(x: 44 * Double(mark) / 100 - 1)
+                }
+            }
+            .frame(width: 44, height: 6)
+            Text("\(Int(used.rounded()))%").font(.system(size: 12, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(color)
+            if let reset { Text(reset).font(.system(size: 11)).foregroundStyle(Theme.textTertiary) }
+        }
+    }
+
+    private func sessionColor(_ used: Double) -> Color { used >= 85 ? Theme.red : used >= 60 ? Theme.amber : Theme.green }
+    private func weeklyColor(_ over: Int) -> Color { over > 15 ? Theme.red : over > 5 ? Theme.amber : Theme.green }
+
+    private func detail(_ usage: UsageReading, session: UsageReading.Bar?, weekly: UsageReading.Bar?, pace: Int?, now: Date) -> String {
+        let f = DateFormatter()
+        f.dateFormat = "EEE MMM d, h:mma"
+        var lines: [String] = []
+        if let session {
+            lines.append("Session (5-hour window): \(Int(session.used.rounded()))% used" + (session.resetsAt.map { ", resets \(f.string(from: $0))" } ?? ""))
+        }
+        if let weekly {
+            lines.append("Weekly: \(Int(weekly.used.rounded()))% used" + (weekly.resetsAt.map { ", resets \(f.string(from: $0))" } ?? ""))
+        }
+        if let pace, let over = usage.overPace(now: now) {
+            lines.append("Even pace would be \(pace)% by now: \(over > 0 ? "\(over) points ahead of it" : over < 0 ? "\(-over) points under it" : "right on it"). The white tick marks it.")
+        }
+        let age = Int(now.timeIntervalSince(usage.at) / 60)
+        lines.append(age < 1 ? "Read just now." : "Read \(age) min ago.")
+        return lines.joined(separator: "\n")
+    }
+}

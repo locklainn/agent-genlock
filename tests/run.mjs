@@ -778,6 +778,25 @@ check('an idle reminder leaves a finished turn alone', stateOf().state === 'done
 voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 voiceRun(['session-state'], '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"x"}');
 check('an idle reminder ends a turn that never reported ending', stateOf().state === 'done');
+
+/* ---- the status line in app sessions -------------------------------------------- */
+
+{
+  const cfg = fs.mkdtempSync(path.join(os.tmpdir(), 'genlock-cfg-'));
+  const ran = path.join(cfg, 'ran.json');
+  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ statusLine: { type: 'command', command: `cat > "${ran}"; echo own line` } }));
+  const usage = path.join(path.dirname(VOICE), 'usage.json');
+  fs.rmSync(usage, { force: true });
+  const input = '{"session_id":"s","rate_limits":{"five_hour":{"used_percentage":19,"resets_at":1762600800},"seven_day":{"used_percentage":38,"resets_at":1762900000}}}';
+  r = voiceRun(['status-line'], input, { CLAUDE_CONFIG_DIR: cfg });
+  check('the status line prints nothing in an app session', r.code === 0 && r.out === '', r.out + r.err);
+  const u = fs.existsSync(usage) ? JSON.parse(fs.readFileSync(usage, 'utf8')) : {};
+  check('...and saves the usage beside the channels for the app', u.session?.used === 19 && u.weekly?.resetsAt === 1762900000, JSON.stringify(u));
+  check("...and still runs the user's own status line on the same input", fs.existsSync(ran) && fs.readFileSync(ran, 'utf8') === input);
+  fs.writeFileSync(path.join(cfg, 'settings.json'), JSON.stringify({ statusLine: { command: 'genlock status-line' } }));
+  r = voiceRun(['status-line'], '{}', { CLAUDE_CONFIG_DIR: cfg });
+  check('...but never runs itself as the user\'s', r.code === 0 && r.out === '', r.err);
+}
 voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 r = rv('session-state');
 check('with no app listening it does nothing', r.code === 0, r.all);
@@ -1163,6 +1182,51 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('tell refuses a project with no session', r.code !== 0 && /no session/.test(r.err), r.all);
   r = asEnv(['tell', 'nope', 'hello']);
   check('tell refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err), r.all);
+
+  // The sweep: every session, spin-offs included, and what would tidy each one.
+  r = run(AS, 'someone', ['sweep']);
+  check('sweep only works in the Assistant', r.code !== 0 && /Assistant/.test(r.err), r.all);
+  const TP = idOf(pa('new', 'Proved but open task', '-r', 'The proved page returns 200', '-c', 'node t.mjs'));
+  pa('start', TP); pa('met', TP, '1', '--evidence', 'node t.mjs -> 200');
+  const TS = idOf(run(PA, 'spin', ['new', 'Spin-off page loads', '-r', 'The spin page returns 200', '-c', 'node t.mjs']));
+  run(PA, 'spin', ['start', TS]); run(PA, 'spin', ['met', TS, '1', '--evidence', 'node t.mjs -> 200']); run(PA, 'spin', ['grill', TS, '--observed', 'node t.mjs -> 200', '--cause', 'measured', '--absence', 'n/a', '--assumption', 'none', '--falsify', 'a non-200']); run(PA, 'spin', ['done', TS]);
+  const TO = idOf(run(PA, 'gone-session', ['new', 'Left behind page loads', '-r', 'The left page returns 200', '-c', 'node t.mjs']));
+  run(PA, 'gone-session', ['start', TO]);
+  fs.writeFileSync(path.join(AS, 'sessions.json'), JSON.stringify({
+    open: [
+      { project: PA, token: 'tok-a' },
+      { project: PA, token: 'tok-s', spawn: { ticket: TS, session: 'spin', title: 'Spin-off page loads', project: PA, prompt: 'x' } },
+      { project: PA, token: 'tok-x', slot: 'abc123' },
+    ],
+    conversations: {},
+  }));
+  fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'waiting', message: 'Shall I deploy?', at: Date.now(), session: 'pa' }));
+  for (const t of ['tok-s', 'tok-x']) fs.mkdirSync(path.join(CH, t), { recursive: true });
+  fs.writeFileSync(path.join(CH, 'tok-s', 'state.json'), JSON.stringify({ state: 'done', message: 'Finished.', at: Date.now() - 60000, session: 'spin' }));
+  fs.writeFileSync(path.join(CH, 'tok-x', 'state.json'), JSON.stringify({ state: 'done', message: 'ok', at: Date.now() - 20 * 3600000, session: 'idle-one' }));
+  r = asEnv(['sweep']);
+  check('sweep lists the main session, a spin-off and an extra session', r.code === 0 && /\[main\] main session/.test(r.out)
+    && new RegExp(`\\[${TS}\\] spin-off`).test(r.out) && /\[\+abc123\] extra session/.test(r.out), r.all);
+  check('...with state and idle time', /NEEDS THE USER, last active 0m ago/.test(r.out) && /last active 20h ago/.test(r.out), r.out);
+  check('...and the task it owns with its proof count', /Proved but open task \(in_progress, 1 of 1 proved\)/.test(r.out), r.out);
+  check('...suggests answering a session that waits', /SUGGEST: it is waiting on the user/.test(r.out), r.out);
+  check('...suggests running done on a task that is fully proved', new RegExp(`SUGGEST: every requirement of \\S+ is proved.*genlock done ${TP}`).test(r.out), r.out);
+  check('...suggests closing a spin-off whose task is done', /SUGGEST: its task is finished: close it/.test(r.out), r.out);
+  check('...suggests closing a session idle for hours with no task', /SUGGEST: idle 20h with no task: close it/.test(r.out), r.out);
+  check('...flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
+  check('...counts what it found and changes nothing', /3 sessions open, \d+ suggestions\. Nothing has been changed/.test(r.out), r.out);
+
+  r = asEnv(['tell', 'alpha', 'run done', '--session', TS]);
+  check('tell can reach a spin-off by its task', r.code === 0 && fs.readdirSync(path.join(CH, 'tok-s')).some((f) => f.startsWith('tell-')), r.all);
+  r = asEnv(['close', 'alpha', '+nope']);
+  check('close refuses a session that does not exist and names the open ones', r.code !== 0 && /main/.test(r.err) && /\+abc123/.test(r.err), r.all);
+  fs.writeFileSync(path.join(CH, 'tok-x', 'state.json'), JSON.stringify({ state: 'working', at: Date.now() }));
+  r = asEnv(['close', 'alpha', '+abc123']);
+  check('close refuses a session that is working', r.code !== 0 && /working/.test(r.err) && !fs.existsSync(path.join(CH, 'tok-x', 'close.json')), r.all);
+  r = asEnv(['close', 'alpha', TS]);
+  check('close leaves a request for the app', r.code === 0 && fs.existsSync(path.join(CH, 'tok-s', 'close.json')), r.all);
+  r = run(AS, 'someone', ['close', 'alpha', TS]);
+  check('a project agent cannot close sessions', r.code !== 0, r.all);
 }
 
 /* ---- completing goals ---------------------------------------------------------- */

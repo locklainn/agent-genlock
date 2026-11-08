@@ -10,13 +10,17 @@ struct SessionsView: View {
         VStack(spacing: 0) {
             SessionBar()
             let rows = SplitLayout.arrange(model.visible)
-            VSplitView {
+            // Plain stacks rather than split views: every row and every pane in it gets an equal share.
+            VStack(spacing: 1) {
                 ForEach(rows, id: \.self) { row in
-                    HSplitView {
-                        ForEach(row, id: \.self) { PaneView(sessionKey: $0).frame(minWidth: 320, minHeight: 240) }
+                    HStack(spacing: 1) {
+                        ForEach(row, id: \.self) {
+                            PaneView(sessionKey: $0).frame(minWidth: 320, maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
+                        }
                     }
                 }
             }
+            .background(Theme.hairline)
         }
     }
 }
@@ -45,6 +49,7 @@ struct SessionBar: View {
                 .help("Dashboard")
 
                 projectTabs
+                UsageMeter()
                 UpdatePill()
                 Button { showEverything() } label: { Image(systemName: showingEverything ? "rectangle" : "square.grid.2x2") }
                     .buttonStyle(GlassButtonStyle(active: showingEverything, compact: true))
@@ -57,6 +62,9 @@ struct SessionBar: View {
                     .popover(isPresented: $showingSwitcher, arrowEdge: .bottom) { SessionSwitcher(close: { showingSwitcher = false }) }
                 Button { model.showPrevious() } label: { EmptyView() }
                     .keyboardShortcut(.tab, modifiers: .control).frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
+                Button { model.statusSweep() } label: { Image(systemName: "checklist") }
+                    .buttonStyle(GlassButtonStyle(compact: true))
+                    .help("Status update: \(model.assistantName) goes through every session in every project and suggests what to close or finish.")
                 Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                     .buttonStyle(GlassButtonStyle())
                     .help("One session across all your projects")
@@ -121,7 +129,8 @@ extension SessionBar {
         if all.count > SplitLayout.maxPanes {
             model.message = "Showing \(SplitLayout.maxPanes) of \(all.count) sessions; a split holds \(SplitLayout.maxPanes)."
         }
-        withAnimation(.spring(duration: 0.35)) { model.openSessions(Array(all.prefix(SplitLayout.maxPanes))) }
+        // No animation: panes and their strips sliding into place reads as the layout lurching.
+        model.openSessions(Array(all.prefix(SplitLayout.maxPanes)))
     }
 
     private func measured(_ width: Binding<CGFloat>) -> some View {
@@ -159,20 +168,6 @@ extension SessionBar {
         return keys.contains { model.sessions[$0]?.isRunning == true } ? Theme.green : Theme.textTertiary
     }
 
-    private func dotColor(_ id: String) -> SwiftUI.Color {
-        let need = model.sessions[id]?.attention
-        let running = model.sessions[id]?.isRunning == true
-        return need == .waiting ? Theme.red : (need == .done ? Theme.amber : (running ? Theme.green : Theme.textTertiary))
-    }
-
-    private func statusWord(_ id: String) -> String {
-        switch model.sessions[id]?.attention {
-        case .waiting: return "needs you"
-        case .done: return "your turn"
-        default: return model.sessions[id]?.isRunning == true ? (model.sessions[id]?.phase == "working" ? "working" : "idle") : "stopped"
-        }
-    }
-
     /// Projects with no room in the bar. Only projects: sessions live in each pane's header.
     @ViewBuilder
     private func moreProjects(_ hidden: [String]) -> some View {
@@ -207,12 +202,6 @@ extension SessionBar {
         }
     }
 
-    private func menuRow(_ id: String) -> some View {
-        Button { model.show(id) } label: {
-            Image(nsImage: TabOverflow.dot(NSColor(dotColor(id))))
-            Text("\(model.tabLabel(id))  ·  \(statusWord(id))")
-        }
-    }
 }
 
 /// Which sessions get a tab when not all fit: the ones on screen and the ones needing you first,
@@ -273,10 +262,6 @@ extension SessionBar {
                 }
             }
             let shownProjects = Set(model.projectsWithTabs)
-            let closed = model.sessions.keys.sorted().filter { model.tucked.contains($0) && !shownProjects.contains(model.sessions[$0]?.projectID ?? "") }
-            if !closed.isEmpty {
-                Section("Closed tabs, still running") { ForEach(closed, id: \.self) { menuRow($0) } }
-            }
             let ended = model.recentlyEnded.filter { model.sessions[$0.key] == nil && !shownProjects.contains($0.project) }
             if !ended.isEmpty {
                 Section("Recently ended") {
@@ -311,19 +296,15 @@ struct HeaderSessionTabs: View {
         let order = model.sessionKeys(in: projectID)
         let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.tabLabel($0))) - 40 }
         let layout = TabOverflow.layout(order: order, priority: [paneKey], room: room - 90, natural: natural)
-        let closed = model.sessions.keys.sorted().filter { model.tucked.contains($0) && model.sessions[$0]?.projectID == projectID }
         let ended = model.recentlyEnded.filter { $0.project == projectID && model.sessions[$0.key] == nil }
         HStack(spacing: 2) {
             ForEach(layout.shown, id: \.self) { key in
                 SessionStripTab(key: key, paneKey: paneKey, width: layout.width)
             }
-            if !layout.hidden.isEmpty || !closed.isEmpty || !ended.isEmpty {
+            if !layout.hidden.isEmpty || !ended.isEmpty {
                 Menu {
                     if !layout.hidden.isEmpty {
                         Section("No room here") { ForEach(layout.hidden, id: \.self) { key in Button(model.tabLabel(key)) { model.showInPane(key, replacing: paneKey) } } }
-                    }
-                    if !closed.isEmpty {
-                        Section("Closed tabs, still running") { ForEach(closed, id: \.self) { key in Button(model.tabLabel(key)) { model.showInPane(key, replacing: paneKey) } } }
                     }
                     if !ended.isEmpty {
                         Section("Recently ended") {
@@ -331,16 +312,16 @@ struct HeaderSessionTabs: View {
                         }
                     }
                 } label: {
-                    Text(layout.hidden.isEmpty ? "\(closed.count + ended.count) closed" : "+\(layout.hidden.count + closed.count)")
+                    Text(layout.hidden.isEmpty ? "\(ended.count) closed" : "+\(layout.hidden.count)")
                         .font(.system(size: 11.5, weight: .medium)).foregroundStyle(Theme.textTertiary)
                 }
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Sessions in this project without a tab here")
             }
-            if order.count + closed.count > 1 {
+            if order.count > 1 {
                 Button {
-                    let keys = model.sessionKeys(in: projectID) + closed
-                    withAnimation(.spring(duration: 0.35)) { model.openSessions(Array(keys.prefix(SplitLayout.maxPanes))) }
+                    let keys = model.sessionKeys(in: projectID)
+                    model.openSessions(Array(keys.prefix(SplitLayout.maxPanes)))
                 } label: {
                     Image(systemName: "square.grid.2x2").font(.system(size: 10.5, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle())
                 }
@@ -389,7 +370,7 @@ struct SessionStripTab: View {
                         Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
                     }
                     .buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
-                    .help("Close this tab. The session keeps running.")
+                    .help("Close this session. Its conversation stays under Recently ended.")
                 }
             }
             .padding(.horizontal, 7).padding(.vertical, 4)
@@ -406,9 +387,7 @@ struct SessionStripTab: View {
             if session?.spawn == nil {
                 Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
             }
-            Button("Close Tab (keeps running)") { model.closeTab(key) }
-            Divider()
-            Button("End Session…") { model.endAndKeepProject(key) }
+            Button("Close Session") { model.closeTab(key) }
         }
     }
 }
@@ -446,7 +425,7 @@ struct ProjectTab: View {
                 Button("Show All Its Sessions") { model.openSessions(Array(model.sessionKeys(in: project).prefix(SplitLayout.maxPanes))) }
             }
             Button("New Session in \(name)") { model.newSession(in: project) }
-            Button("Close All Its Tabs (they keep running)") { model.sessionKeys(in: project).forEach(model.tuck) }
+            Button("Close All Its Sessions") { model.sessionKeys(in: project).forEach(model.closeTab) }
         }
     }
 }
@@ -479,7 +458,6 @@ struct SessionSwitcher: View {
                         Text(model.projectName(model.sessions[key]?.projectID ?? "")).foregroundStyle(Theme.textSecondary)
                         Text(model.tabLabel(key)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                         Spacer(minLength: 0)
-                        if model.tucked.contains(key) { Text("closed tab").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
                     }
                     .contentShape(Rectangle())
                 }
@@ -563,6 +541,28 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
+            if projectID == model.assistantFolder {
+                Button { model.statusSweep() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checklist")
+                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                    }
+                }
+                .buttonStyle(GlassButtonStyle(compact: isSplit))
+                .help("Go through every session in every project, say where each stands, and suggest what to close or finish")
+                Button { model.remoteControl.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: model.remoteControl ? "iphone.radiowaves.left.and.right" : "iphone")
+                        if !isSplit { Text(model.remoteControl ? "Remote on" : "Remote").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                    }
+                    .foregroundStyle(model.remoteControl ? Theme.green : Theme.textPrimary)
+                }
+                .buttonStyle(GlassButtonStyle(compact: isSplit))
+                .help(model.remoteControl
+                      ? "Remote Control is on: reach \(model.assistantName) from the Claude Code app or claude.ai/code. Click to turn it off."
+                      : "Turn on Remote Control, to reach \(model.assistantName) from the Claude Code app on your phone or claude.ai/code. It restarts on the same conversation.")
+                .accessibilityLabel("Remote Control")
+            }
             MicButton(listening: listeningHere, compact: isSplit) { model.pressVoice(for: sessionKey) }
             if projectID != model.assistantFolder {
                 Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
@@ -601,7 +601,7 @@ struct PaneView: View {
     @ViewBuilder private var terminal: some View {
         if let session = model.sessions[sessionKey] {
             ZStack {
-                TerminalHost(session: session)
+                TerminalHost(session: session, fontSize: SplitLayout.fontSize(panes: model.visible.count))
                 if !session.isRunning && model.tools != nil { SessionEndedOverlay(session: session, projectID: sessionKey) }
             }
         } else {
@@ -671,17 +671,26 @@ struct SessionEndedOverlay: View {
 /// what keeps scrollback and the running process intact when the layout changes.
 struct TerminalHost: NSViewRepresentable {
     let session: TerminalSession
+    let fontSize: Double
 
     func makeNSView(context: Context) -> TerminalContainer {
         let container = TerminalContainer()
         container.wantsLayer = true
         container.layer?.backgroundColor = Theme.terminal.cgColor
         container.show(session.view)
+        resize(session.view)
         return container
     }
 
     func updateNSView(_ container: TerminalContainer, context: Context) {
         container.show(session.view)
+        resize(session.view)
+    }
+
+    /// Only on a real change: a new font reflows the whole terminal.
+    private func resize(_ view: PaneTerminalView) {
+        guard abs(view.font.pointSize - fontSize) > 0.01 else { return }
+        view.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
     }
 }
 

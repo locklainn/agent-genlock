@@ -17,6 +17,8 @@ public struct Snapshot: Decodable, Equatable {
     public var reviews: [Review]
     public var claims: [Claim]
     public var uncommitted: Int?
+    /// What each session identified and has not finished, by session id. Older CLIs leave it out.
+    public var followups: [String: Followups]?
 
     public struct Goal: Decodable, Equatable, Identifiable {
         /// Whether someone chose its short name. Otherwise that is just the start of the title.
@@ -147,6 +149,62 @@ public struct Snapshot: Decodable, Equatable {
             guard let url = url(root: root) else { return false }
             return FileManager.default.fileExists(atPath: url.path)
         }
+    }
+
+    /// What one session started and left open: `genlock followups --json`.
+    public struct Followups: Decodable, Equatable {
+        public var goals: [Item]
+        public var tickets: [Item]
+        public var spinoffs: [Item]
+        public var questions: [Question]
+        public var unproved: [Unproved]
+
+        public init(goals: [Item] = [], tickets: [Item] = [], spinoffs: [Item] = [], questions: [Question] = [], unproved: [Unproved] = []) {
+            self.goals = goals
+            self.tickets = tickets
+            self.spinoffs = spinoffs
+            self.questions = questions
+            self.unproved = unproved
+        }
+
+        public var isEmpty: Bool { goals.isEmpty && tickets.isEmpty && spinoffs.isEmpty && questions.isEmpty }
+        public var count: Int { goals.count + tickets.count + spinoffs.count + questions.count }
+
+        public struct Item: Decodable, Equatable, Identifiable {
+            public var id: String
+            public var short: String?
+            public var title: String
+            public var status: String?
+            /// Spin-offs only: proposed, parked or launched, and for a proposed one whether it may launch.
+            public var state: String?
+            public var safe: Bool?
+            public var heading: String { Snapshot.heading(short: short, title: title) }
+        }
+
+        public struct Unproved: Decodable, Equatable {
+            public var ticket: String
+            public var n: Int
+            public var text: String
+            public var state: String
+        }
+    }
+
+    /// What a session's agents left open, minus what its panel already shows elsewhere.
+    public func leftOpen(agents: Set<String>, shown: Set<String> = [], shownQuestions: Set<String> = []) -> Followups {
+        var out = Followups()
+        var seen = shown
+        func take(_ items: [Followups.Item]) -> [Followups.Item] {
+            items.filter { seen.insert($0.id).inserted }
+        }
+        for agent in agents.sorted() {
+            guard let f = followups?[agent] else { continue }
+            out.goals += take(f.goals)
+            out.tickets += take(f.tickets)
+            out.spinoffs += take(f.spinoffs)
+            out.questions += f.questions.filter { !shownQuestions.contains($0.id) && !out.questions.contains($0) }
+            out.unproved += f.unproved
+        }
+        return out
     }
 
     public struct Claim: Decodable, Equatable, Identifiable {

@@ -33,8 +33,8 @@ final class AppModel {
     @ObservationIgnored private var memoryFile: URL { SessionMemory.file(beside: store.file) }
     var route: Route = .dashboard
     var visible: [String] = []
-    /// Sessions closed from the tab bar. They keep running and wait in the bar's overflow menu.
-    var tucked: Set<String> = []
+    /// The plan's usage bars, from the status line of the app's sessions.
+    var usage: UsageReading? = UsageReading.load()
     /// The project whose sessions the bar's second row lists.
     var activeProject: String?
     @ObservationIgnored var lastShown: [String: String] = [:]
@@ -99,7 +99,11 @@ final class AppModel {
             }
         }
         claudeTicker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
-            MainActor.assumeIsolated { AppModel.shared.lookForClaude() }
+            MainActor.assumeIsolated {
+                AppModel.shared.lookForClaude()
+                let usage = UsageReading.load()
+                if usage != AppModel.shared.usage { AppModel.shared.usage = usage }
+            }
         }
         voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
             MainActor.assumeIsolated {
@@ -109,6 +113,7 @@ final class AppModel {
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
                 model.collectTells()
+                model.closeSessionsIfAsked()
                 model.clearAssistantIfAsked()
                 model.swapSessionsIfAsked()
                 model.refreshAssistantName()
@@ -428,7 +433,6 @@ final class AppModel {
 
     func openSessions(_ ids: [String]) {
         for id in ids { ensureSession(id) }
-        tucked.subtract(ids)
         if let first = ids.first { activeProject = sessions[first]?.projectID ?? first }
         visible = ids
         route = .sessions
@@ -471,7 +475,8 @@ final class AppModel {
         session.start(tools: tools, conversation: start, voice: voice.speakReplies,
                       spinoffs: !isAssistant && (session.spawn != nil || spinoffsAllowed(session.projectID)),
                       assistantOf: isAssistant ? store.file : nil,
-                      assistantName: isAssistant ? namer.saved : nil)
+                      assistantName: isAssistant ? namer.saved : nil,
+                      remote: isAssistant && remoteControl)
     }
 
     /// Reopens what was open last time, ready to carry on. Before the tools are found these
@@ -484,8 +489,9 @@ final class AppModel {
             sessions[session.key] = session
         }
         visible = back.visible
-        tucked = Set(memory.tucked ?? []).intersection(sessions.keys).subtracting(visible)
         recentlyEnded = memory.ended ?? []
+        // Closing a tab used to hide its session rather than end it. Those were closed, so end them.
+        for key in memory.tucked ?? [] where sessions[key] != nil && !visible.contains(key) { endNoted(key) }
         if !visible.isEmpty { route = .sessions }
         adoptRunningSessions()
     }
@@ -537,8 +543,7 @@ final class AppModel {
         let open = sessions.values.filter { SessionMemory.stillOpen(isRunning: $0.isRunning, exitCode: $0.exitCode) }
         next.open = open.map { SessionMemory.Open(project: $0.projectID, spawn: $0.spawn, token: $0.voiceToken, slot: $0.slot) }.sorted { $0.key < $1.key }
         next.visible = visible
-        let tuckedNow = tucked.intersection(open.map(\.key)).sorted()
-        next.tucked = tuckedNow.isEmpty && memory.tucked == nil ? nil : tuckedNow
+        next.tucked = nil
         next.ended = recentlyEnded.isEmpty && memory.ended == nil ? nil : recentlyEnded
         for session in open { if let id = session.conversation { next.conversations[session.key] = id } }
         guard next != memory else { return }
@@ -596,18 +601,8 @@ final class AppModel {
         }
     }
 
-    /// Closing a tab hides it. The session keeps running and stays one click away in the bar's menu.
-    func tuck(_ key: String) {
-        tucked.insert(key)
-        visible.removeAll { $0 == key }
-        if visible.isEmpty {
-            if let next = sessions.keys.sorted().first(where: { !tucked.contains($0) }) { visible = [next]; focus(next) } else { route = .dashboard }
-        }
-    }
-
     /// Brings a session to the front, from a tab or from the overflow menu.
     func show(_ key: String) {
-        tucked.remove(key)
         if let now = visible.first, now != key { previousSession = now }
         if let project = sessions[key]?.projectID { activeProject = project; lastShown[project] = key }
         visible = [key]
@@ -615,16 +610,9 @@ final class AppModel {
         focus(key)
     }
 
-    /// Asks first, because ending stops Claude. The conversation stays saved either way.
-    func confirmEnd(_ key: String) {
+    /// Ends a session and keeps its conversation under Recently ended, one click from reopened.
+    func endNoted(_ key: String) {
         guard let session = sessions[key] else { return }
-        let alert = NSAlert()
-        alert.messageText = "End \(tabLabel(key))?"
-        alert.informativeText = "This stops Claude in this session. The conversation is saved: you can reopen it from Recently ended in the tab bar's menu."
-        alert.addButton(withTitle: "End Session")
-        alert.addButton(withTitle: "Cancel")
-        alert.buttons.first?.hasDestructiveAction = true
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
         recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: session.projectID, spawn: session.spawn, slot: session.slot,
                                                                     conversation: session.conversation ?? memory.conversations[key]), in: recentlyEnded)
         endSession(key)
@@ -644,7 +632,6 @@ final class AppModel {
 
     /// Switches one pane to another session, leaving the rest of the split as it is.
     func showInPane(_ key: String, replacing pane: String) {
-        tucked.remove(key)
         if let project = sessions[key]?.projectID { activeProject = project; lastShown[project] = key }
         if visible.contains(key) { focus(key); return }
         previousSession = pane
@@ -661,12 +648,12 @@ final class AppModel {
 
     /// Projects with a session that has a tab, alphabetically by name.
     var projectsWithTabs: [String] {
-        Array(Set(sessions.filter { !tucked.contains($0.key) }.map(\.value.projectID))).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
+        Array(Set(sessions.values.map(\.projectID))).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
     }
 
     /// A project's sessions with tabs, its main session first.
     func sessionKeys(in project: String) -> [String] {
-        sessions.keys.filter { sessions[$0]?.projectID == project && !tucked.contains($0) }.sorted()
+        sessions.keys.filter { sessions[$0]?.projectID == project }.sorted()
     }
 
     func projectName(_ project: String) -> String {
@@ -724,7 +711,6 @@ final class AppModel {
     }
 
     func endSession(_ key: String) {
-        tucked.remove(key)
         sessions[key]?.end()
         sessions[key]?.channel.remove()
         sessions[key] = nil
@@ -786,6 +772,20 @@ final class AppModel {
         VoiceChannel.defaultBase.deletingLastPathComponent().appendingPathComponent("Assistant").path
     }
 
+    /// Remote Control on the Assistant, so it can be reached from the Claude Code app or
+    /// claude.ai/code. Saved, and carried by every launch, so restarts and handoffs keep it.
+    var remoteControl = UserDefaults.standard.bool(forKey: "assistantRemoteControl") {
+        didSet {
+            guard remoteControl != oldValue else { return }
+            UserDefaults.standard.set(remoteControl, forKey: "assistantRemoteControl")
+            // The flag only applies at launch, so a running Assistant restarts on its same conversation.
+            if sessions[assistantFolder] != nil { restart(assistantFolder, fresh: false) }
+            message = remoteControl
+                ? "\(assistantName) is on Remote Control. Find it in the Claude Code app or at claude.ai/code."
+                : "Remote Control is off for \(assistantName)."
+        }
+    }
+
     private var namer: AssistantName { AssistantName(folder: URL(fileURLWithPath: assistantFolder)) }
 
     /// What to call it everywhere. Refreshed on the timer, because the agent can name itself.
@@ -810,8 +810,15 @@ final class AppModel {
         if let choice { namer.save(choice) }
         refreshAssistantName()
         let hadSession = sessions[assistantFolder]?.isRunning == true
+        // Typed into a terminal that is still starting, the ask is lost, so a new session opens on it.
+        if letItChoose && !hadSession {
+            // One waiting to start takes it with it; one that has exited is replaced.
+            let session = sessions[assistantFolder].flatMap { $0.exitCode == nil ? $0 : nil } ?? TerminalSession(projectID: assistantFolder)
+            session.openingMessage = SessionLaunch.chooseOwnName
+            sessions[assistantFolder] = session
+        }
         openAssistant()
-        if letItChoose {
+        if letItChoose && hadSession {
             sessions[assistantFolder]?.submit(SessionLaunch.chooseOwnName)
         } else if hadSession, let saved = namer.saved, choice != nil {
             sessions[assistantFolder]?.submit(SessionLaunch.told(name: saved))
@@ -873,7 +880,6 @@ final class AppModel {
             sessions[fresh.key] = fresh
             launch(fresh, tools: tools, fresh: true)
             if let i = visible.firstIndex(of: key) { visible[i] = fresh.key }
-            if tucked.remove(key) != nil { tucked.insert(fresh.key) }
             if lastShown[fresh.projectID] == key { lastShown[fresh.projectID] = fresh.key }
             if previousSession == key { previousSession = fresh.key }
             if wasFocused { focus(fresh.key) }
@@ -914,6 +920,41 @@ final class AppModel {
         case .later: return 2
         case nil: return 3
         }
+    }
+
+    /// The Assistant closed a session for you during a sweep. It goes to Recently ended, so a
+    /// close made by mistake is one click from undone. Never one that has started working again.
+    func closeSessionsIfAsked() {
+        for session in Array(sessions.values) where session.projectID != assistantFolder && session.channel.requestedClose {
+            guard session.phase != "working" else {
+                try? FileManager.default.removeItem(at: session.channel.folder.appendingPathComponent("close.json"))
+                continue
+            }
+            let key = session.key
+            recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: session.projectID, spawn: session.spawn, slot: session.slot,
+                                                                        conversation: session.conversation ?? session.channel.readState()?.session ?? memory.conversations[key]),
+                                                     in: recentlyEnded)
+            let label = tabLabel(key)
+            endSession(key)
+            message = "Closed \(label). It is under Recently ended if you want it back."
+        }
+    }
+
+    /// Opens the Assistant and asks it to go through every session.
+    func statusSweep() {
+        if namer.saved == nil && !askedForName { return openAssistant() }
+        if let assistant = sessions[assistantFolder], assistant.isRunning {
+            assistant.submit(SessionLaunch.statusSweep)
+        } else if let waiting = sessions[assistantFolder], waiting.exitCode == nil {
+            waiting.openingMessage = SessionLaunch.statusSweep
+        } else {
+            // Typed before it is ready, a long line would be cut off, so it starts with this instead.
+            try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+            let assistant = TerminalSession(projectID: assistantFolder)
+            assistant.openingMessage = SessionLaunch.statusSweep
+            sessions[assistantFolder] = assistant
+        }
+        openAssistant()
     }
 
     func collectTells() {

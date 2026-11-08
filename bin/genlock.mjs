@@ -28,8 +28,8 @@ import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
-import { cmdClearContext, cmdName, cmdOverview, cmdRemember, cmdRemembered, cmdTell, runAt } from '../lib/overview.mjs';
-import { cmdSay, cmdSessionState, cmdVoiceCheck } from '../lib/voice.mjs';
+import { cmdClearContext, cmdClose, cmdName, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
+import { cmdSay, cmdSessionState, cmdStatusLine, cmdVoiceCheck } from '../lib/voice.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
 const VERSION = '2.2.0';
@@ -222,6 +222,8 @@ const COMMANDS = {
   snapshot: cmdSnapshot,
   overview: cmdOverview,
   tell: cmdTell,
+  sweep: cmdSweep,
+  close: cmdClose,
   name: cmdName,
   remember: cmdRemember,
   remembered: cmdRemembered,
@@ -232,6 +234,7 @@ const COMMANDS = {
   say: cmdSay,
   'voice-check': cmdVoiceCheck,
   'session-state': cmdSessionState,
+  'status-line': cmdStatusLine,
   claim: cmdClaim,
   release: cmdRelease,
   claims: cmdClaims,

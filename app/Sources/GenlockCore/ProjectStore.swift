@@ -194,6 +194,16 @@ public enum SplitLayout {
     /// Showing every session at once fills up to this many panes. Marking cards by hand stops at six.
     public static let maxPanes = 12
 
+    /// Terminal text size with this many panes on screen: smaller as each pane gets less room.
+    public static func fontSize(panes: Int) -> Double {
+        switch panes {
+        case ...1: return 13
+        case 2...3: return 12
+        case 4...6: return 11
+        default: return 10
+        }
+    }
+
     /// How many panes go in each row.
     public static func rows(count: Int) -> [Int] {
         switch count {

@@ -68,7 +68,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     static let claudeMissing = "Claude Code was not found. Genlock keeps looking, and this session starts as soon as it is there."
     var isWaitingForClaude: Bool { startError == Self.claudeMissing && !isRunning }
 
-    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil) {
+    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil, remote: Bool = false) {
         guard let host = SessionHost.executable else {
             startError = "Genlock is missing its session host. Reinstall the app."
             return
@@ -106,7 +106,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
                                            reportsState: true, sessionID: newID, resumeID: resumeID,
-                                           prompt: openingMessage ?? (newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt)), assistant: store != nil, assistantName: assistantName, handoff: handoff)
+                                           prompt: openingMessage ?? (newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt)), assistant: store != nil, assistantName: assistantName, handoff: handoff,
+                                           remote: remote)
         view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)

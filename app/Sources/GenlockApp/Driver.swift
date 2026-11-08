@@ -106,11 +106,8 @@ enum Driver {
         if let name = step["endSession"] as? String, let id = projectID(named: name) { model.endSession(id) }
         if let names = step["split"] as? [String] { model.openSessions(names.compactMap { projectID(named: $0) }) }
         if let name = step["newSession"] as? String, let id = projectID(named: name) { model.newSession(in: id) }
-        if let name = step["closeTab"] as? String, let id = projectID(named: name) { model.tuck(id) }
-        if let name = step["endNoted"] as? String, let id = projectID(named: name), let s = model.sessions[id] {
-            model.recentlyEnded = SessionMemory.noteEnded(SessionMemory.Open(project: s.projectID, spawn: s.spawn, slot: s.slot, conversation: s.conversation), in: model.recentlyEnded)
-            model.endSession(id)
-        }
+        if let name = step["closeTab"] as? String, let id = projectID(named: name) { model.closeTab(id) }
+        if let name = step["endNoted"] as? String, let id = projectID(named: name) { model.endNoted(id) }
         if let name = step["reopen"] as? String, let id = projectID(named: name), let open = model.recentlyEnded.first(where: { $0.key == id }) { model.reopen(open) }
         if step["restartToUpdate"] != nil { model.updater.restart() }
         if step["openAssistant"] != nil { model.openAssistant() }
@@ -269,7 +266,6 @@ enum Driver {
             "message": model.message ?? "",
             "initialized": Dictionary(uniqueKeysWithValues: model.store.projects.map { ($0.name, model.state(for: $0.id).snapshot?.initialized ?? false) }),
             "needing": model.needingAttention.map(\.label),
-            "tucked": model.tucked.sorted(),
             "conversations": Dictionary(uniqueKeysWithValues: model.sessions.map { (URL(fileURLWithPath: $0.key).lastPathComponent, $0.value.conversation ?? "") }),
             "recentlyEnded": model.recentlyEnded.map(\.key),
             "tabLabels": model.sessions.keys.sorted().map { model.tabLabel($0) },
