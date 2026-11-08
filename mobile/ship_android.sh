@@ -21,7 +21,8 @@ if [[ "${1:-}" == "--setup" ]]; then
   exit 0
 fi
 if [[ "${1:-}" == "--build" ]]; then
-  export JAVA_HOME=${JAVA_HOME:-$HOME/dev-tools/jdk17/Contents/Home}
+  # The Android build needs JDK 17; a JAVA_HOME already set in the shell is often 8 or 11.
+  [[ -d $HOME/dev-tools/jdk17/Contents/Home ]] && export JAVA_HOME=$HOME/dev-tools/jdk17/Contents/Home
   (cd $here/android && ./gradlew assembleDebug -q)
 fi
 [[ -f $apk ]] || { echo "no APK: run mobile/ship_android.sh --build"; exit 1; }
