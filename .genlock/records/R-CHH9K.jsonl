@@ -1,1 +1,2 @@
 {"e":"d3cf10c97578","at":"2026-11-08T13:22:39.048Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"request","path":"app/Sources/GenlockApp/SessionsView.swift","why":"Relaunch (Restart to update), open 4 sessions in the grid: equal heights, smaller text, one-line strip, no slide-in, usage meter in the top bar? New sessions should have no usage footer.","about":"T-CNYFN"}
+{"e":"2dfb77429a93","at":"2026-11-08T20:04:19.700Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"reviewed","note":"TJ: meter seen, everything else ok; pace and blank-pane fix added in f74aa58"}

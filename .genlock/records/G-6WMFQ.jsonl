@@ -6,3 +6,18 @@
 {"e":"1667dc277962","at":"2026-11-07T20:11:49.970Z","by":"0e1f7131-7b08-4055-8724-bf200aa2ee03","op":"next_add","nid":"eb29b6","text":"Show the Assistant's chosen name everywhere (assistant-name)","due":null}
 {"e":"a80fdf89a98f","at":"2026-11-07T20:11:50.328Z","by":"0e1f7131-7b08-4055-8724-bf200aa2ee03","op":"decide","did":"1b100f","text":"Hold off on per-session Remote Control (each new session inheriting it) unless relaying through the Assistant proves too limiting","user_said":"Hold off on per-session Remote Control (each new session inheriting it) unless relaying through the Assistant proves too limiting."}
 {"e":"a8ed85e9255d","at":"2026-11-07T20:42:11.178Z","by":"0e1f7131-7b08-4055-8724-bf200aa2ee03","op":"next_done","nid":"eb29b6"}
+{"e":"9cb2e1aafa00","at":"2026-11-08T16:54:12.484Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"next_add","nid":"0f4bec","text":"Route tell by task and send TJ one combined update (tell-routing)","due":null}
+{"e":"4c4e5434d45f","at":"2026-11-08T16:54:16.300Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"next_move","nid":"0f4bec","before":"3a9c9e"}
+{"e":"ffc8c906b15c","at":"2026-11-08T19:27:42.890Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"next_add","nid":"af29df","text":"The Assistant can act for TJ in any session: swaps first (assistant-acts)","due":null}
+{"e":"61df70b36bd0","at":"2026-11-08T19:27:43.126Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"next_move","nid":"af29df","before":"3a9c9e"}
+{"e":"186c1569b886","at":"2026-11-08T20:40:44.740Z","by":"62861001-616d-4267-abb7-e483a156fcd4","op":"next_keep"}
+{"e":"cc95c833c7c0","at":"2026-11-08T21:35:21.528Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"af29df"}
+{"e":"c6bc5f4c9761","at":"2026-11-08T21:35:21.788Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"3a9c9e"}
+{"e":"70d7af0ee0ac","at":"2026-11-08T21:35:22.106Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_move","nid":"02bb1b","before":"aa075b"}
+{"e":"04bd223385fc","at":"2026-11-08T21:35:22.324Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_add","nid":"7861a5","text":"TJ checks in the app: Remote stays on after a relaunch and Tally appears in claude.ai/code; phone: ask Tally to swap a session","due":null}
+{"e":"44b2efd13990","at":"2026-11-08T21:49:44.359Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"0f4bec"}
+{"e":"68a797cbd7f6","at":"2026-11-08T21:59:03.211Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"02bb1b"}
+{"e":"92684334b2f5","at":"2026-11-08T21:59:03.436Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"aa075b"}
+{"e":"02868af81112","at":"2026-11-08T21:59:03.686Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_add","nid":"329843","text":"After relaunching the app, TJ checks: Tally's genlock open starts a session in the background, and a session Tally tells something replies back to Tally as one [relay] update","due":null}
+{"e":"828b69397a9d","at":"2026-11-08T22:01:34.277Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"decide","did":"6efe1f","text":"TJ accepted open-from-hub and relay-back without an eye check","user_said":"im just going to trust you ;) consider it"}
+{"e":"3a56e2e1440d","at":"2026-11-08T22:01:34.576Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"329843"}

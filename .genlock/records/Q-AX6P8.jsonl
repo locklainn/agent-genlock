@@ -1,0 +1,2 @@
+{"e":"cfd7ece8336f","at":"2026-11-08T14:50:27.268Z","by":"401751c3-fb0d-4e7a-856f-ac0000644b9b","op":"ask","to":"T-2AAH6","text":"Go-ahead from TJ: begin now. Two more requirements are on the ticket (per-project session count line; WAITING ON THE USER lists only open questions). Run genlock show T-2AAH6, then genlock start T-2AAH6."}
+{"e":"fd70d1a1920a","at":"2026-11-08T16:51:12.454Z","by":"a38c418e-c3b1-42ab-a287-3f0327d12f43","op":"answer","text":"Started T-2AAH6; working in lib/overview.mjs and tests/run.mjs.","user_said":""}

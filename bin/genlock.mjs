@@ -28,7 +28,7 @@ import { cmdSpinoff } from '../lib/spinoff.mjs';
 import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
-import { cmdClearContext, cmdClose, cmdName, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
+import { cmdClearContext, cmdClose, cmdName, cmdOpen, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdStatusLine, cmdVoiceCheck } from '../lib/voice.mjs';
 import { cmdWait } from '../lib/waits.mjs';
 import { runMcp } from '../lib/mcp.mjs';
@@ -227,6 +227,7 @@ const COMMANDS = {
   tell: cmdTell,
   sweep: cmdSweep,
   close: cmdClose,
+  open: cmdOpen,
   name: cmdName,
   remember: cmdRemember,
   remembered: cmdRemembered,

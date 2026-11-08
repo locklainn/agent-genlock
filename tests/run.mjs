@@ -794,6 +794,42 @@ voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 voiceRun(['session-state'], '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"x"}');
 check('an idle reminder ends a turn that never reported ending', stateOf().state === 'done');
 
+/* ---- replies and questions back to the Assistant -------------------------------- */
+
+{
+  const relays = () => fs.readdirSync(VOICE).filter((f) => f.startsWith('relay-') && f.endsWith('.json')).sort()
+    .map((f) => ({ f, ...JSON.parse(fs.readFileSync(path.join(VOICE, f), 'utf8')) }));
+  const clear = () => { for (const x of relays()) fs.rmSync(path.join(VOICE, x.f)); };
+  clear();
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"Not asked by the Assistant"}');
+  check('a turn nobody relayed to sends nothing back', relays().length === 0);
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
+  voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}');
+  check('a session the Assistant told something reports a prompt it is stuck on', relays().length === 1 && relays()[0].kind === 'waiting' && /permission/.test(relays()[0].text));
+  clear();
+  const long = `Line one\nLine two ${'x'.repeat(300)}`;
+  voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: long }));
+  check('...and its whole final reply when the turn ends, not the 160-character summary', relays().length === 1 && relays()[0].kind === 'reply' && relays()[0].text === long, JSON.stringify(relays()));
+  check('...once: the session no longer owes a reply', !fs.existsSync(path.join(VOICE, 'awaiting-reply.json')));
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"a later turn"}');
+  check('...so a later turn is not sent again', relays().length === 1);
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: 'y'.repeat(7000) }));
+  check('a very long reply is cut, saying so', relays()[0].text.length < 6200 && /cut at 6000/.test(relays()[0].text));
+  clear();
+  r = voiceRun(['ask', 'user', 'Ship it today?']);
+  const qid = (/\b(Q-[0-9A-Z]{5})\b/.exec(r.out) || [])[1];
+  check('a question for the user reaches the Assistant too, with its id', !!qid && relays().length === 1 && relays()[0].kind === 'question' && relays()[0].question === qid && relays()[0].text === 'Ship it today?', JSON.stringify(relays()));
+  clear();
+  voiceRun(['ask', 'user', 'From the Assistant'], undefined, { GENLOCK_APP_PROJECTS: '/x/projects.json' });
+  check('...but not one the Assistant asks itself', relays().length === 0);
+  r = voiceRun(['answer', qid, 'yes', '--user-said', 'yes ship it']);
+  check('the answer goes back with genlock answer', r.code === 0 && /answered/.test(r.out), r.out + r.err);
+  fs.rmSync(path.join(VOICE, 'awaiting-reply.json'), { force: true });
+}
+
 /* ---- what a session is blocked on ----------------------------------------------- */
 
 {
@@ -1213,6 +1249,23 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('a short conversation gets no nudge', !/grown long/.test(own(['overview', '--all']).out));
   fs.writeFileSync(TR, Buffer.alloc(900 * 1024, 120));
   check('a long one is told, and left to choose its moment', /grown long/.test(own(['overview', '--all']).out));
+  // Opening a fresh session on a project, from the Assistant.
+  const opens = () => fs.readdirSync(OWN).filter((f) => f.startsWith('open-') && f.endsWith('.json'));
+  r = run(AS, 'someone', ['open', 'alpha']);
+  check('a project agent cannot open sessions', r.code !== 0 && !opens().length, r.all);
+  r = asEnv(['open', 'alpha']);
+  check('open needs the Assistant\'s own channel', r.code !== 0 && !opens().length, r.all);
+  r = own(['open', 'nope']);
+  check('open refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err) && !opens().length, r.all);
+  r = own(['open', 'ALPHA', '--prompt', 'continue billing page']);
+  const req = opens().length === 1 ? JSON.parse(fs.readFileSync(path.join(OWN, opens()[0]), 'utf8')) : {};
+  check('open leaves a request for the app, with the project and prompt', r.code === 0 && req.project === PA && req.prompt === 'continue billing page', r.all);
+  for (const f of opens()) fs.rmSync(path.join(OWN, f));
+  r = own(['open', 'beta']);
+  const bare = opens().length === 1 ? JSON.parse(fs.readFileSync(path.join(OWN, opens()[0]), 'utf8')) : {};
+  check('...and with no prompt, an empty session', r.code === 0 && bare.project === PB && bare.prompt === null, r.all);
+  for (const f of opens()) fs.rmSync(path.join(OWN, f));
+
   r = own(['clear-context']);
   check('clearing needs a handoff', r.code !== 0, r.all);
   check('...and nothing clears until it asks', !fs.existsSync(path.join(OWN, 'clear-context.json')));
@@ -1299,6 +1352,25 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...nor a review marked done, while the open one stays', !!RV && /TO REVIEW: 1, newest: new\.md/.test(r.out), r.out);
   before = asEnv(['overview', 'alpha']).out;
   check('one project lists the same', !/Answered already/.test(before) && /1 to review/.test(before), before);
+
+  // Routing by task: a project with several sessions is never guessed at.
+  for (const t of ['tok-a', 'tok-s', 'tok-x']) for (const f of fs.readdirSync(path.join(CH, t)).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, t, f));
+  const tells = (t) => fs.readdirSync(path.join(CH, t)).filter((f) => f.startsWith('tell-')).length;
+  r = asEnv(['tell', 'alpha', 'which one gets this']);
+  check('tell PROJECT with several sessions refuses', r.code !== 0 && tells('tok-a') + tells('tok-s') + tells('tok-x') === 0, r.all);
+  check('...and lists each session by its task', /\[main\] on \S+ \(Proved but open task\)/.test(r.err) && new RegExp(`\\[${TS}\\]`).test(r.err) && /\[\+abc123\], no task recorded/.test(r.err), r.err);
+  r = asEnv(['tell', TP, 'run done']);
+  check('tell TASK reaches the session that owns it, not another', r.code === 0 && tells('tok-a') === 1 && tells('tok-s') === 0 && tells('tok-x') === 0, r.all);
+  check('...and marks that session as owing the Assistant its reply', fs.existsSync(path.join(CH, 'tok-a', 'awaiting-reply.json')) && !fs.existsSync(path.join(CH, 'tok-x', 'awaiting-reply.json')));
+  const shortTS = JSON.parse(pa('snapshot').out).tickets.find((t) => t.id === TS).short;
+  r = asEnv(['tell', shortTS, 'wrap up']);
+  check('...by its short name too', r.code === 0 && tells('tok-s') === 1, r.all);
+  r = asEnv(['tell', 'alpha', 'run done', '--session', shortTS]);
+  check('--session takes a task short name', r.code === 0 && tells('tok-s') === 2, r.all);
+  r = asEnv(['tell', TO, 'pick it up']);
+  check('tell TASK with no session working on it refuses and says how to open one', r.code !== 0 && /genlock open alpha/.test(r.err), r.all);
+  r = asEnv(['tell', 'no-such-thing', 'hi']);
+  check('tell an unknown name lists the projects', r.code !== 0 && /alpha/.test(r.err) && /beta/.test(r.err), r.all);
 
   r = asEnv(['tell', 'alpha', 'run done', '--session', TS]);
   check('tell can reach a spin-off by its task', r.code === 0 && fs.readdirSync(path.join(CH, 'tok-s')).some((f) => f.startsWith('tell-')), r.all);

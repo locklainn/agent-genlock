@@ -112,8 +112,10 @@ final class AppModel {
                 let model = AppModel.shared
                 model.voice.replayMovedOn(working: Set(model.sessions.values.filter { $0.phase == "working" }.map(\.key)))
                 model.routeUpdates()
+                model.relayToAssistant()
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
+                model.openSessionsIfAsked()
                 model.collectTells()
                 model.closeSessionsIfAsked()
                 model.clearAssistantIfAsked()
@@ -690,17 +692,39 @@ final class AppModel {
     /// Another session in a project that already has one: its own tab and its own conversation.
     /// New means a new conversation. Picking up an old one is Recently ended's job.
     func newSession(in project: String) {
+        show(startSession(in: project))
+    }
+
+    /// Starts a new conversation in a project without bringing it to the front, and returns its key.
+    @discardableResult
+    private func startSession(in project: String, opening: String? = nil) -> String {
         guard sessions[project] != nil else {
             memory.conversations[project] = nil
             let session = TerminalSession(projectID: project)
+            session.openingMessage = opening
             sessions[project] = session
             if let tools { launch(session, tools: tools, fresh: true) }
-            return show(project)
+            return project
         }
         let session = TerminalSession(projectID: project, slot: String(UUID().uuidString.prefix(6)).lowercased())
+        session.openingMessage = opening
         sessions[session.key] = session
         if let tools { launch(session, tools: tools) }
-        show(session.key)
+        return session.key
+    }
+
+    /// The Assistant opened a session on a project, for you, often while you are on the phone.
+    /// It starts in the background: whatever you are looking at stays in front.
+    func openSessionsIfAsked() {
+        guard tools != nil, let assistant = sessions[assistantFolder] else { return }
+        for request in assistant.channel.takeOpens() {
+            guard let project = store.project(request.project), project.exists else {
+                message = "\(assistantName) asked to open \(request.project), which is not one of your projects."
+                continue
+            }
+            let key = startSession(in: project.id, opening: request.prompt)
+            message = "\(assistantName) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
+        }
     }
 
     /// What a tab says beside its project icon: what the session is for, never an id. A spin-off
@@ -927,6 +951,38 @@ final class AppModel {
             sessions[assistantFolder] = assistant
             launch(assistant, tools: tools)
             assistant.channel.markPending()
+        }
+    }
+
+    /// Project sessions' replies to what the Assistant told them, and their questions for you,
+    /// handed to the Assistant together once it is idle, whether or not voice is on.
+    func relayToAssistant() {
+        guard let tools else { return }
+        let projects = sessions.values.filter { $0.projectID != assistantFolder }
+        let waiting = projects.flatMap { session in session.channel.peekRelays().map { (session: session, file: $0.file, report: $0.report) } }
+            .sorted { ($0.report.at ?? 0) < ($1.report.at ?? 0) }
+        guard !waiting.isEmpty else { return }
+        let assistant = sessions[assistantFolder]
+        let stillOwing = projects.filter { $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+        let oldest = waiting.first?.report.at.map { Date().timeIntervalSince1970 - $0 / 1000 } ?? 0
+        guard RelayRouting.ready(reports: waiting.count, assistantPhase: assistant?.phase, assistantRunning: assistant?.isRunning == true,
+                                 dictating: voice.machine.state != .idle, stillOwing: stillOwing, oldestAge: oldest) else { return }
+        let briefing = RelayRouting.briefing(waiting.map { item in
+            let s = item.session
+            let handle = s.spawn?.ticket ?? s.slot.map { "+\($0)" } ?? "main"
+            let task = tabLabel(s.key)
+            return (project: projectName(s.projectID), session: handle, task: task == projectName(s.projectID) ? "" : task, report: item.report)
+        })
+        for item in waiting { try? FileManager.default.removeItem(at: item.file) }
+        if let assistant, assistant.isRunning {
+            assistant.submit(briefing)
+        } else {
+            try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+            let fresh = TerminalSession(projectID: assistantFolder)
+            fresh.startsQuietly = true
+            fresh.openingMessage = briefing
+            sessions[assistantFolder] = fresh
+            launch(fresh, tools: tools)
         }
     }
 

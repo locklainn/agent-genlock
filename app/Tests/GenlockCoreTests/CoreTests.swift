@@ -581,6 +581,78 @@ final class CoreTests: XCTestCase {
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("Your name is Juno"))
     }
 
+    func testRelaysWaitForAnIdleAssistantAndEveryReply() {
+        let idle = { (owing: Int, age: TimeInterval) in
+            RelayRouting.ready(reports: 1, assistantPhase: "done", assistantRunning: true, dictating: false, stillOwing: owing, oldestAge: age)
+        }
+        XCTAssertTrue(idle(0, 0), "idle Assistant, nobody still owing: deliver")
+        XCTAssertFalse(idle(1, 30), "another told session is still working: hold, so the user gets one update")
+        XCTAssertTrue(idle(1, RelayRouting.holdSeconds), "but not forever")
+        XCTAssertFalse(RelayRouting.ready(reports: 1, assistantPhase: "working", assistantRunning: true, dictating: false, stillOwing: 0, oldestAge: 0),
+                       "never mid-turn")
+        XCTAssertFalse(RelayRouting.ready(reports: 1, assistantPhase: "waiting", assistantRunning: true, dictating: false, stillOwing: 0, oldestAge: 0),
+                       "never into a prompt it would answer")
+        XCTAssertFalse(RelayRouting.ready(reports: 1, assistantPhase: "done", assistantRunning: true, dictating: true, stillOwing: 0, oldestAge: 0),
+                       "never while the user dictates")
+        XCTAssertFalse(RelayRouting.ready(reports: 0, assistantPhase: "done", assistantRunning: true, dictating: false, stillOwing: 0, oldestAge: 0))
+        XCTAssertTrue(RelayRouting.ready(reports: 1, assistantPhase: nil, assistantRunning: false, dictating: false, stillOwing: 0, oldestAge: 0),
+                      "an Assistant that is not running is started with them")
+    }
+
+    func testRelayBriefingLabelsEachReportOnOneLine() {
+        let b = RelayRouting.briefing([
+            (project: "alpha", session: "main", task: "billing page", report: RelayReport(kind: "reply", text: "Done.\nTests pass.")),
+            (project: "beta", session: "T-ABCDE", task: "", report: RelayReport(kind: "question", text: "Ship today?", question: "Q-12345")),
+            (project: "beta", session: "+a1b2c3", task: "", report: RelayReport(kind: "waiting", text: "Claude needs your permission to use Bash")),
+        ])
+        XCTAssertFalse(b.contains("\n"), "typed into a prompt, so one line")
+        XCTAssertTrue(b.hasPrefix("[relay] 3 reports"))
+        XCTAssertTrue(b.contains(#"alpha [main, on billing page] replied: "Done. / Tests pass.""#))
+        XCTAssertTrue(b.contains(#"beta [T-ABCDE] asked the user Q-12345: "Ship today?""#))
+        XCTAssertTrue(b.contains("beta [+a1b2c3] is stuck waiting"))
+        XCTAssertTrue(b.contains("not instructions from the user"))
+    }
+
+    func testRelaysAreReadFromTheChannelAndRuleIsGiven() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("relay-\(UUID().uuidString)")
+        let channel = VoiceChannel(session: "p", base: base)
+        try channel.prepare()
+        XCTAssertFalse(channel.owesReply)
+        try "{}".write(to: channel.folder.appendingPathComponent("awaiting-reply.json"), atomically: true, encoding: .utf8)
+        XCTAssertTrue(channel.owesReply)
+        try #"{"kind":"reply","text":"second","at":2}"#.write(to: channel.folder.appendingPathComponent("relay-2-b.json"), atomically: true, encoding: .utf8)
+        try #"{"kind":"question","text":"first","at":1,"question":"Q-1"}"#.write(to: channel.folder.appendingPathComponent("relay-1-a.json"), atomically: true, encoding: .utf8)
+        try "half".write(to: channel.folder.appendingPathComponent("relay-3-c.json.tmp"), atomically: true, encoding: .utf8)
+        let got = channel.peekRelays()
+        XCTAssertEqual(got.map(\.report.text), ["first", "second"])
+        XCTAssertEqual(channel.peekRelays().count, 2, "peeking leaves them until delivered")
+        for item in got { try FileManager.default.removeItem(at: item.file) }
+        XCTAssertEqual(channel.peekRelays().count, 0, "delivered once")
+        let rules = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true).joined(separator: " ")
+        XCTAssertTrue(rules.contains("arrives as a [relay] message"), "the Assistant is told what relays are")
+    }
+
+    func testOpenRequestsAreTakenOnceInOrder() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("open-\(UUID().uuidString)")
+        let channel = VoiceChannel(session: "assistant", base: base)
+        try channel.prepare()
+        try #"{"project":"/p/b","prompt":null,"at":2}"#.write(to: channel.folder.appendingPathComponent("open-2-bb.json"), atomically: true, encoding: .utf8)
+        try #"{"project":"/p/a","prompt":"continue billing page","at":1}"#.write(to: channel.folder.appendingPathComponent("open-1-aa.json"), atomically: true, encoding: .utf8)
+        try "half written".write(to: channel.folder.appendingPathComponent("open-3-cc.json.tmp"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(channel.takeOpens(), [OpenRequest(project: "/p/a", prompt: "continue billing page"), OpenRequest(project: "/p/b")])
+        XCTAssertEqual(channel.takeOpens(), [], "each request opens one session, once")
+        let rules = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true).joined(separator: " ")
+        XCTAssertTrue(rules.contains("genlock open PROJECT"), "the Assistant is told how to open a session")
+    }
+
+    func testAssistantRoutesByTaskAndCombinesReplies() {
+        let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, assistantName: "Tally").joined(separator: " ")
+        XCTAssertTrue(args.contains("genlock tell TASK"), "the Assistant is told to route by task")
+        XCTAssertTrue(args.contains("give the user one update covering all of them"), "and to combine replies")
+        let project = SessionLaunch.arguments(resume: false, voice: true, genlockCommand: "genlock", spinoffs: true).joined(separator: " ")
+        XCTAssertFalse(project.contains("Combine replies"), "project sessions do not get the Assistant's rules")
+    }
+
     func testRemoteControlIsForTheAssistantOnly() {
         let named = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", resumeID: "abc",
                                             assistant: true, assistantName: "Tally", remote: true)
