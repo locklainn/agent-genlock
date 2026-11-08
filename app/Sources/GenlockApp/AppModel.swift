@@ -42,6 +42,8 @@ final class AppModel {
     @ObservationIgnored var previousSession: String?
     /// Ended lately, newest first. Reopening one picks its conversation back up.
     var recentlyEnded: [SessionMemory.Open] = []
+    /// Sessions waiting on the one close confirmation. Every ✕ and Close in the app lands here.
+    var closing: [String]?
     var message: String? {
         didSet {
             messageTimer?.cancel()
@@ -331,6 +333,8 @@ final class AppModel {
                 session.phase = report.state
                 session.attentionMessage = report.message
             }
+            let wait = session.channel.readWait(phase: session.phase)
+            if session.wait != wait { withAnimation(.easeOut(duration: 0.2)) { session.wait = wait } }
             guard let report else { continue }
             let result = Attention.next(current: session.attention, report: report, isNew: isNew, looking: isLooking(at: session.key))
             if session.attention != result.attention {
@@ -470,6 +474,15 @@ final class AppModel {
                 self.message = "\(session.label) had no conversation to pick up, so this is a new one."
                 self.restart(session.key, fresh: true)
             }
+        }
+        // No "The session ended" popup: an exit closes it like the ✕ does, landing on the project's
+        // other session or a fresh one. Kept for a start that failed or died at once (it would loop),
+        // and for a session whose host is still alive (only the view let go).
+        session.onExited = { [weak self, weak session] in
+            guard let self, let session, self.sessions[session.key] === session, session.startError == nil,
+                  session.projectID != self.assistantFolder, (session.ranFor ?? 0) >= 5,
+                  !SessionHost.isAlive(socket: SessionHost.socket(in: session.channel.folder)) else { return }
+            self.closeTab(session.key)
         }
         let isAssistant = session.projectID == assistantFolder
         session.start(tools: tools, conversation: start, voice: voice.speakReplies,
@@ -711,13 +724,17 @@ final class AppModel {
     }
 
     func endSession(_ key: String) {
+        let project = sessions[key]?.projectID
         sessions[key]?.end()
         sessions[key]?.channel.remove()
         sessions[key] = nil
         visible.removeAll { $0 == key }
         if visible.isEmpty {
-            // Another open session is closer to where you were than the dashboard.
-            if let next = sessions.keys.sorted().first { visible = [next]; focus(next) } else { route = .dashboard }
+            // Where you were: the same project's last-shown or other session, else the session
+            // before this one, else the dashboard. Never whichever key sorts first (it was the Assistant).
+            let same = project.map { p in lastShown[p].flatMap { sessions[$0] != nil ? $0 : nil } ?? sessionKeys(in: p).first } ?? nil
+            let back = previousSession.flatMap { sessions[$0] != nil ? $0 : nil }
+            if let next = same ?? back { show(next) } else { route = .dashboard }
         }
     }
 
@@ -728,8 +745,8 @@ final class AppModel {
         sessions.values.contains { $0.projectID == project && $0.isRunning }
     }
 
-    /// Showing or hiding a pane leaves its session running.
-    func closePane(_ id: String) {
+    /// Takes a pane out of the split and leaves its session running. Not an ✕: ✕ always ends.
+    func hidePane(_ id: String) {
         visible.removeAll { $0 == id }
         if visible.isEmpty { route = .dashboard }
     }

@@ -243,6 +243,50 @@ struct ProgressRing: View {
     }
 }
 
+/// An hourglass being turned over: a half turn, a pause while the sand runs, another half turn.
+/// Motion is what makes a small icon findable at a glance. Still, if the Mac asks for less motion.
+struct SpinningHourglass: View {
+    var size: CGFloat
+    @State private var angle: Double = 0
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: "hourglass").font(.system(size: size, weight: .bold))
+            .rotationEffect(.degrees(angle))
+            .task {
+                guard !reduceMotion else { return }
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1.2))
+                    withAnimation(.easeInOut(duration: 0.55)) { angle += 180 }
+                }
+            }
+    }
+}
+
+/// A session blocked on something that is not the agent: a long command, a queue, a background
+/// job. Violet and an hourglass, so it reads apart from working (cyan), needs you (red) and done.
+struct WaitPill: View {
+    let wait: SessionWait
+    var compact = false
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 1)) { context in
+            HStack(spacing: 4) {
+                SpinningHourglass(size: 10)
+                if !compact { Text(wait.headline).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.tail) }
+                Text(wait.elapsed(now: context.date)).font(.system(size: 11, weight: .semibold)).monospacedDigit().opacity(0.75)
+            }
+            .foregroundStyle(Theme.violet)
+            .padding(.horizontal, 8).padding(.vertical, 4)
+            .background(Theme.violet.opacity(0.15), in: Capsule())
+            .overlay(Capsule().strokeBorder(Theme.violet.opacity(0.28), lineWidth: 1))
+            .frame(maxWidth: compact ? nil : 320)
+            .fixedSize(horizontal: compact, vertical: false)
+        }
+        .help("Waiting on something that is not the agent: \(wait.headline). The agent is not thinking; it resumes when this finishes.")
+    }
+}
+
 struct Pill: View {
     let text: String
     var symbol: String?

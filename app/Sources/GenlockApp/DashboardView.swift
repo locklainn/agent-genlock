@@ -414,6 +414,8 @@ struct ProjectCard: View {
                 }
                 if let need = model.attention(project: project.id) {
                     Pill(text: need == .waiting ? "NEEDS YOU" : "DONE", symbol: "bell.fill", color: need == .waiting ? Theme.red : Theme.amber)
+                } else if let wait = model.sessions.values.filter({ $0.projectID == project.id && $0.isRunning }).compactMap(\.wait).max(by: { $0.since < $1.since }) {
+                    WaitPill(wait: wait, compact: true)
                 } else if isRunning { LiveChip() }
                 if let order {
                     Text("\(order)").font(.system(size: 12, weight: .heavy, design: .rounded)).foregroundStyle(.white)

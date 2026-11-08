@@ -203,12 +203,25 @@ struct RootView: View {
         .animation(.spring(duration: 0.3), value: model.voice.replyTo)
         .animation(.spring(duration: 0.3), value: model.voice.waitingReplies)
         .preferredColorScheme(.dark)
+        .alert(closeTitle, isPresented: Binding(get: { model.closing != nil }, set: { if !$0 { model.closing = nil } })) {
+            Button("Close", role: .destructive) { withAnimation(.spring(duration: 0.3)) { model.confirmClose() } }
+            Button("Cancel", role: .cancel) { model.closing = nil }
+        } message: {
+            Text("It stops, and its conversation stays under Recently ended, where you can reopen it.")
+        }
         .onAppear { model.openMainWindow = { openWindow(id: "main") } }
         .dropDestination(for: URL.self) { urls, _ in
             let folders = urls.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
             for url in folders { model.addProject(path: url.path) }
             return !folders.isEmpty
         }
+    }
+}
+
+extension RootView {
+    var closeTitle: String {
+        let keys = model.closing ?? []
+        return keys.count == 1 ? "Close \(model.tabLabel(keys[0]))?" : "Close \(keys.count) sessions?"
     }
 }
 

@@ -349,7 +349,7 @@ public enum SessionLaunch {
     public static func sessionSettings(genlockCommand: String) -> String {
         let hook: [[String: Any]] = [["hooks": [["type": "command", "command": "\(genlockCommand) session-state"]]]]
         // The app shows usage itself, so its terminals print no status line; this still runs the user's own.
-        let settings: [String: Any] = ["hooks": ["Stop": hook, "Notification": hook, "UserPromptSubmit": hook, "PostToolUse": hook],
+        let settings: [String: Any] = ["hooks": ["Stop": hook, "Notification": hook, "UserPromptSubmit": hook, "PreToolUse": hook, "PostToolUse": hook],
                                        "statusLine": ["type": "command", "command": "\(genlockCommand) status-line", "padding": 0]]
         let data = try! JSONSerialization.data(withJSONObject: settings, options: [.sortedKeys])
         return String(decoding: data, as: UTF8.self)

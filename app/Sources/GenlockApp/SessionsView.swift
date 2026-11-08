@@ -354,18 +354,22 @@ struct SessionStripTab: View {
         let current = key == paneKey
         let session = model.sessions[key]
         let need = session?.attention
-        let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (session?.isRunning == true ? Theme.green : Theme.textTertiary))
+        let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (session?.wait != nil ? Theme.violet : (session?.isRunning == true ? Theme.green : Theme.textTertiary)))
         let label = model.tabLabel(key)
         Button { model.showInPane(key, replacing: paneKey) } label: {
             HStack(spacing: 5) {
-                Circle().fill(dot).frame(width: 6, height: 6)
+                if session?.wait != nil && need == nil {
+                    SpinningHourglass(size: 8).foregroundStyle(Theme.violet).frame(width: 6, height: 6)
+                } else {
+                    Circle().fill(dot).frame(width: 6, height: 6)
+                }
                 Text(width == nil ? TabOverflow.short(label) : label)
                     .font(.system(size: 12, weight: current ? .semibold : .regular))
                     .foregroundStyle(current ? Theme.textPrimary : (hovering ? Theme.textPrimary.opacity(0.85) : Theme.textSecondary))
                     .lineLimit(1).truncationMode(.tail)
                     .fixedSize(horizontal: width == nil, vertical: false)
-                if hovering && !current {
-                    Button { withAnimation(.spring(duration: 0.3)) { model.closeTab(key) } } label: {
+                if hovering || current {
+                    Button { model.requestClose([key]) } label: {
                         Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
                     }
                     .buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
@@ -386,7 +390,7 @@ struct SessionStripTab: View {
             if session?.spawn == nil {
                 Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
             }
-            Button("Close Session") { model.closeTab(key) }
+            Button("Close Session…") { model.requestClose([key]) }
         }
     }
 }
@@ -424,7 +428,7 @@ struct ProjectTab: View {
                 Button("Show All Its Sessions") { model.openSessions(Array(model.sessionKeys(in: project).prefix(SplitLayout.maxPanes))) }
             }
             Button("New Session in \(name)") { model.newSession(in: project) }
-            Button("Close All Its Sessions") { model.sessionKeys(in: project).forEach(model.closeTab) }
+            Button("Close All Its Sessions…") { model.requestClose(model.sessionKeys(in: project)) }
         }
     }
 }
@@ -527,12 +531,16 @@ struct PaneView: View {
                 Circle().fill(paneDot).frame(width: 7, height: 7)
                 Text(model.tabLabel(sessionKey)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                     .lineLimit(1).truncationMode(.tail).help("\(name): \(model.tabLabel(sessionKey))")
+                if let wait = model.sessions[sessionKey]?.wait, model.sessions[sessionKey]?.attention == nil { WaitPill(wait: wait, compact: true) }
             } else {
                 Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
                 Rectangle().fill(Theme.hairline).frame(width: 1, height: 16)
                 HeaderSessionTabs(projectID: projectID, paneKey: sessionKey)
             }
-            if !isSplit, let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
+            if !isSplit, let wait = model.sessions[sessionKey]?.wait, model.sessions[sessionKey]?.isRunning == true,
+               model.sessions[sessionKey]?.phase != "waiting" {
+                WaitPill(wait: wait)
+            } else if !isSplit, let phase = model.sessions[sessionKey]?.phase, model.sessions[sessionKey]?.isRunning == true {
                 switch phase {
                 case "working": WorkingIndicator()
                 case "waiting": Pill(text: "Needs you", symbol: "bell.fill", color: Theme.red)
@@ -567,8 +575,12 @@ struct PaneView: View {
                 Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
                     .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
             }
-            Button { model.closePane(sessionKey) } label: { Image(systemName: "xmark") }
-                .buttonStyle(IconButtonStyle()).help("Close this pane. The session keeps running.").accessibilityLabel("Close pane")
+            if isSplit {
+                Button { model.hidePane(sessionKey) } label: { Image(systemName: "rectangle.split.2x1.slash") }
+                    .buttonStyle(IconButtonStyle()).help("Take this pane out of the split. The session keeps running in its tab.").accessibilityLabel("Hide from split")
+            }
+            Button { model.requestClose([sessionKey]) } label: { Image(systemName: "xmark") }
+                .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
         .background(Color.white.opacity(0.03))
@@ -579,6 +591,7 @@ struct PaneView: View {
     /// The pane's status in split view, where there is no room for the pill.
     private var paneDot: SwiftUI.Color {
         let session = model.sessions[sessionKey]
+        if session?.isRunning == true, session?.wait != nil, session?.phase != "waiting" { return Theme.violet }
         switch session?.isRunning == true ? session?.phase : nil {
         case "working": return Theme.cyan
         case "waiting": return Theme.red

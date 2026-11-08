@@ -30,6 +30,7 @@ import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
 import { cmdClearContext, cmdClose, cmdName, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdStatusLine, cmdVoiceCheck } from '../lib/voice.mjs';
+import { cmdWait } from '../lib/waits.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
 const VERSION = '2.2.0';
@@ -105,6 +106,7 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
   genlock say "TEXT"                              speak a reply, in a session started with a voice channel
+  genlock wait "WHAT" [--queued]  |  genlock wait --clear   show the app what this session is blocked on (a queue, a job)
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
   genlock where
   genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--private] [--global] [--full] [--check]
@@ -235,6 +237,7 @@ const COMMANDS = {
   say: cmdSay,
   'voice-check': cmdVoiceCheck,
   'session-state': cmdSessionState,
+  wait: cmdWait,
   'status-line': cmdStatusLine,
   claim: cmdClaim,
   release: cmdRelease,
@@ -252,7 +255,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
+const FLAGS = new Set(['queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };

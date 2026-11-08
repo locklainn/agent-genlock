@@ -21,6 +21,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     /// What it last reported: working, done or waiting.
     var phase: String?
     var attentionMessage = ""
+    /// What it is blocked on that is not the agent thinking (a long command, a queue, a background job).
+    var wait: SessionWait?
     @ObservationIgnored var lastReportAt: Double = 0
     /// The conversation it is in, once known. Nil while continuing the folder's latest.
     var conversation: String?
@@ -32,6 +34,10 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     @ObservationIgnored var handoff: String?
     /// Called when picking up a conversation fails as it starts.
     @ObservationIgnored var onFailedPickUp: (() -> Void)?
+    /// Its process ended on its own (/exit, a crash, an agent closing itself), not through the app.
+    @ObservationIgnored var onExited: (() -> Void)?
+    /// How long it had been running, if it was started.
+    var ranFor: TimeInterval? { started.map { Date().timeIntervalSince($0.at) } }
     @ObservationIgnored private var started: (how: ConversationStart, at: Date)?
     @ObservationIgnored var cols = 0
     @ObservationIgnored var rows = 0
@@ -150,6 +156,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
                 self.exitCode = exitCode
                 if let started = self.started, started.how.failedToPickUp(exitCode: exitCode, after: Date().timeIntervalSince(started.at)) {
                     self.onFailedPickUp?()
+                } else {
+                    self.onExited?()
                 }
             }
         }

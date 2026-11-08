@@ -794,6 +794,39 @@ voiceRun(['session-state'], '{"hook_event_name":"UserPromptSubmit"}');
 voiceRun(['session-state'], '{"hook_event_name":"Notification","notification_type":"idle_prompt","message":"x"}');
 check('an idle reminder ends a turn that never reported ending', stateOf().state === 'done');
 
+/* ---- what a session is blocked on ----------------------------------------------- */
+
+{
+  const w = (name) => path.join(VOICE, name);
+  const json = (name) => JSON.parse(fs.readFileSync(w(name), 'utf8'));
+  voiceRun(['session-state'], '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"sleep 60","description":"Run the slow tests"}}');
+  check('a tool call starting records what the session is waiting on, labelled by its description', json('wait-tool.json').label === 'Run the slow tests');
+  check('...and does not change what the session reports', stateOf().state !== 'holding');
+  voiceRun(['session-state'], '{"hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{"description":"Watch the build"},"tool_response":{"backgroundTaskId":"bg1"}}');
+  check('the call finishing clears it', !fs.existsSync(w('wait-tool.json')));
+  check('a background task it started is remembered', json('wait-bg.json')[0].id === 'bg1' && json('wait-bg.json')[0].label === 'Watch the build');
+  const transcript = w('t.jsonl');
+  fs.writeFileSync(transcript, '{"x":1}\n');
+  voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', transcript_path: transcript }));
+  check('ending the turn with it still running is holding, not done', stateOf().state === 'holding', JSON.stringify(stateOf()));
+  fs.appendFileSync(transcript, JSON.stringify({ c: '<task-id>bg1</task-id>\n<output-file>/x</output-file>\n<status>completed</status>' }) + '\n');
+  voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', transcript_path: transcript }));
+  check('once the transcript reports it finished, the turn is done', stateOf().state === 'done' && !fs.existsSync(w('wait-bg.json')), JSON.stringify(stateOf()));
+  r = voiceRun(['wait', 'build', 'queue', '--queued']);
+  const decl = fs.readdirSync(VOICE).filter((x) => x.startsWith('wait-decl-'));
+  check('genlock wait declares a wait, keyed by its caller', r.code === 0 && decl.length === 1 && json(decl[0]).label === 'build queue' && json(decl[0]).kind === 'queued', r.err + decl.join());
+  voiceRun(['wait', '--clear']);
+  check('...and --clear ends it', !fs.readdirSync(VOICE).some((x) => x.startsWith('wait-decl-')));
+  fs.writeFileSync(w('wait-decl-999999.json'), '{"label":"old","kind":"running","since":1,"pid":999999}');
+  voiceRun(['session-state'], '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{}}');
+  check('a declared wait whose caller has gone ends at the next tool call', !fs.existsSync(w('wait-decl-999999.json')));
+  voiceRun(['session-state'], '{"hook_event_name":"PostToolUse","tool_name":"Read"}');
+}
+{
+  const r2 = g('wait', 'anything');
+  check('genlock wait outside an app session does nothing and succeeds, so scripts can always call it', r2.code === 0, r2.err);
+}
+
 /* ---- the status line in app sessions -------------------------------------------- */
 
 {
