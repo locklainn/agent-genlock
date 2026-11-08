@@ -9,16 +9,11 @@ struct SessionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             SessionBar()
-            let rows = SplitLayout.arrange(model.visible)
-            // Plain stacks rather than split views: every row and every pane in it gets an equal share.
-            VStack(spacing: 1) {
-                ForEach(rows, id: \.self) { row in
-                    HStack(spacing: 1) {
-                        ForEach(row, id: \.self) {
-                            PaneView(sessionKey: $0).frame(minWidth: 320, maxWidth: .infinity, minHeight: 200, maxHeight: .infinity)
-                        }
-                    }
-                }
+            // One flat list keyed by session, so a pane keeps its identity when the rows around it
+            // change. Keyed by row, a swap or a new pane rebuilt every pane in that row, and the old
+            // and new wrappers fought over the same terminal view; the loser left a blank pane.
+            PaneGrid(rows: SplitLayout.rows(count: model.visible.count)) {
+                ForEach(model.visible, id: \.self) { PaneView(sessionKey: $0) }
             }
             .background(Theme.hairline)
         }
@@ -668,6 +663,30 @@ struct SessionEndedOverlay: View {
         .background(Color(hex: 0x12141F).opacity(0.94), in: RoundedRectangle(cornerRadius: 18, style: .continuous))
         .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).strokeBorder(Theme.hairline, lineWidth: 1))
         .shadow(radius: 20)
+    }
+}
+
+/// Every row an equal share of the height, every pane in a row an equal share of the width.
+struct PaneGrid: Layout {
+    let rows: [Int]
+    var spacing: CGFloat = 1
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions(by: CGSize(width: 800, height: 600))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let counts = rows.isEmpty ? [subviews.count] : rows
+        let height = (bounds.height - spacing * CGFloat(counts.count - 1)) / CGFloat(counts.count)
+        var index = 0
+        for (r, n) in counts.enumerated() where n > 0 {
+            let width = (bounds.width - spacing * CGFloat(n - 1)) / CGFloat(n)
+            for c in 0..<n where index < subviews.count {
+                let origin = CGPoint(x: bounds.minX + CGFloat(c) * (width + spacing), y: bounds.minY + CGFloat(r) * (height + spacing))
+                subviews[index].place(at: origin, proposal: ProposedViewSize(width: width, height: height))
+                index += 1
+            }
+        }
     }
 }
 

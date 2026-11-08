@@ -146,8 +146,11 @@ struct UsageMeter: View {
         let weekly = usage.isCurrent(usage.weekly, now: now) ? usage.weekly : nil
         let pace = usage.pace(now: now)
         Grid(alignment: .leading, horizontalSpacing: 5, verticalSpacing: 2) {
-            if let session { line("5h", session.used, mark: nil, color: sessionColor(session.used)) }
-            if let weekly { line("wk", weekly.used, mark: pace, color: weeklyColor(usage.overPace(now: now) ?? 0)) }
+            if let session { line("5h", session.used, mark: nil, color: sessionColor(session.used), pace: nil) }
+            if let weekly {
+                let over = usage.overPace(now: now)
+                line("wk", weekly.used, mark: pace, color: weeklyColor(over ?? 0), pace: over)
+            }
             if session == nil && weekly == nil {
                 GridRow { Text("usage –").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary) }
             }
@@ -160,7 +163,7 @@ struct UsageMeter: View {
         .accessibilityElement(children: .combine)
     }
 
-    private func line(_ label: String, _ used: Double, mark: Int?, color: Color) -> some View {
+    private func line(_ label: String, _ used: Double, mark: Int?, color: Color, pace over: Int?) -> some View {
         GridRow {
             Text(label).font(.system(size: 9.5, weight: .semibold)).foregroundStyle(Theme.textTertiary)
             ZStack(alignment: .leading) {
@@ -171,6 +174,14 @@ struct UsageMeter: View {
             .frame(width: 40, height: 4)
             Text("\(Int(used.rounded()))%").font(.system(size: 10.5, weight: .bold, design: .rounded)).monospacedDigit().foregroundStyle(color)
                 .gridColumnAlignment(.trailing)
+            // Pacing against an even week: "+6 pace" is ahead of even use, "−4 pace" under it.
+            if let over {
+                Text("\(over > 0 ? "+" : over < 0 ? "−" : "±")\(abs(over)) pace")
+                    .font(.system(size: 9.5, weight: .semibold, design: .rounded)).monospacedDigit()
+                    .foregroundStyle(over > 5 ? weeklyColor(over) : Theme.textSecondary)
+            } else {
+                Color.clear.frame(width: 0, height: 0)
+            }
         }
     }
 
