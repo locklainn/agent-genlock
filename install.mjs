@@ -4,7 +4,7 @@
  *
  *   genlock install                       # every module's rules, into detected agent files
  *   genlock install --only goals,tickets  # just these (plus anything they depend on)
- *   genlock install --hooks               # Claude Code hooks: orient, guard, deliver
+ *   genlock install --hooks               # Claude Code hooks: orient, guard, deliver, session-end
  *   genlock install --mcp                 # register the MCP server in .mcp.json
  *   genlock install --skill               # also install the Claude Code skills
  *   genlock install --global              # into ~/.claude rather than this repository
@@ -129,7 +129,7 @@ if (has('--hooks')) {
   settings.hooks ||= {};
   const put = (event, matcher, sub) => {
     const kept = (settings.hooks[event] || [])
-      .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !/genlock(\.mjs)?["']? (orient|guard|deliver)\b/.test(h.command || '')) }))
+      .map((g) => ({ ...g, hooks: (g.hooks || []).filter((h) => !/genlock(\.mjs)?["']? (orient|guard|deliver|session-end)\b/.test(h.command || '')) }))
       .filter((g) => g.hooks.length);
     const group = { hooks: [{ type: 'command', command: shellCmd(sub) }] };
     if (matcher) group.matcher = matcher;
@@ -139,6 +139,7 @@ if (has('--hooks')) {
   if (mods.includes('coordination')) {
     put('PreToolUse', 'Edit|Write|MultiEdit|NotebookEdit|Bash', 'guard');
     put('PostToolUse', null, 'deliver');
+    put('SessionEnd', null, 'session-end');
   }
   writeIfChanged(file, before === '{}' ? '' : `${before}\n`, `${JSON.stringify(settings, null, 2)}\n`, 'hooks');
 }

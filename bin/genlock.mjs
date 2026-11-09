@@ -20,7 +20,7 @@ import {
   cmdReq, cmdShow, cmdStart, cmdStatus, cmdUnforbid, cmdUpdate, mark, withReason,
 } from '../lib/tickets.mjs';
 import { cmdGoal } from '../lib/goals.mjs';
-import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, liveBase, liveClaims } from '../lib/claims.mjs';
+import { cmdCheck, cmdClaim, cmdClaims, cmdGuard, cmdRelease, cmdSessionEnd, liveBase, liveClaims } from '../lib/claims.mjs';
 import { cmdCheckpoint, cmdContinue, cmdOrient, cmdSwap } from '../lib/continuity.mjs';
 import { cmdFollowups } from '../lib/followups.mjs';
 import { cmdAnswer, cmdAsk, cmdDeliver, cmdInbox } from '../lib/ask.mjs';
@@ -50,6 +50,7 @@ TICKETS   requirements first; done is proved, not asserted
   genlock update ID "THE LATEST"   (600 characters at most; findings go in files)
   genlock hazard ID "WHAT WAS LEFT BEHIND" --verify "HOW TO CHECK"  |  genlock hazard ID --clear N --evidence ".."
   genlock start ID --because ".."               required to restart a blocked ticket
+  genlock start ID --take-over --user-said ".." take a ticket another live session holds (start claims it)
 
 ON A TICKET OR A GOAL
   Every goal and ticket has a short name. Use it, or words from its title, anywhere an ID goes:
@@ -97,6 +98,7 @@ CLAIMS    who is working on what, right now
   genlock claim ID --path P [--resource R] [--ttl MIN] [--replace]
   genlock release ID [--reason ..]  |  genlock claims [--json]  |  genlock check --path P [--resource R]
   genlock guard                                   the Claude Code PreToolUse hook
+  genlock session-end                             the Claude Code SessionEnd hook: releases the session's claims
 
 SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock spinoff propose "TITLE" --parent ID --why ".." --context ".." --path P --needs none --blocks none
@@ -245,6 +247,7 @@ const COMMANDS = {
   claims: cmdClaims,
   check: cmdCheck,
   guard: cmdGuard,
+  'session-end': cmdSessionEnd,
   spinoff: cmdSpinoff,
   sync: cmdSync,
   doctor: cmdDoctor,
@@ -256,7 +259,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
+const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };

@@ -22,9 +22,11 @@ const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPRO
 delete baseEnv.GENLOCK_APP_CHANNEL;
 delete baseEnv.GENLOCK_SESSION;
 delete baseEnv.CLAUDE_CODE_SESSION_ID;
+// Run from inside Claude Code, every claim would name that real, running agent. 0 names none.
+baseEnv.GENLOCK_AGENT_PID = '0';
 
-function run(cwd, session, args, input) {
-  const env = { ...baseEnv };
+function run(cwd, session, args, input, extra = {}) {
+  const env = { ...baseEnv, ...extra };
   if (session) env.GENLOCK_SESSION = session; else delete env.GENLOCK_SESSION;
   const r = spawnSync(process.execPath, [CLI, ...args], { cwd, encoding: 'utf8', env, input });
   return { code: r.status, out: r.stdout || '', err: r.stderr || '', all: (r.stdout || '') + (r.stderr || '') };
@@ -246,6 +248,60 @@ const race = await Promise.all(Array.from({ length: 8 }, (_, i) => new Promise((
 })));
 check('8 parallel claims on one path: exactly one wins', race.filter((c) => c === 0).length === 1, race.join(','));
 for (let i = 0; i < 8; i++) run(CWD, `racer${i}`, ['release', `racer${i}`]);
+
+/* ---- task claims: start claims the ticket, and a gone agent lets go ------------ */
+
+const newT = (title) => idOf(g('new', title, '-r', `${title} exits zero`, '-c', 'node t.mjs'));
+const KA = newT('Task claim alpha');
+r = g('start', KA);
+check('start claims the ticket for this session', r.code === 0 && /claimed/.test(r.out), r.all);
+r = as('other', 'start', KA);
+check('a second live session\'s start is refused, naming the holder', r.code === 4 && /held by session parent/.test(r.err), r.all);
+r = as('other', 'claim', KA, '--path', 'elsewhere');
+check('...and so is claiming paths under that ticket', r.code === 4, r.all);
+r = as('other', 'rank', 'tasks');
+check('rank marks the ticket TAKEN for another session', /TAKEN by session parent/.test(r.out), r.all);
+r = g('rank', 'tasks');
+check('...and as this session\'s own for the holder', /this session is on it/.test(r.out), r.all);
+r = as('other', 'orient');
+check('orient marks it TAKEN too', /TAKEN by session parent/.test(r.out), r.all);
+r = as('other', 'start', KA, '--take-over');
+check('a take-over without the user\'s words is refused', r.code === 4, r.all);
+r = as('other', 'start', KA, '--take-over', '--user-said', 'take alpha, the other one is stuck');
+check('a take-over with the user\'s words goes through', r.code === 0 && /taken over/.test(r.out), r.all);
+r = g('show', KA);
+check('...and the take-over is on the record', /taken over from session parent/.test(r.out), r.all);
+
+// An agent that is alive holds its ticket past its lease; once it is gone the ticket is free at once.
+const agent = spawn('sleep', ['60'], { stdio: 'ignore' });
+await new Promise((res) => setTimeout(res, 150));
+const KB = newT('Task claim beta');
+r = run(CWD, 'agentB', ['start', KB], undefined, { GENLOCK_AGENT_PID: String(agent.pid) });
+const tbFile = path.join(CWD, '.git', 'genlock', 'claims', `${KB}.json`);
+const tb = JSON.parse(fs.readFileSync(tbFile, 'utf8'));
+check('a claim records its agent\'s pid and start time', tb.agent?.pid === agent.pid && !!tb.agent?.started, JSON.stringify(tb));
+fs.writeFileSync(tbFile, JSON.stringify({ ...tb, expires: new Date(Date.now() - 60000).toISOString() }));
+r = as('other', 'start', KB);
+check('a running agent holds its ticket even past its lease', r.code === 4 && new RegExp(`pid ${agent.pid} running`).test(r.err), r.all);
+r = as('other', 'claims');
+check('claims says the agent is running', new RegExp(`pid ${agent.pid} running`).test(r.out), r.all);
+agent.kill('SIGKILL');
+await new Promise((res) => agent.on('exit', res));
+r = as('other', 'claims');
+check('a killed agent\'s claim is gone from claims at once', !r.out.includes(KB), r.all);
+check('...and its file is cleared', !fs.existsSync(tbFile));
+r = as('other', 'start', KB);
+check('...so another session can start the ticket', r.code === 0, r.all);
+
+// A session that closes cleanly releases everything it holds.
+as('ender', 'claim', 'ender-work', '--path', 'ender/dir');
+const KC = newT('Task claim gamma');
+as('ender', 'start', KC);
+r = run(CWD, null, ['session-end'], JSON.stringify({ session_id: 'ender', hook_event_name: 'SessionEnd' }));
+check('session-end releases every claim of the ending session', r.code === 0 && /ender-work/.test(r.out) && new RegExp(KC).test(r.out), r.all);
+r = as('other', 'claims');
+check('...and they are gone', !/ender/.test(r.out) && !r.out.includes(KC), r.all);
+for (const id of [KA, KB, KC]) { as('other', 'release', id, '--reason', 'test cleanup'); g('abandon', id, 'test cleanup'); }
 
 /* ---- the guard ---------------------------------------------------------------- */
 
@@ -1505,6 +1561,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   me('goal', 'next', G, 'Prove the refund button');
   r = inApp(['swap', 'nothing-like-this', '--user-said', 'yes']);
   check('a swap refuses a goal that is not there', r.code !== 0 && !asked(), r.all);
+  check('before the swap this session holds a claim on its task', me('claims').out.includes(T), me('claims').out);
   r = inApp(['swap', 'refunds', '--user-said', 'yes, swap', '--uncommitted', 'none of mine']);
   check('a swap passes once everything is current', r.code === 0 && /fresh session on refunds/.test(r.out), r.all);
   const sw = asked() ? JSON.parse(fs.readFileSync(path.join(CHAN, 'swap.json'), 'utf8')) : {};
@@ -1512,6 +1569,14 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const projectLog = [path.join(repo, '.genlock', 'records', 'project.jsonl'), path.join(repo, '.git', 'genlock', 'records', 'project.jsonl')].find((x) => fs.existsSync(x));
   const recorded = fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   check('...with a checkpoint and the user\'s words on record', recorded.some((e) => e.op === 'checkpoint') && recorded.some((e) => e.op === 'swap' && e.user_said === 'yes, swap' && e.goal === G));
+  const handedT = JSON.parse(fs.readFileSync(projectLog.replace('project.jsonl', `${T}.jsonl`), 'utf8').trim().split('\n').at(-1) || '{}');
+  check('a swap hands each open task it owned to the fresh session', handedT.op === 'handoff' && handedT.goal === G && sw.tickets?.includes(T), JSON.stringify(handedT) + JSON.stringify(sw.tickets));
+  check('...releases its claim on it', !me('claims').out.includes(T), me('claims').out);
+  check('...and the opening prompt tells the fresh session to take it', sw.prompt?.includes('genlock start ID') && sw.prompt.includes(T), sw.prompt);
+  check('...a task another session owns is not handed', !sw.tickets?.includes(OT), JSON.stringify(sw.tickets));
+  const fresh = (...args) => run(repo, 'fresh-one', args);
+  r = fresh('start', T);
+  check('the fresh session starts the handed task and owns it', r.code === 0 && /owner: fresh-one/.test(fresh('show', T).out), r.all + fresh('show', T).out);
 
   // A yes the Assistant relayed, for when the user is on the phone and cannot type in this pane.
   fs.rmSync(path.join(CHAN, 'swap.json'));
