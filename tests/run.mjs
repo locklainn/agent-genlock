@@ -883,6 +883,29 @@ check('an idle reminder ends a turn that never reported ending', stateOf().state
   check('...but not one the Assistant asks itself', relays().length === 0);
   r = voiceRun(['answer', qid, 'yes', '--user-said', 'yes ship it']);
   check('the answer goes back with genlock answer', r.code === 0 && /answered/.test(r.out), r.out + r.err);
+  // A Subassistant told this session something: the reply names it, so the app routes it there.
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), JSON.stringify({ at: Date.now(), from: '/ch/sub-a' }));
+  voiceRun(['session-state'], '{"hook_event_name":"Notification","message":"Claude needs your permission to use Bash"}');
+  check('a prompt a session is stuck on goes to the Subassistant that asked', relays().length === 1 && relays()[0].to === '/ch/sub-a', JSON.stringify(relays()));
+  clear();
+  r = voiceRun(['ask', 'user', 'Which colour?']);
+  check('...and so does a question it asks meanwhile', relays().length === 1 && relays()[0].kind === 'question' && relays()[0].to === '/ch/sub-a', JSON.stringify(relays()));
+  clear();
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"done for sub"}');
+  check('...and its reply, once', relays().length === 1 && relays()[0].kind === 'reply' && relays()[0].to === '/ch/sub-a' && !fs.existsSync(path.join(VOICE, 'awaiting-reply.json')), JSON.stringify(relays()));
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"for tally"}');
+  check('a reply Tally asked for names no Subassistant', relays().length === 1 && relays()[0].to === undefined);
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"sub reports up"}', { GENLOCK_APP_PROJECTS: '/x/projects.json', GENLOCK_APP_SCOPE: '/x/proj' });
+  check('a Subassistant Tally delegated to reports its reply up', relays().length === 1 && relays()[0].text === 'sub reports up', JSON.stringify(relays()));
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"tally"}', { GENLOCK_APP_PROJECTS: '/x/projects.json' });
+  check('...but Tally, at the top, reports to nobody', relays().length === 0);
   fs.rmSync(path.join(VOICE, 'awaiting-reply.json'), { force: true });
 }
 
