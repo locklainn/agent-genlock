@@ -74,7 +74,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     static let claudeMissing = "Claude Code was not found. Genlock keeps looking, and this session starts as soon as it is there."
     var isWaitingForClaude: Bool { startError == Self.claudeMissing && !isRunning }
 
-    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil, remote: Bool = false) {
+    func start(tools: ToolEnvironment, conversation start: ConversationStart, voice: Bool, spinoffs: Bool, assistantOf store: URL? = nil, assistantName: String? = nil, remote: Bool = false,
+               subassistant scope: (path: String, name: String)? = nil) {
         guard let host = SessionHost.executable else {
             startError = "Genlock is missing its session host. Reinstall the app."
             return
@@ -95,10 +96,12 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         var env = tools.environment
         env["GENLOCK_APP_CHANNEL"] = channel.folder.path
         if let spawn { env["GENLOCK_SESSION"] = spawn.session }
-        // Only the Assistant is told where every project is.
+        // Only the Assistant is told where every project is. A project's own Assistant is told too,
+        // and fenced to its project by GENLOCK_APP_SCOPE.
         if let store {
             env["GENLOCK_APP_PROJECTS"] = store.path
             env["GENLOCK_APP_CHANNELS"] = VoiceChannel.defaultBase.path
+            if let scope { env["GENLOCK_APP_SCOPE"] = scope.path }
         }
         let genlockCommand = tools.genlockArgv?.map { $0.contains(" ") ? "\"\($0)\"" : $0 }.joined(separator: " ")
         var newID: String?
@@ -112,8 +115,9 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         started = reattaching ? nil : (start, Date())
         let args = SessionLaunch.arguments(resume: start == .latest, voice: voice, genlockCommand: genlockCommand, spinoffs: spinoffs,
                                            reportsState: true, sessionID: newID, resumeID: resumeID,
-                                           prompt: openingMessage ?? (newID == nil ? nil : (store != nil ? (startsQuietly ? nil : SessionLaunch.assistantOpening) : spawn?.prompt)), assistant: store != nil, assistantName: assistantName, handoff: handoff,
-                                           remote: remote)
+                                           prompt: openingMessage ?? (newID == nil ? nil : (store != nil ? (startsQuietly ? nil : (scope != nil ? SessionLaunch.subassistantOpening : SessionLaunch.assistantOpening)) : spawn?.prompt)),
+                                           assistant: store != nil && scope == nil, assistantName: assistantName, handoff: handoff,
+                                           remote: remote, subassistantOf: scope?.name)
         view.startProcess(executable: host, args: ["run", socket, projectID, "--", claude] + args,
                           environment: env.map { "\($0.key)=\($0.value)" },
                           execName: nil, currentDirectory: projectID)

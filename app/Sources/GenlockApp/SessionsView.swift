@@ -294,9 +294,10 @@ struct HeaderSessionTabs: View {
     var body: some View {
         let order = model.sessionKeys(in: projectID)
         let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.tabLabel($0))) - 40 }
-        let layout = TabOverflow.layout(order: order, priority: [paneKey], room: room - 90, natural: natural)
-        let ended = model.recentlyEnded.filter { $0.project == projectID && model.sessions[$0.key] == nil }
+        let layout = TabOverflow.layout(order: order, priority: [paneKey], room: room - 90 - SubassistantTab.width, natural: natural)
+        let ended = model.recentlyEnded.filter { $0.project == projectID && model.sessions[$0.key] == nil && $0.slot != AppModel.subSlot }
         HStack(spacing: 2) {
+            SubassistantTab(projectID: projectID, paneKey: paneKey).padding(.trailing, 4)
             ForEach(layout.shown, id: \.self) { key in
                 SessionStripTab(key: key, paneKey: paneKey, width: layout.width)
             }
@@ -391,6 +392,50 @@ struct SessionStripTab: View {
                 Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
             }
             Button("Close Session…") { model.requestClose([key]) }
+        }
+    }
+}
+
+/// A project's own Assistant, pinned first among its sessions. A tinted capsule with the project's
+/// icon and a sparkle badge, so it reads as this project's Assistant and never as one more session.
+struct SubassistantTab: View {
+    @Environment(AppModel.self) private var model
+    let projectID: String
+    let paneKey: String
+    static let width: CGFloat = 112
+
+    var body: some View {
+        let key = model.subKey(projectID)
+        let current = key == paneKey
+        let session = model.sessions[key]
+        let need = session?.attention
+        let shape = Capsule(style: .continuous)
+        Button { model.openSubassistant(projectID, replacing: paneKey) } label: {
+            HStack(spacing: 5) {
+                ZStack(alignment: .bottomTrailing) {
+                    if let p = model.store.project(projectID) { ProjectIconView(project: p, size: 14) }
+                    Image(systemName: "sparkles").font(.system(size: 7, weight: .black)).foregroundStyle(.white)
+                        .padding(1.5).background(Theme.violet, in: Circle()).offset(x: 4, y: 3)
+                }
+                Text("Assistant").font(.system(size: 12, weight: current ? .bold : .semibold)).foregroundStyle(current ? Theme.textPrimary : Theme.violet)
+                    .lineLimit(1).fixedSize()
+                if let need {
+                    Circle().fill(need == .waiting ? Theme.red : Theme.amber).frame(width: 6, height: 6)
+                } else if session?.phase == "working" {
+                    Circle().fill(Theme.violet).frame(width: 6, height: 6).shadow(color: Theme.violet, radius: 3)
+                }
+            }
+            .padding(.leading, 7).padding(.trailing, 9).padding(.vertical, 3)
+            .background(Theme.violet.opacity(current ? 0.28 : 0.12), in: shape)
+            .overlay(shape.strokeBorder(Theme.violet.opacity(current ? 0.9 : 0.45), lineWidth: 1))
+            .contentShape(shape)
+        }
+        .buttonStyle(.plain)
+        .help("\(model.projectName(projectID))'s Assistant: works through every session and goal in this project with you")
+        .accessibilityLabel("\(model.projectName(projectID)) Assistant")
+        .contextMenu {
+            Button("Status Update") { model.projectStatus(projectID, replacing: paneKey) }
+            if session != nil { Button("Close Assistant") { model.endSession(key) } }
         }
     }
 }
@@ -548,6 +593,16 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
+            if model.isSubassistant(sessionKey) {
+                Button { model.projectStatus(projectID, replacing: sessionKey) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checklist")
+                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                    }
+                }
+                .buttonStyle(GlassButtonStyle(compact: isSplit))
+                .help("Start \(name)'s Assistant fresh, go through every session in this project, and suggest what to close or finish")
+            }
             if projectID == model.assistantFolder {
                 Button { model.statusSweep() } label: {
                     HStack(spacing: 6) {

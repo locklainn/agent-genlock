@@ -513,11 +513,13 @@ final class AppModel {
             self.closeTab(session.key)
         }
         let isAssistant = session.projectID == assistantFolder
+        let isSub = session.slot == Self.subSlot
         session.start(tools: tools, conversation: start, voice: voice.speakReplies,
-                      spinoffs: !isAssistant && (session.spawn != nil || spinoffsAllowed(session.projectID)),
-                      assistantOf: isAssistant ? store.file : nil,
+                      spinoffs: !isAssistant && !isSub && (session.spawn != nil || spinoffsAllowed(session.projectID)),
+                      assistantOf: isAssistant || isSub ? store.file : nil,
                       assistantName: isAssistant ? namer.saved : nil,
-                      remote: isAssistant && remoteControl)
+                      remote: isAssistant && remoteControl,
+                      subassistant: isSub ? (path: session.projectID, name: projectName(session.projectID)) : nil)
     }
 
     /// Reopens what was open last time, ready to carry on. Before the tools are found these
@@ -692,9 +694,45 @@ final class AppModel {
         Array(Set(sessions.values.map(\.projectID))).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
     }
 
-    /// A project's sessions with tabs, its main session first.
+    /// A project's sessions with tabs, its main session first. Not its Assistant, which has its own pinned tab.
     func sessionKeys(in project: String) -> [String] {
-        sessions.keys.filter { sessions[$0]?.projectID == project }.sorted()
+        sessions.keys.filter { sessions[$0]?.projectID == project && sessions[$0]?.slot != Self.subSlot }.sorted()
+    }
+
+    // MARK: Project Assistants
+
+    /// The session slot a project's own Assistant runs in. genlock knows it by the same name.
+    static let subSlot = "assistant"
+
+    func subKey(_ project: String) -> String { SessionMemory.key(project: project, ticket: nil, slot: Self.subSlot) }
+
+    func isSubassistant(_ key: String) -> Bool { sessions[key]?.slot == Self.subSlot }
+
+    /// Shows a project's Assistant, starting it on a project status when it is not open yet.
+    func openSubassistant(_ project: String, replacing pane: String? = nil) {
+        let key = subKey(project)
+        if sessions[key] == nil { startSubassistant(project) }
+        if let pane { showInPane(key, replacing: pane) } else { show(key) }
+    }
+
+    private func startSubassistant(_ project: String, quietly opening: String? = nil) {
+        memory.conversations[subKey(project)] = nil
+        let session = TerminalSession(projectID: project, slot: Self.subSlot)
+        if let opening { session.startsQuietly = true; session.openingMessage = opening }
+        sessions[session.key] = session
+        if let tools { launch(session, tools: tools, fresh: true) }
+    }
+
+    /// Status update in a project: its Assistant starts on a fresh conversation and sweeps, so it
+    /// stays near-stateless like the main one. A turn in progress is left to finish.
+    func projectStatus(_ project: String, replacing pane: String? = nil) {
+        let key = subKey(project)
+        if let current = sessions[key], current.isRunning, current.phase == "working" {
+            message = "\(projectName(project))'s Assistant is mid-turn. Try Status update again once it has answered."
+        } else if sessions[key] != nil {
+            restart(key, fresh: true)
+        }
+        openSubassistant(project, replacing: pane)
     }
 
     func projectName(_ project: String) -> String {
@@ -742,14 +780,20 @@ final class AppModel {
     /// The Assistant opened a session on a project, for you, often while you are on the phone.
     /// It starts in the background: whatever you are looking at stays in front.
     func openSessionsIfAsked() {
-        guard tools != nil, let assistant = sessions[assistantFolder] else { return }
-        for request in assistant.channel.takeOpens() {
-            guard let project = store.project(request.project), project.exists else {
-                message = "\(assistantName) asked to open \(request.project), which is not one of your projects."
-                continue
+        guard tools != nil else { return }
+        let askers = sessions.values.filter { $0.projectID == assistantFolder || $0.slot == Self.subSlot }
+        for asker in askers {
+            let who = asker.slot == Self.subSlot ? "\(projectName(asker.projectID))'s Assistant" : assistantName
+            for request in asker.channel.takeOpens() {
+                guard let project = store.project(request.project), project.exists else {
+                    message = "\(who) asked to open \(request.project), which is not one of your projects."
+                    continue
+                }
+                // A project's Assistant opens sessions in its own project only.
+                if asker.slot == Self.subSlot && project.id != asker.projectID { continue }
+                let key = startSession(in: project.id, opening: request.prompt)
+                message = "\(who) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
             }
-            let key = startSession(in: project.id, opening: request.prompt)
-            message = "\(assistantName) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
         }
     }
 
@@ -757,11 +801,12 @@ final class AppModel {
     /// by its task, any other by the task it is working on, else the project's name.
     func tabLabel(_ key: String) -> String {
         guard let session = sessions[key] else { return key }
+        if session.slot == Self.subSlot { return "Assistant" }
         if session.spawn != nil { return label(project: session.projectID, spawn: session.spawn) ?? session.label }
         let snap = state(for: session.projectID).snapshot
         let focus = snap.flatMap { $0.initialized ? session.focus(in: $0) : nil }
         if let task = focus?.working?.heading { return task }
-        let keys = sessions.keys.filter { sessions[$0]?.projectID == session.projectID && sessions[$0]?.spawn == nil }.sorted()
+        let keys = sessions.keys.filter { sessions[$0]?.projectID == session.projectID && sessions[$0]?.spawn == nil && sessions[$0]?.slot != Self.subSlot }.sorted()
         if session.slot == nil && keys.count == 1 { return projectName(session.projectID) }
         return "Session \((keys.firstIndex(of: key) ?? 0) + 1)"
     }
@@ -983,13 +1028,34 @@ final class AppModel {
     /// Project sessions' replies to what the Assistant told them, and their questions for you,
     /// handed to the Assistant together once it is idle, whether or not voice is on.
     func relayToAssistant() {
-        guard let tools else { return }
-        let projects = sessions.values.filter { $0.projectID != assistantFolder }
-        let waiting = projects.flatMap { session in session.channel.peekRelays().map { (session: session, file: $0.file, report: $0.report) } }
+        guard tools != nil else { return }
+        let reporters = sessions.values.filter { $0.projectID != assistantFolder }
+        let waiting = reporters.flatMap { session in session.channel.peekRelays().map { (session: session, file: $0.file, report: $0.report) } }
             .sorted { ($0.report.at ?? 0) < ($1.report.at ?? 0) }
         guard !waiting.isEmpty else { return }
-        let assistant = sessions[assistantFolder]
-        let stillOwing = projects.filter { $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+        // A reply a project's Assistant asked for goes back to it. Everything else, and anything for
+        // a project Assistant that has since closed, goes to the main one.
+        let subs = Dictionary(sessions.values.filter { $0.slot == Self.subSlot }.map { ($0.channel.folder.path, $0) },
+                              uniquingKeysWith: { a, _ in a })
+        let target = { (report: RelayReport) -> TerminalSession? in
+            RelayRouting.recipient(of: report, among: Array(subs.keys)).flatMap { subs[$0] }
+        }
+        let forTally = waiting.filter { target($0.report) == nil }
+        if !forTally.isEmpty {
+            let stillOwing = reporters.filter { $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+            deliverRelays(forTally, to: sessions[assistantFolder], stillOwing: stillOwing)
+        }
+        for sub in Set(waiting.compactMap { target($0.report)?.key }).compactMap({ sessions[$0] }) {
+            let mine = waiting.filter { target($0.report) === sub }
+            let stillOwing = reporters.filter { $0.projectID == sub.projectID && $0 !== sub && $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+            deliverRelays(mine, to: sub, stillOwing: stillOwing)
+        }
+    }
+
+    /// Hands reports to one assistant together, once it is idle. `to` nil or a closed main
+    /// Assistant starts the main one; a project's Assistant is always open when it is the target.
+    private func deliverRelays(_ waiting: [(session: TerminalSession, file: URL, report: RelayReport)], to assistant: TerminalSession?, stillOwing: Int) {
+        guard let tools else { return }
         let oldest = waiting.first?.report.at.map { Date().timeIntervalSince1970 - $0 / 1000 } ?? 0
         guard RelayRouting.ready(reports: waiting.count, assistantPhase: assistant?.phase, assistantRunning: assistant?.isRunning == true,
                                  dictating: voice.machine.state != .idle, stillOwing: stillOwing, oldestAge: oldest) else { return }
@@ -1002,6 +1068,8 @@ final class AppModel {
         for item in waiting { try? FileManager.default.removeItem(at: item.file) }
         if let assistant, assistant.isRunning {
             assistant.submit(briefing)
+        } else if let assistant, assistant.slot == Self.subSlot {
+            startSubassistant(assistant.projectID, quietly: briefing)
         } else {
             try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
             let fresh = TerminalSession(projectID: assistantFolder)
