@@ -1273,6 +1273,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const later = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
     env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_SESSION: 'a-new-conversation' } });
   check('a new conversation gets everything, not "unchanged"', /top goal/.test(later.stdout) && !/Unchanged: alpha/.test(later.stdout), later.stdout);
+  check('...but still knows what changed since the last status, across the clear', /Same as at the last status:\n\nalpha/.test(later.stdout) && /Nothing has changed since the last status/.test(later.stdout), later.stdout);
 
   r = run(AS, 'someone', ['name', 'Juno']);
   check('a project agent cannot name the Assistant', r.code !== 0, r.all);
@@ -1303,8 +1304,8 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
     return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
   };
   check('a short conversation gets no nudge', !/grown long/.test(own(['overview', '--all']).out));
-  fs.writeFileSync(TR, Buffer.alloc(900 * 1024, 120));
-  check('a long one is told, and left to choose its moment', /grown long/.test(own(['overview', '--all']).out));
+  fs.writeFileSync(TR, Buffer.alloc(300 * 1024, 120));
+  check('a long one is told to clear at the end of this turn', /grown long.*clear-context/.test(own(['overview', '--all']).out));
   // Opening a fresh session on a project, from the Assistant.
   const opens = () => fs.readdirSync(OWN).filter((f) => f.startsWith('open-') && f.endsWith('.json'));
   r = run(AS, 'someone', ['open', 'alpha']);
@@ -1329,7 +1330,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const ask = JSON.parse(fs.readFileSync(path.join(OWN, 'clear-context.json'), 'utf8'));
   check('asking leaves the handoff for the app', r.code === 0 && /^Focused on billing/.test(ask.handoff), r.all);
   const savedAt = (/saved at (\S+)\./.exec(ask.handoff) || [])[1];
-  check('...with a saved copy of the whole conversation', !!savedAt && fs.statSync(savedAt).size === 900 * 1024, ask.handoff);
+  check('...with a saved copy of the whole conversation', !!savedAt && fs.statSync(savedAt).size === 300 * 1024, ask.handoff);
 
   r = asEnv(['tell', 'ALPHA', 'please', 'run', 'it']);
   const told = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));

@@ -121,6 +121,7 @@ final class AppModel {
                 model.collectTells()
                 model.closeSessionsIfAsked()
                 model.clearAssistantIfAsked()
+                model.startAssistantFreshIfDue()
                 model.swapSessionsIfAsked()
                 model.refreshAssistantName()
                 model.voice.expireReply()
@@ -1018,18 +1019,55 @@ final class AppModel {
     /// Opens the Assistant and asks it to go through every session.
     func statusSweep() {
         if namer.saved == nil && !askedForName { return openAssistant() }
-        if let assistant = sessions[assistantFolder], assistant.isRunning {
-            assistant.submit(SessionLaunch.statusSweep)
-        } else if let waiting = sessions[assistantFolder], waiting.exitCode == nil {
-            waiting.openingMessage = SessionLaunch.statusSweep
-        } else {
-            // Typed before it is ready, a long line would be cut off, so it starts with this instead.
-            try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
-            let assistant = TerminalSession(projectID: assistantFolder)
-            assistant.openingMessage = SessionLaunch.statusSweep
-            sessions[assistantFolder] = assistant
-        }
+        startAssistantFresh(on: SessionLaunch.statusSweep)
         openAssistant()
+    }
+
+    /// A status update waiting to start the Assistant on a fresh conversation.
+    private var freshStatus: String?
+
+    /// Every status update starts the Assistant clean, so its context never piles up. The old
+    /// conversation is kept in its conversations folder. A turn in progress finishes first.
+    func startAssistantFresh(on opening: String) {
+        freshStatus = opening
+        startAssistantFreshIfDue()
+    }
+
+    func startAssistantFreshIfDue() {
+        if let asked = sessions[assistantFolder]?.channel.takeFreshTell() { freshStatus = asked }
+        guard let opening = freshStatus else { return }
+        let old = sessions[assistantFolder]
+        if let old, old.exitCode == nil, !old.isRunning {
+            // Not started yet (the tools are still being found): it opens on this instead.
+            old.openingMessage = opening
+            freshStatus = nil
+            return
+        }
+        if let old, old.isRunning {
+            guard SessionLaunch.assistantMayStartFresh(phase: old.phase, repliesWaiting: old.channel.waitingCount,
+                                                       dictating: voice.machine.state != .idle) else { return }
+            keepAssistantConversation(old.channel.readState()?.transcript)
+            old.end()
+            old.channel.remove()
+        }
+        guard let tools else { return }
+        freshStatus = nil
+        let wasFocused = focusedProject == assistantFolder
+        memory.conversations[assistantFolder] = nil
+        try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+        let fresh = TerminalSession(projectID: assistantFolder)
+        fresh.openingMessage = opening
+        sessions[assistantFolder] = fresh
+        launch(fresh, tools: tools, fresh: true)
+        if wasFocused { focus(assistantFolder) }
+    }
+
+    private func keepAssistantConversation(_ transcript: String?) {
+        guard let transcript, FileManager.default.fileExists(atPath: transcript) else { return }
+        let kept = URL(fileURLWithPath: assistantFolder).appendingPathComponent("conversations")
+        try? FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        try? FileManager.default.copyItem(atPath: transcript, toPath: kept.appendingPathComponent("\(stamp).jsonl").path)
     }
 
     func collectTells() {

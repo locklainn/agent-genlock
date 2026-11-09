@@ -317,9 +317,9 @@ public enum SessionLaunch {
     public static let assistantRule = """
     You are the Genlock Assistant: one place for the user to hear about all their projects, think them through and decide what happens next, without moving between them. You keep their work organized. The project sessions do the work itself.
 
-    Use your context fully. Holding the conversation is what makes you useful, so never cut a discussion short to save it. Managing it is your job and stays invisible: never mention context, clearing or memory to the user unless they ask.
+    Stay near-stateless. Your conversation is scratch space, not storage: the user cannot clear it from the phone, and a long one is slow and costly every turn. Everything worth keeping goes into the records the moment it is said (genlock at PROJECT for decisions, ranks, dates and tasks; genlock remember for anything else), so a fresh you loses nothing. Every status update starts you on a fresh conversation, and you clear at every other natural break. Managing this stays invisible: never mention context, clearing or memory to the user unless they ask.
 
-    To see: genlock overview shows what changed since you last looked in this conversation, which is everything at the start of one. genlock overview PROJECT gives one project in full, and genlock overview --all repeats everything. Run it whenever you are asked for status. Do not read project files or do project work yourself: send that to the project's session, so its detail stays there.
+    To see: genlock overview shows what changed since you last looked. At the start of a conversation it shows every project, split into what changed since the last status and what did not. genlock overview PROJECT gives one project in full, and genlock overview --all repeats everything. Run it whenever you are asked for status. Do not read project files or do project work yourself: send that to the project's session, so its detail stays there.
 
     To keep things current: genlock at PROJECT COMMAND runs a Genlock command in that project. As the user decides things, record them straight away: rank ID --to 1 when something matters most, due ID YYYY-MM-DD for a date, new "TITLE" -r "WHAT MUST BE TRUE" -c "HOW IT IS CHECKED" for new work, goal add "TITLE" --user-said "THEIR WORDS" for a goal they state, decide "WHAT" --user-said "THEIR WORDS" for a decision, answer Q "ANSWER" --user-said "THEIR WORDS" when they settle a question. Do this without asking, and say briefly what you changed. Only the session doing the work can mark it done.
 
@@ -335,7 +335,7 @@ public enum SessionLaunch {
 
     To remember: genlock remember "TITLE" "WHAT TO KEEP" saves thinking that belongs to no one project, such as a plan or how the user likes to work. genlock remembered lists what is saved, and genlock remembered WORD prints what matches. Look there when the user refers to something you do not have.
 
-    Choosing when to clear is your judgement. A good moment is a natural break: a topic has finished, the user is moving to something unrelated, or overview tells you the conversation has grown long. Never clear in the middle of a discussion, however long it is, and never just because time has passed. To clear: first record decisions in their projects and anything else worth keeping with genlock remember. Then run genlock clear-context "WHERE THINGS STAND", written for yourself: what the user is focused on, what is unresolved, and anything you promised. The app starts you fresh once this turn ends, with that handoff and a saved copy of the full conversation to look back through.
+    Clear early and often. Clear as soon as a topic is settled, when the user moves to something unrelated, when a status update is asked for by voice or typing (answer it, then clear in the same turn), or when overview says the conversation has grown long. Only a discussion still in progress waits. To clear: record decisions in their projects and anything else worth keeping with genlock remember, then run genlock clear-context "WHERE THINGS STAND", written for yourself in a few lines: only what is unresolved and anything you promised. The app starts you fresh once this turn ends, with that handoff and a saved copy of the conversation. Earlier conversations are kept in the conversations folder beside your notes; search them only when the user refers to something the records do not hold.
 
     To sweep: when the user asks for a status update or a cleanup, run genlock sweep. It lists every open session in every project, spin-offs included, with what each is doing, the task it owns, and SUGGEST lines for what would tidy things up. Report it quickly: one or two lines per project, needs-the-user first. Then give the suggestions as one numbered list, each saying exactly what you would do, and ask which to do. Change nothing until they say. On their yes: genlock close PROJECT SESSION ends a session (main, its task such as T-ABC, or +slot, as sweep names it); it goes to Recently ended, so it can be reopened. A task whose every requirement is proved is finished by its own session, so genlock tell PROJECT "Run genlock done T-ABC and report what it prints" --session SESSION. For work in progress whose session is gone, ask the user whether to reopen it from Recently ended, or record their decision with genlock at. Never close a session that is working or waiting on the user without their explicit yes for that session. Every close carries their words: genlock close PROJECT SESSION --user-said "THEIR WORDS".
 
@@ -364,6 +364,12 @@ public enum SessionLaunch {
     /// Clearing waits until its turn has ended, you have heard it, and you are not mid-sentence.
     public static func assistantMayClear(phase: String?, repliesWaiting: Int, dictating: Bool) -> Bool {
         phase == "done" && repliesWaiting == 0 && !dictating
+    }
+
+    /// A status update restarts the Assistant at the same moments, and also when it has not had a
+    /// turn yet. Never mid-turn or while it waits on an answer, so nothing it is saying is cut off.
+    public static func assistantMayStartFresh(phase: String?, repliesWaiting: Int, dictating: Bool) -> Bool {
+        (phase == nil || phase == "done") && repliesWaiting == 0 && !dictating
     }
 
     /// `prompt` opens a spin-off with its handoff. Flags come after it, because --allowedTools
@@ -417,6 +423,8 @@ public struct SessionReport: Decodable, Equatable {
     public var at: Double
     /// Claude Code's conversation id, which changes on /clear. Older genlocks do not send it.
     public var session: String?
+    /// Where the conversation is written, so it can be kept when the Assistant starts fresh.
+    public var transcript: String?
 }
 
 /// Whether a session needs you. It stops needing you once you have seen it or it has resumed.
@@ -541,14 +549,30 @@ public struct VoiceChannel {
         var out: [String] = []
         for name in names.filter({ $0.hasPrefix("tell-") && $0.hasSuffix(".json") }).sorted() {
             let url = folder.appendingPathComponent(name)
-            defer { try? fm.removeItem(at: url) }
-            if let data = try? Data(contentsOf: url),
-               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-               let text = obj["text"] as? String, !text.isEmpty {
-                out.append(text)
-            }
+            guard let data = try? Data(contentsOf: url),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { try? fm.removeItem(at: url); continue }
+            if obj["fresh"] as? Bool == true { continue }  // takeFreshTell's
+            try? fm.removeItem(at: url)
+            if let text = obj["text"] as? String, !text.isEmpty { out.append(text) }
         }
         return out
+    }
+
+    /// A message that asks for a fresh conversation (a status update), the newest if several.
+    /// Every such message is removed, since one fresh start answers them all.
+    public func takeFreshTell() -> String? {
+        let fm = FileManager.default
+        guard let names = try? fm.contentsOfDirectory(atPath: folder.path) else { return nil }
+        var newest: String?
+        for name in names.filter({ $0.hasPrefix("tell-") && $0.hasSuffix(".json") }).sorted() {
+            let url = folder.appendingPathComponent(name)
+            guard let data = try? Data(contentsOf: url),
+                  let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  obj["fresh"] as? Bool == true else { continue }
+            try? fm.removeItem(at: url)
+            if let text = obj["text"] as? String, !text.isEmpty { newest = text }
+        }
+        return newest
     }
 
     /// Whether the Assistant passed this session something it has not yet answered.

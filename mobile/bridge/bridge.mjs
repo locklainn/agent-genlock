@@ -40,7 +40,7 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     if (msg.kind === 'say') {
       log('phone said', String(msg.text || '').slice(0, 60));
       try {
-        sendToAssistant(String(msg.text || ''), home);
+        sendToAssistant(String(msg.text || ''), home, msg.fresh ? { fresh: true } : undefined);
         send({ kind: 'ack', of: msg.id });
       } catch (e) {
         send({ kind: 'error', of: msg.id, text: e.message });

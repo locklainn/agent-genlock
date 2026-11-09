@@ -779,6 +779,32 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(channel.takeTells(), [])
     }
 
+    func testAStatusUpdateStartsTheAssistantFresh() throws {
+        typealias L = SessionLaunch
+        XCTAssertTrue(L.assistantMayStartFresh(phase: "done", repliesWaiting: 0, dictating: false))
+        XCTAssertTrue(L.assistantMayStartFresh(phase: nil, repliesWaiting: 0, dictating: false), "no turn yet, nothing to lose")
+        XCTAssertFalse(L.assistantMayStartFresh(phase: "working", repliesWaiting: 0, dictating: false), "a reply in progress is never cut off")
+        XCTAssertFalse(L.assistantMayStartFresh(phase: "waiting", repliesWaiting: 0, dictating: false), "it waits on an answer")
+        XCTAssertFalse(L.assistantMayStartFresh(phase: "done", repliesWaiting: 1, dictating: false), "a reply is unheard")
+        XCTAssertFalse(L.assistantMayStartFresh(phase: "done", repliesWaiting: 0, dictating: true), "mid-dictation")
+
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("genlock-fresh-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let channel = VoiceChannel(session: "s", base: base)
+        try channel.prepare()
+        try #"{"text":"rank billing first"}"#.write(to: channel.folder.appendingPathComponent("tell-1.json"), atomically: true, encoding: .utf8)
+        try #"{"text":"[phone] Status update: old","fresh":true}"#.write(to: channel.folder.appendingPathComponent("tell-2.json"), atomically: true, encoding: .utf8)
+        try #"{"text":"[phone] Status update: new","fresh":true}"#.write(to: channel.folder.appendingPathComponent("tell-3.json"), atomically: true, encoding: .utf8)
+        XCTAssertEqual(channel.takeTells(), ["rank billing first"], "a status update is not typed into the old conversation")
+        XCTAssertEqual(channel.takeFreshTell(), "[phone] Status update: new", "one fresh start answers them all")
+        XCTAssertNil(channel.takeFreshTell())
+        XCTAssertEqual(channel.takeTells(), [])
+
+        let rule = L.assistantRule
+        XCTAssertTrue(rule.contains("near-stateless") && rule.contains("Every status update starts you on a fresh conversation"))
+        XCTAssertFalse(rule.contains("Use your context fully"))
+    }
+
     func testRevisionsReplaceTheCurrentUtterance() { // V13
         var t = VoiceTranscript()
         t.receive("Nothing was her", endsUtterance: false)

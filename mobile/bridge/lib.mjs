@@ -61,13 +61,19 @@ export function findAssistant(home = genlockHome()) {
   return { channel, transcript: state.transcript || null, state: state.state || null, name };
 }
 
+/**
+ * A status update starts the Assistant on a fresh conversation, so it never piles up context.
+ * Matched on the words too, because the installed phone app sends the button as plain text.
+ */
+export const isStatusRequest = (text) => /^\s*status update\b/i.test(String(text || ''));
+
 /** Drop a message where the app types it into the Assistant's prompt. */
-export function sendToAssistant(text, home = genlockHome()) {
+export function sendToAssistant(text, home = genlockHome(), { fresh = isStatusRequest(text) } = {}) {
   const a = findAssistant(home);
   if (!a) throw new Error('The Assistant is not open on the laptop.');
   fs.mkdirSync(a.channel, { recursive: true });
   const name = `tell-${Date.now()}-${randomBytes(3).toString('hex')}.json`;
-  const body = JSON.stringify({ text: `${PHONE_PREFIX} ${text.replace(/\s+/g, ' ').trim()}` });
+  const body = JSON.stringify({ text: `${PHONE_PREFIX} ${text.replace(/\s+/g, ' ').trim()}`, ...(fresh ? { fresh: true } : {}) });
   fs.writeFileSync(path.join(a.channel, `${name}.tmp`), body);
   fs.renameSync(path.join(a.channel, `${name}.tmp`), path.join(a.channel, name));
   return name;
