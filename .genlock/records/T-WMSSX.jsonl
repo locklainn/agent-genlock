@@ -3,3 +3,4 @@
 {"e":"9342ea938838","at":"2026-11-09T22:34:47.580Z","by":"84a3d710-c78c-4216-84f6-218b3e6fb008","op":"start"}
 {"e":"6cce9fc5d276","at":"2026-11-09T22:38:18.211Z","by":"84a3d710-c78c-4216-84f6-218b3e6fb008","op":"mark","rid":"9bd7da","state":"met","evidence":"swift build -> Build complete! (22.65s); swift test 135/0"}
 {"e":"1e21cccb94fb","at":"2026-11-09T22:38:18.460Z","by":"84a3d710-c78c-4216-84f6-218b3e6fb008","op":"update","text":"joinGridIfShowing in AppModel: Assistant-opened session inserted after its project's last pane when a grid (count>1) already shows that project; single view untouched. Builds, tests pass. Left: TJ relaunch + eye reqs 1-2. Not committed."}
+{"e":"8ec8ee9c3429","at":"2026-11-09T22:44:09.409Z","by":"84a3d710-c78c-4216-84f6-218b3e6fb008","op":"update","text":"Committed and pushed 2064d2f. Left: TJ relaunches the app (and restarts the phone bridge for titles) and eyes the manual reqs."}
