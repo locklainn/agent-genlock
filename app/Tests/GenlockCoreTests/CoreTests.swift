@@ -1274,6 +1274,12 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(status("done", blank, said: "Refactored the **parser**").detail, "Refactored the parser")
         XCTAssertNotNil(status("done", blank).detail)
         XCTAssertEqual(status("working", busy, running: false).kind, .ended)
+        let bg = SessionWait(label: "tests", kind: .background, since: 0)
+        let held = Snapshot.sessionStatus(phase: "done", isRunning: true, message: nil, focus: busy, wait: bg)
+        XCTAssertEqual(held.kind, .waitingOn, "blocked on a job is not a bare pause")
+        XCTAssertEqual(held.headline, "Background: tests", "it says what it waits on")
+        XCTAssertEqual(held.task?.id, "T-A")
+        XCTAssertEqual(Snapshot.sessionStatus(phase: "waiting", isRunning: true, message: nil, focus: busy, wait: bg).kind, .needsYou, "a question for the user still wins")
         XCTAssertEqual(status("done", busy, said: "[TASK-COMPLETE] **Fire calls** is in `the` database").detail, "Fire calls is in the database", "what it said, as a line to read")
     }
 

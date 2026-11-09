@@ -10,7 +10,7 @@ extension TerminalSession {
     }
 
     func status(in snapshot: Snapshot) -> Snapshot.SessionStatus {
-        Snapshot.sessionStatus(phase: phase, isRunning: isRunning, message: attentionMessage, focus: focus(in: snapshot))
+        Snapshot.sessionStatus(phase: phase, isRunning: isRunning, message: attentionMessage, focus: focus(in: snapshot), wait: wait)
     }
 }
 
@@ -80,6 +80,7 @@ struct SessionStatusRow: View {
         case .working: return ("bolt.fill", Theme.tint(tier)[0])
         case .workingUnrecorded: return ("bolt.fill", Theme.amber)
         case .needsYou: return ("bell.fill", Theme.red)
+        case .waitingOn: return ("hourglass", Theme.violet)
         case .paused: return ("pause.fill", Theme.textSecondary)
         case .untracked: return ("exclamationmark.triangle.fill", Theme.amber)
         case .waitingForWork: return ("hourglass", Theme.textTertiary)
@@ -90,9 +91,16 @@ struct SessionStatusRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
-                Image(systemName: symbol.name).font(.system(size: 10.5, weight: .bold)).foregroundStyle(symbol.color)
-                Text(status.headline).font(.system(size: 11.5, weight: status.task == nil ? .semibold : .medium))
-                    .foregroundStyle(status.task == nil ? symbol.color : Theme.textSecondary).fixedSize()
+                if status.kind == .waitingOn {
+                    SpinningHourglass(size: 10.5).foregroundStyle(symbol.color)
+                    // What it waits on is the news here, so it reads in violet and may truncate.
+                    Text(status.headline).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(symbol.color)
+                        .lineLimit(1).truncationMode(.tail)
+                } else {
+                    Image(systemName: symbol.name).font(.system(size: 10.5, weight: .bold)).foregroundStyle(symbol.color)
+                    Text(status.headline).font(.system(size: 11.5, weight: status.task == nil ? .semibold : .medium))
+                        .foregroundStyle(status.task == nil ? symbol.color : Theme.textSecondary).fixedSize()
+                }
                 if let task = status.task {
                     Text(task.heading).font(.system(size: 12, weight: .semibold)).foregroundStyle(Theme.textPrimary).lineLimit(1)
                 }
@@ -121,6 +129,7 @@ private struct StatusSurface: ViewModifier {
         case .working: content.modifier(WorkingGlow(active: true, tier: tier))
         case .needsYou: content.background(Theme.red.opacity(0.14), in: shape).overlay(shape.strokeBorder(Theme.red.opacity(0.8), lineWidth: 1))
         case .workingUnrecorded, .untracked: content.background(Theme.amber.opacity(0.1), in: shape).overlay(shape.strokeBorder(Theme.amber.opacity(0.6), lineWidth: 1))
+        case .waitingOn: content.background(Theme.violet.opacity(0.12), in: shape).overlay(shape.strokeBorder(Theme.violet.opacity(0.5), lineWidth: 1))
         case .paused: content.background(Color.white.opacity(0.05), in: shape).overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
         case .waitingForWork, .ended: content
         }

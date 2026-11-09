@@ -312,18 +312,24 @@ public struct Snapshot: Decodable, Equatable {
     public struct SessionStatus: Equatable {
         /// `waitingForWork` is said only when nothing suggests the agent did work off the record;
         /// `untracked` is a turn that ran with no task at all, which is worth a look.
-        public enum Kind: Equatable { case working, workingUnrecorded, needsYou, paused, untracked, waitingForWork, ended }
+        /// `waitingOn` is blocked on something that is not the agent (a queue, a long command, a
+        /// background job); its headline is what, so it is never shown as a bare pause.
+        public enum Kind: Equatable { case working, workingUnrecorded, needsYou, waitingOn, paused, untracked, waitingForWork, ended }
         public var kind: Kind
         public var headline: String
         public var task: Ticket?
         public var detail: String?
     }
 
-    public static func sessionStatus(phase: String?, isRunning: Bool, message: String?, focus: SessionFocus) -> SessionStatus {
+    public static func sessionStatus(phase: String?, isRunning: Bool, message: String?, focus: SessionFocus, wait: SessionWait? = nil) -> SessionStatus {
         let task = focus.working
         let said = message.map(plainLine).flatMap { $0.isEmpty ? nil : $0 }
         let progress = task?.blockedReason ?? task?.latest?.text
         if !isRunning { return SessionStatus(kind: .ended, headline: "Session ended", task: task, detail: nil) }
+        // Blocked on a queue or a job: say on what. Only a question for the user outranks it.
+        if let wait, phase != "waiting" {
+            return SessionStatus(kind: .waitingOn, headline: wait.headline, task: task, detail: said ?? progress)
+        }
         switch phase {
         case "working":
             return task == nil
