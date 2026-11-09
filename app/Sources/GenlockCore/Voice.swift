@@ -384,7 +384,12 @@ public enum SessionLaunch {
         if let resumeID { args += ["--resume", resumeID] }
         if let sessionID { args += ["--session-id", sessionID] }
         // Remote Control is for the Assistant only: project sessions are reached through it.
-        if remote && assistant { args += ["--remote-control", assistantName ?? AssistantName.fallback] }
+        // --name too: on a resumed conversation --remote-control's name is not its title, so the
+        // Claude app listed it under its auto title ("Project status overview") and Tally never showed.
+        if remote && assistant {
+            let name = assistantName ?? AssistantName.fallback
+            args += ["--remote-control", name, "--name", name]
+        }
         guard let genlockCommand else { return args }
         var rules: [String] = []
         if voice || reportsState { args += ["--settings", sessionSettings(genlockCommand: genlockCommand)] }
