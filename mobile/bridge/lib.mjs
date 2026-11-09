@@ -200,6 +200,9 @@ export async function status(home = genlockHome(), snap = snapshot) {
     };
     const titleOf = (m, work) => {
       if (m.o.slot === SUB_SLOT) return 'Assistant';
+      // The name the agent gave this session with genlock title, ahead of its task, as on the Mac.
+      const named = String(readJSON(path.join(home, 'voice', m.o.token, 'title.json'), {}).title || '').trim();
+      if (named) return named;
       if (work) return heading(work);
       if (!m.o.spawn && !m.o.slot && plain.length === 1) return path.basename(p.path);
       return `Session ${plain.indexOf(m) + 1}`;

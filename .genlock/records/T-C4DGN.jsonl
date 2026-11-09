@@ -5,3 +5,4 @@
 {"e":"8196c83f7449","at":"2026-11-09T16:59:25.207Z","by":"88fd9768-475e-4764-bbe2-1b868ba4251b","op":"mark","rid":"945ae8","state":"met","evidence":"swift build: Build complete! (7.58s)"}
 {"e":"0227f3f435a8","at":"2026-11-09T16:59:25.512Z","by":"88fd9768-475e-4764-bbe2-1b868ba4251b","op":"update","text":"SessionWait.gist (keyword map) + WaitPill compact shows gist before elapsed. Tests+build pass. Tab hourglass in SessionsView:363 not changed: file held by T-V222Y. Needs TJ relaunch to eye req 2. Not committed."}
 {"e":"040ddf62783f","at":"2026-11-09T17:15:19.032Z","by":"88fd9768-475e-4764-bbe2-1b868ba4251b","op":"update","text":"Also tab hourglass now shows gist (SessionsView). Builds, 132/0. Needs TJ relaunch. Not committed."}
+{"e":"d9cf2424c960","at":"2026-11-09T21:17:05.164Z","by":"88fd9768-475e-4764-bbe2-1b868ba4251b","op":"update","text":"Committed+pushed f102588; TJ restarted into it. Left: his eye check."}

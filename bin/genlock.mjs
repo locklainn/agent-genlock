@@ -29,7 +29,7 @@ import { cmdReview } from '../lib/reviews.mjs';
 import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
 import { cmdClearContext, cmdClose, cmdName, cmdOpen, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
-import { cmdSay, cmdSessionState, cmdStatusLine, cmdVoiceCheck } from '../lib/voice.mjs';
+import { cmdSay, cmdSessionState, cmdStatusLine, cmdTitle, cmdVoiceCheck } from '../lib/voice.mjs';
 import { cmdWait } from '../lib/waits.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
@@ -83,7 +83,9 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock checkpoint [--uncommitted ".."]         REFUSES until goals and tickets are current
   genlock continue [GOAL|TICKET]                  everything needed to carry on
   genlock followups [--json]                      what this session identified and has not finished
-  genlock swap GOAL --user-said ".."              on the user's yes: checkpoint, then a fresh session on GOAL
+  genlock swap GOAL --user-said ".."              on the user's yes: checkpoint, then this same work carried on
+                                                  in a fresh session, when the conversation has grown long
+  genlock close --self --user-said ".."           when the user says you can close: checkpoint, then this session closes
   genlock swap GOAL --relayed                     ...on a yes the Assistant relayed to this session
 
 REVIEWS   files the user should look at, kept findable
@@ -108,6 +110,7 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
   genlock say "TEXT"                              speak a reply, in a session started with a voice channel
+  genlock title "NAME"  |  genlock title --clear   name this session in the app and on the phone, two to four words
   genlock wait "TEXT" --state testing|running|queued|waiting  |  genlock wait --clear
                                   show the app what this session is on, in your words: testing and running
                                   are work happening; queued and waiting are nothing happening until something moves
@@ -240,6 +243,7 @@ const COMMANDS = {
   due: cmdDue,
   short: cmdShort,
   say: cmdSay,
+  title: cmdTitle,
   'voice-check': cmdVoiceCheck,
   'session-state': cmdSessionState,
   wait: cmdWait,
@@ -261,7 +265,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed']);
+const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };

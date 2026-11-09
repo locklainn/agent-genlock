@@ -23,6 +23,8 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     var attentionMessage = ""
     /// What it is blocked on that is not the agent thinking (a long command, a queue, a background job).
     var wait: SessionWait?
+    /// What the agent named this session with `genlock title`. Its tab shows it ahead of its task.
+    var title: String?
     @ObservationIgnored var lastReportAt: Double = 0
     /// The conversation it is in, once known. Nil while continuing the folder's latest.
     var conversation: String?

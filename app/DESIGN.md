@@ -266,7 +266,7 @@ for every session, tied to goals, and only on the user's yes.
 
 | id | requirement | check |
 |---|---|---|
-| F1 | When its workload is done, an agent says so and offers the swap in one short message: what was finished, the next goal it would open, and a yes/no. Agent instructions push for this at every natural finish | read agent/*.md, eye |
+| F1 | When its workload is done, an agent says all planned work is done and stops; it does not propose the next goal. On the user's word ("you can close") it closes itself with `genlock close --self`. A swap is offered only to carry the same unfinished work on when the conversation has grown long. TJ, 9 November 2026: *"i dont like that they keep suggesting to start on the next goal. that makes things feel UNDONE in the current session."* | read agent/*.md, eye |
 | F2 | The swap refuses while anything a fresh session would need is missing (`genlock checkpoint` gaps: stale latest, goals without next things, open tickets with no account), and names the gaps | auto |
 | F3 | On the user's yes the agent asks the app, with their words recorded; after its turn ends the app replaces the session in the same tab with a fresh conversation that starts on the named goal (`genlock continue G`) | auto, drive |
 | F4 | The old conversation stays reachable from Recently ended, so nothing is lost if the swap was wrong | drive |

@@ -367,6 +367,8 @@ final class AppModel {
             }
             let wait = session.channel.readWait(phase: session.phase)
             if session.wait != wait { withAnimation(.easeOut(duration: 0.2)) { session.wait = wait } }
+            let title = session.channel.readTitle()
+            if session.title != title { session.title = title }
             guard let report else { continue }
             let result = Attention.next(current: session.attention, report: report, isNew: isNew, looking: isLooking(at: session.key))
             if session.attention != result.attention {
@@ -728,6 +730,20 @@ final class AppModel {
         openSessions(Array(gridKeys(project, start: false).prefix(SplitLayout.maxPanes)))
     }
 
+    /// Whether the screen is one project's grid: several panes, all from that project.
+    func showingProjectGrid(_ project: String) -> Bool {
+        visible.count > 1 && visible.allSatisfy { sessions[$0]?.projectID == project }
+    }
+
+    /// Command-G. In one session, its project's grid. In a project's grid, back to the session
+    /// you are in, with its project's tabs. In the all-projects grid, out to the project you are in.
+    func toggleProjectGrid() {
+        guard route == .sessions, let key = focusedProject ?? visible.first, let project = sessions[key]?.projectID else { return }
+        if visible.count > 1 { show(key); return }
+        let keys = gridKeys(project, start: false)
+        if keys.count > 1 { openProjectGrid(project) } else { message = "\(projectName(project)) has one session, so there is no grid to show." }
+    }
+
     /// What clicking a project opens: its hub, its sessions side by side, in whichever mode you
     /// are already in (switching it on a click is disorienting). Its Assistant leads only if you
     /// already opened it; a click never starts one.
@@ -810,6 +826,19 @@ final class AppModel {
         return session.key
     }
 
+    /// A grid is the list of panes taken when it was opened, so a session started later is not in
+    /// it. When the grid on screen already shows this session's project (its own grid, or every
+    /// project's), the session joins it after that project's last pane. One session on screen is
+    /// left alone, so nothing jumps in front of you. Returns whether it joined.
+    @discardableResult
+    func joinGridIfShowing(_ key: String) -> Bool {
+        guard route == .sessions, visible.count > 1, !visible.contains(key), visible.count < DashSelection.maxPanes,
+              let project = sessions[key]?.projectID,
+              let last = visible.lastIndex(where: { sessions[$0]?.projectID == project }) else { return false }
+        withAnimation(.spring(duration: 0.4)) { visible.insert(key, at: last + 1) }
+        return true
+    }
+
     /// The Assistant opened a session on a project, for you, often while you are on the phone.
     /// It starts in the background: whatever you are looking at stays in front.
     func openSessionsIfAsked() {
@@ -825,7 +854,9 @@ final class AppModel {
                 // A project's Assistant opens sessions in its own project only.
                 if asker.slot == Self.subSlot && project.id != asker.projectID { continue }
                 let key = startSession(in: project.id, opening: request.prompt)
-                message = "\(who) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
+                message = joinGridIfShowing(key)
+                    ? "\(who) opened \(tabLabel(key)) in \(project.name), beside its other sessions."
+                    : "\(who) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
             }
         }
     }
@@ -835,6 +866,7 @@ final class AppModel {
     func tabLabel(_ key: String) -> String {
         guard let session = sessions[key] else { return key }
         if session.slot == Self.subSlot { return "Assistant" }
+        if let title = session.title { return title }
         if session.spawn != nil { return label(project: session.projectID, spawn: session.spawn) ?? session.label }
         let snap = state(for: session.projectID).snapshot
         let focus = snap.flatMap { $0.initialized ? session.focus(in: $0) : nil }
@@ -1127,7 +1159,11 @@ final class AppModel {
     func closeSessionsIfAsked() {
         for session in Array(sessions.values) where session.projectID != assistantFolder && session.channel.requestedClose {
             guard session.phase != "working" else {
-                try? FileManager.default.removeItem(at: session.channel.folder.appendingPathComponent("close.json"))
+                // A session closing itself asks during its own last turn: wait for that turn to end.
+                // The Assistant's close of a session that has started working again is dropped.
+                if !session.channel.requestedSelfClose {
+                    try? FileManager.default.removeItem(at: session.channel.folder.appendingPathComponent("close.json"))
+                }
                 continue
             }
             let key = session.key

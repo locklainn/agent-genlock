@@ -67,3 +67,20 @@ test('each session carries its title, goal and task, not just an id', async () =
   assert.equal(c.title, 'Spun', 'a spun-off session is named by its ticket');
   assert.equal(c.goal, null);
 });
+
+test('a session that named itself with genlock title is shown by that name, ahead of its task', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gl-status-'));
+  const proj = fs.mkdtempSync(path.join(os.tmpdir(), 'gl-proj-'));
+  fs.writeFileSync(path.join(home, 'projects.json'), JSON.stringify([{ path: proj, tier: 'today' }]));
+  fs.writeFileSync(path.join(home, 'sessions.json'), JSON.stringify({ open: [{ project: proj, token: 'A' }, { project: proj, slot: 'a2', token: 'B' }] }));
+  for (const [tok, sess] of [['A', 'S1'], ['B', 'S2']]) {
+    fs.mkdirSync(path.join(home, 'voice', tok), { recursive: true });
+    fs.writeFileSync(path.join(home, 'voice', tok, 'state.json'), JSON.stringify({ state: 'working', session: sess }));
+  }
+  fs.writeFileSync(path.join(home, 'voice', 'B', 'title.json'), JSON.stringify({ title: 'Test timing', at: 1 }));
+  const snap = async () => ({ goals: [], tickets: [
+    { id: 'T-2', short: 'telemetry', named: true, title: 'Telemetry', status: 'in_progress', rank: 1, goal: null, owner: 'S2', summary: 'none' }], questions_for_user: [] });
+  const [p] = await status(home, snap);
+  assert.deepEqual(p.sessions.map((s) => s.title), ['Session 1', 'Test timing']);
+  assert.equal(p.goals[0].tasks[0].who, 'Test timing', 'the task names its holder by the same name');
+});

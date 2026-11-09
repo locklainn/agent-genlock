@@ -308,6 +308,8 @@ public enum SessionLaunch {
     public static let spinoffRule = """
     You are running inside the Genlock app, beside the user's other sessions.
 
+    Name this session so its tab says what it is for, not "Session 2": once you know what the work is, run genlock title "NAME", two to four words that name the thing on their own, such as "billing page". Run it again when the work changes to something else. This names the session in the app and on the phone; it is not /rename.
+
     Before you start something slow that is not you thinking (a test run, a build, a queue, waiting on a lock or another session), tell the app what it is, in a few words of your own, in the same shell command as the slow thing, since the wait ends when that command's shell does: genlock wait "testing the town" --state testing; ./run-tests. States: testing or running (work is happening), queued or waiting (nothing happens until something else moves).
 
     Before finishing each response, ask whether a rabbit hole came up: real work that could run in isolation from what you are doing, more than a quick fix. Starting it here would bloat this conversation and burn tokens, so offer to move it instead. Most responses have none, so do not manufacture one.
@@ -321,10 +323,12 @@ public enum SessionLaunch {
     If NOT SAFE, do not offer a launch. Say the ticket is recorded and why it has to wait.
     """
 
-    /// Every project session in the app may hand over to a fresh one, on the user's yes.
+    /// Every project session in the app closes itself when its work is done, on the user's word,
+    /// and swaps only to carry the same work on when the conversation grows long.
     public static let swapRule = """
-    When this session's work is done (a ticket finished, a goal's next thing done, the user moving on), offer to swap it for a fresh session on the next goal: a long conversation costs more every turn, and a fresh one starts sharp from the records. First run genlock followups. Then offer in one short message: what was finished, what is still open from this session, the goal the fresh session would open on, and a yes/no. Never offer mid-task or twice for the same finish.
-    Only on the user's yes: genlock swap GOAL --user-said "THEIR WORDS", or genlock swap GOAL --relayed when the Assistant passed their yes on to you (the message says TJ said yes through the Assistant). If it refuses, fill each gap it names with what is true and run it again. Once your turn ends the app replaces this session in the same tab and keeps this conversation under Recently ended, so finish your reply in one line.
+    When the work this session set out to do is done, say so plainly: run genlock followups, then tell the user in one line that everything planned is done (for example "All work is done for what we planned to do!"), plus anything this session left open. Do not suggest starting the next goal, and do not offer to swap onto it: that makes finished work feel unfinished. What comes next is the user's to bring up.
+    When the user says you can close ("great, you can close"), run genlock close --self --user-said "THEIR WORDS", or genlock close --self --relayed when the Assistant passed their word on to you. If it refuses, fill each gap it names with what is true and run it again. Once your turn ends the app closes this session and keeps it under Recently ended, so finish your reply in one line. Never close without their word.
+    Swap only to carry on the same unfinished work, when this conversation has grown long: offer it once, in one line, and only on the user's yes run genlock swap GOAL --user-said "THEIR WORDS" (or --relayed) with the goal you are working on. It refuses while a fresh session would be missing anything; fill each gap and run it again. The app replaces this session in the same tab once your turn ends, so finish your reply in one line. Work split off from this one is a spinoff, not a swap.
     """
 
     /// For Tally and every project Assistant: handles are for commands, never for the user.
@@ -590,6 +594,14 @@ public struct VoiceChannel {
     /// The Assistant asked, on your yes, for this session to be ended.
     public var requestedClose: Bool { FileManager.default.fileExists(atPath: folder.appendingPathComponent("close.json").path) }
 
+    /// The session asked to close itself, on the user's word (`genlock close --self`). It asks
+    /// mid-turn, so the request waits for that turn to end rather than being dropped.
+    public var requestedSelfClose: Bool {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("close.json")),
+              let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return false }
+        return obj["by"] as? String == "self"
+    }
+
     /// Messages the Assistant has passed on, oldest first, removed as they are read.
     public func takeTells() -> [String] {
         let fm = FileManager.default
@@ -679,6 +691,14 @@ public struct VoiceChannel {
             report.message = ""
         }
         return report
+    }
+
+    /// The name the session gave itself with `genlock title`, or nil if it has not.
+    public func readTitle() -> String? {
+        guard let data = try? Data(contentsOf: folder.appendingPathComponent("title.json")),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let title = (object["title"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return nil }
+        return title
     }
 
     public func remove() { try? FileManager.default.removeItem(at: folder) }

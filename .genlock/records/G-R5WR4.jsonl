@@ -4,3 +4,4 @@
 {"e":"4de38a6aced5","at":"2026-11-07T22:54:56.765Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"next_add","nid":"20cb85","text":"Pair a phone from the Mac app: a Pair phone button shows the QR and runs the bridge itself, so nobody runs node scripts (for other users)","due":null}
 {"e":"430d5d7aa1c4","at":"2026-11-07T22:54:56.963Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"next_add","nid":"a25901","text":"End-to-end encrypt phone messages with a key from the QR, so whoever runs the relay cannot read them (needed before others use a shared relay)","due":null}
 {"e":"46fa2593014e","at":"2026-11-07T23:22:47.618Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"next_keep"}
+{"e":"0b95a411d51c","at":"2026-11-09T21:31:50.823Z","by":"6910dc28-58da-4a9f-9720-02942b4eb92a","op":"next_keep"}

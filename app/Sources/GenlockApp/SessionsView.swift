@@ -49,14 +49,16 @@ struct SessionBar: View {
                 PaneModeToggle()
                 Button { showEverything() } label: { Image(systemName: showingEverything ? "rectangle" : "square.grid.2x2") }
                     .buttonStyle(GlassButtonStyle(active: showingEverything, compact: true))
-                    .keyboardShortcut("g")
-                    .help(showingEverything ? "Back to one session (⌘G)" : "Show every session at once (⌘G)")
+                    .help(showingEverything ? "Back to one session (⌘G)" : "Show every session in every project at once")
                     .accessibilityLabel("Show every session")
                 Button { showingSwitcher = true } label: { Image(systemName: "magnifyingglass") }
                     .buttonStyle(GlassButtonStyle(compact: true))
                     .keyboardShortcut("k", modifiers: .command)
                     .help("Jump to any session (⌘K). Control-Tab goes back to the last one.")
                     .popover(isPresented: $showingSwitcher, arrowEdge: .bottom) { SessionSwitcher(close: { showingSwitcher = false }) }
+                // ⌘G works on the project you are in, not on every project: see toggleProjectGrid.
+                Button { model.toggleProjectGrid() } label: { EmptyView() }
+                    .keyboardShortcut("g").frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Button { model.showPrevious() } label: { EmptyView() }
                     .keyboardShortcut(.tab, modifiers: .control).frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
@@ -319,14 +321,16 @@ struct HeaderSessionTabs: View {
                 .help("Sessions in this project without a tab here")
             }
             if !order.isEmpty {
+                let inGrid = model.showingProjectGrid(projectID)
                 Button {
-                    model.openProjectGrid(projectID)
+                    if inGrid { model.show(paneKey) } else { model.openProjectGrid(projectID) }
                 } label: {
-                    Image(systemName: "square.grid.2x2").font(.system(size: 10.5, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle())
+                    Image(systemName: inGrid ? "rectangle" : "square.grid.2x2").font(.system(size: 10.5, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                .help("Show all of \(model.projectName(projectID))'s sessions side by side, its Assistant first if open")
-                .accessibilityLabel("Show all sessions in this project")
+                .help(inGrid ? "Back to this session alone, with \(model.projectName(projectID))'s tabs (⌘G)"
+                             : "Show all of \(model.projectName(projectID))'s sessions side by side, its Assistant first if open (⌘G)")
+                .accessibilityLabel(inGrid ? "Back to one session" : "Show all sessions in this project")
             }
             Button { model.newSession(in: projectID) } label: {
                 Image(systemName: "plus").font(.system(size: 10.5, weight: .bold)).frame(width: 22, height: 22).contentShape(Rectangle())

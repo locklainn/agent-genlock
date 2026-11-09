@@ -1434,7 +1434,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...and the task it owns with its proof count', /Proved but open task \(in_progress, 1 of 1 proved\)/.test(r.out), r.out);
   check('...suggests answering a session that waits', /SUGGEST: it is waiting on the user/.test(r.out), r.out);
   check('...suggests running done on a task that is fully proved', new RegExp(`SUGGEST: every requirement of \\S+ is proved.*genlock done ${TP}`).test(r.out), r.out);
-  check('...suggests closing a spin-off whose task is done', /SUGGEST: its task is finished: close it/.test(r.out), r.out);
+  check('...suggests closing a spin-off whose task is done, never swapping it onto the next goal', /SUGGEST: its task is finished: it can close/.test(r.out) && !/next goal/.test(r.out), r.out);
   check('...suggests closing a session idle for hours with no task', /SUGGEST: idle 20h with no task: close it/.test(r.out), r.out);
   check('...flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
   check('...counts what it found and changes nothing', /3 sessions open, \d+ suggestions\. Nothing has been changed/.test(r.out), r.out);
@@ -1703,6 +1703,24 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   me('goal', 'next', G, '--still-right');
   r = me('swap', 'refunds', '--user-said', 'ok', '--uncommitted', 'none of mine');
   check('outside the app a swap says what the user runs instead', r.code === 0 && /run \/clear, then say "continue refunds"/.test(r.out), r.all);
+
+  // Done work closes on the user's word, rather than swapping onto the next goal.
+  const closeAsked = () => fs.existsSync(path.join(CHAN, 'close.json'));
+  r = inApp(['close', '--self']);
+  check('close --self needs the user\'s word', r.code !== 0 && /user's word/.test(r.err) && !closeAsked(), r.all);
+  me('start', T);
+  me('update', T, 'Proved and finished');
+  me('goal', 'next', G, '--still-right');
+  fs.writeFileSync(path.join(repo, 'stray.txt'), 'x');
+  r = inApp(['close', '--self', '--user-said', 'great, you can close']);
+  check('close --self refuses while the records would lose something', r.code === 3 && !closeAsked(), r.all);
+  r = inApp(['close', '--self', '--user-said', 'great, you can close', '--uncommitted', 'stray.txt is scratch']);
+  const cl = closeAsked() ? JSON.parse(fs.readFileSync(path.join(CHAN, 'close.json'), 'utf8')) : {};
+  check('close --self passes once everything is current, and asks the app to close this session', r.code === 0 && cl.by === 'self' && cl.user_said === 'great, you can close', r.all + JSON.stringify(cl));
+  const closeLog = fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
+  check('...with the user\'s words on record', closeLog.some((e) => e.op === 'close' && e.user_said === 'great, you can close'));
+  r = me('close', '--self', '--user-said', 'ok', '--uncommitted', 'stray.txt is scratch');
+  check('outside the app close --self says the user closes it by hand', r.code === 0 && /\/exit/.test(r.out), r.all);
 }
 
 /* ---- report ------------------------------------------------------------------- */

@@ -9,3 +9,5 @@
 {"e":"2a0450964d46","at":"2026-11-08T19:55:03.347Z","by":"a38c418e-c3b1-42ab-a287-3f0327d12f43","op":"swap","goal":"G-2V8YC","user_said":"awesome yes","in_app":true}
 {"e":"682da8f939ea","at":"2026-11-08T20:40:45.221Z","by":"62861001-616d-4267-abb7-e483a156fcd4","op":"checkpoint","goals":["G-6WMFQ"],"tickets":["T-KV4BT"],"uncommitted":"other sessions' work (waits feature, app UI files, their .genlock records) - none of mine","dirty":["app/DESIGN.md","app/Sources/GenlockApp/GenlockApp.swift","app/Sources/GenlockApp/Theme.swift","app/Sources/GenlockCore/Waits.swift","app/Tests/GenlockCoreTests/WaitTests.swift","lib/waits.mjs"]}
 {"e":"b0f93cc13667","at":"2026-11-08T20:40:45.284Z","by":"62861001-616d-4267-abb7-e483a156fcd4","op":"swap","goal":"G-6WMFQ","user_said":"yes","in_app":true}
+{"e":"a21ac0b0d303","at":"2026-11-09T21:31:51.131Z","by":"6910dc28-58da-4a9f-9720-02942b4eb92a","op":"checkpoint","goals":["G-R5WR4"],"tickets":[],"uncommitted":"","dirty":[]}
+{"e":"346588bc0446","at":"2026-11-09T21:31:51.194Z","by":"6910dc28-58da-4a9f-9720-02942b4eb92a","op":"swap","goal":"G-2V8YC","user_said":"yes this work is good","in_app":true}
