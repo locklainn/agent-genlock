@@ -292,6 +292,32 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(back.project("/sym")?.icon, .symbol("bolt.fill"))
     }
 
+    func testARunningAppPicksUpAnIconChangedByAnotherSession() throws {
+        let file = root.appendingPathComponent("live/projects.json")
+        var app = ProjectStore(file: file)
+        app.add(path: "/a"); app.add(path: "/b")
+        app.move("/b", to: .today)
+        try app.save()
+        XCTAssertFalse(app.reload(), "re-reading its own save is not a change")
+
+        var other = ProjectStore(file: file)
+        other.setIcon("/a", .emoji("🎯"))
+        try other.save()
+        XCTAssertTrue(app.reload())
+        XCTAssertEqual(app.project("/a")?.icon, .emoji("🎯"))
+        XCTAssertEqual(app.project("/b")?.tier, .today, "everything else stays as saved")
+
+        try "{ half a write".write(to: file, atomically: true, encoding: .utf8)
+        XCTAssertFalse(app.reload(), "an unreadable file changes nothing")
+        XCTAssertEqual(app.projects.count, 2)
+
+        XCTAssertTrue(app.isStoreChange(file.path))
+        XCTAssertEqual(ProjectStore.comparable("/private/tmp/x/projects.json"), ProjectStore.comparable("/tmp/x/projects.json"),
+                       "file events say /private/tmp where Foundation says /tmp")
+        XCTAssertTrue(app.isStoreChange(app.iconFolder.appendingPathComponent("x.png").path))
+        XCTAssertFalse(app.isStoreChange(file.deletingLastPathComponent().appendingPathComponent("sessions.json").path))
+    }
+
     func testAnImageIconIsAPrivateCopyAndIsCleanedUp() throws { // D9
         let file = root.appendingPathComponent("j/projects.json")
         var store = ProjectStore(file: file)
@@ -658,6 +684,7 @@ final class CoreTests: XCTestCase {
                                             assistant: true, assistantName: "Tally", remote: true)
         XCTAssertEqual(named[named.firstIndex(of: "--remote-control")! + 1], "Tally")
         XCTAssertTrue(named.contains("--resume"), "turning it on keeps the same conversation")
+        XCTAssertEqual(named[named.firstIndex(of: "--name")! + 1], "Tally", "listed as Tally, not the conversation's auto title")
         let unnamed = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, remote: true)
         XCTAssertEqual(unnamed[unnamed.firstIndex(of: "--remote-control")! + 1], AssistantName.fallback)
         let off = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, assistantName: "Tally")

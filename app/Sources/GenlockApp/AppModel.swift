@@ -77,6 +77,7 @@ final class AppModel {
     @ObservationIgnored private var ticker: Timer?
     @ObservationIgnored private var voiceTicker: Timer?
     @ObservationIgnored private var claudeTicker: Timer?
+    @ObservationIgnored private var storeWatcher: ProjectWatcher?
 
     func boot() {
         suggestions = ProjectStore.discover().filter { store.project($0) == nil }
@@ -102,6 +103,7 @@ final class AppModel {
             }
         }
         usagePoller.start()
+        watchStore()
         claudeTicker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             MainActor.assumeIsolated {
                 AppModel.shared.lookForClaude()
@@ -132,6 +134,27 @@ final class AppModel {
     }
 
     @discardableResult
+    /// Another session can change the project list, such as a project's icon. Shown at once.
+    private func watchStore() {
+        let folder = store.file.deletingLastPathComponent().path
+        let file = ProjectStore.comparable(store.file.path)
+        let onChange: () -> Void = { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.reloadStore() } }
+        }
+        storeWatcher = ProjectWatcher(folder: folder, relevant: { ProjectStore.comparable($0) == file }, onChange: onChange)
+    }
+
+    /// Picks up the project list as saved on disk, and starts on any project added elsewhere.
+    func reloadStore() {
+        var fresh = store
+        guard fresh.reload() else { return }
+        withAnimation(.spring(duration: 0.3)) { store = fresh }
+        for p in store.projects where states[p.id]?.watcher == nil {
+            state(for: p.id)
+            if tools != nil { startWatching(p.id); refresh(p.id) }
+        }
+    }
+
     func state(for id: String) -> ProjectState {
         if let s = states[id] { return s }
         let s = ProjectState()

@@ -72,6 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCent
             }
         }
         AppModel.shared.boot()
+        IconFiles.shared.watch(AppModel.shared.store)
         // Only an app bundle can post notifications, and the center throws outside one.
         if Bundle.main.bundleIdentifier != nil {
             UNUserNotificationCenter.current().delegate = self

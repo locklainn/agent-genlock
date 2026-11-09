@@ -9,10 +9,15 @@ public final class ProjectWatcher {
     private let onChange: () -> Void
     private let debounce: TimeInterval
     private var pending: DispatchWorkItem?
+    private let isRelevant: (String) -> Bool
 
-    public init(folder: String, debounce: TimeInterval = 0.15, onChange: @escaping () -> Void) {
+    /// `relevant` picks which changed paths count; by default a project's records and claims.
+    public init(folder: String, debounce: TimeInterval = 0.15,
+                relevant: @escaping (String) -> Bool = ProjectWatcher.isRelevant,
+                onChange: @escaping () -> Void) {
         self.onChange = onChange
         self.debounce = debounce
+        self.isRelevant = relevant
 
         var context = FSEventStreamContext(
             version: 0, info: Unmanaged.passUnretained(self).toOpaque(),
@@ -22,7 +27,7 @@ public final class ProjectWatcher {
             let watcher = Unmanaged<ProjectWatcher>.fromOpaque(info).takeUnretainedValue()
             let list = unsafeBitCast(paths, to: NSArray.self)
             for i in 0..<count {
-                if let path = list[i] as? String, ProjectWatcher.isRelevant(path) {
+                if let path = list[i] as? String, watcher.isRelevant(path) {
                     watcher.schedule()
                     return
                 }

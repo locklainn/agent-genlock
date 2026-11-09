@@ -67,6 +67,32 @@ public struct ProjectStore: Equatable {
         }
     }
 
+    /// Picks up what changed on disk since this copy was read, such as another session
+    /// changing a project's icon. Returns whether anything changed. A file that cannot be read
+    /// or decoded changes nothing, so a half-written save never empties the list.
+    @discardableResult
+    public mutating func reload() -> Bool {
+        guard let data = try? Data(contentsOf: file),
+              let saved = try? JSONDecoder().decode([Project].self, from: data),
+              saved != projects else { return false }
+        projects = saved
+        return true
+    }
+
+    /// The paths whose change should make a running app reload: the list itself and the icons.
+    public func isStoreChange(_ path: String) -> Bool {
+        let changed = ProjectStore.comparable(path)
+        return changed == ProjectStore.comparable(file.path)
+            || changed.hasPrefix(ProjectStore.comparable(iconFolder.path) + "/")
+    }
+
+    /// A path as file events and Foundation can both agree on: events report /private/tmp/..,
+    /// while resolving symlinks turns that into /tmp/.., so neither form is trusted alone.
+    public static func comparable(_ path: String) -> String {
+        let p = URL(fileURLWithPath: path).standardizedFileURL.path
+        return p.hasPrefix("/private/") ? String(p.dropFirst("/private".count)) : p
+    }
+
     public var iconFolder: URL { file.deletingLastPathComponent().appendingPathComponent("icons") }
 
     /// Takes a private copy of an image, because the file you picked may later move.

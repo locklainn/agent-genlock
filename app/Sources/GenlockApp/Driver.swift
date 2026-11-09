@@ -244,6 +244,7 @@ enum Driver {
             let snap = model.state(for: p.id).snapshot
             cards[p.name] = [
                 "tier": p.tier.rawValue,
+                "icon": p.icon.map { String(describing: $0) } ?? "",
                 "goal": snap.flatMap { CardSummary($0).goalTitle } ?? "",
                 "last": snap.flatMap { CardSummary($0).lastTaskTitle } ?? "",
                 "error": model.state(for: p.id).error?.description ?? "",
@@ -255,6 +256,7 @@ enum Driver {
         }
         let out: [String: Any] = [
             "route": model.route == .dashboard ? "dashboard" : "sessions",
+            "iconRevision": IconFiles.shared.revision,
             "visible": model.visible.map { URL(fileURLWithPath: $0).lastPathComponent },
             "running": model.sessions.filter(\.value.isRunning).keys.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted(),
             "marked": model.markedCount,

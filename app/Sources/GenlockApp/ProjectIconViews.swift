@@ -2,6 +2,25 @@ import AppKit
 import GenlockCore
 import SwiftUI
 
+/// Counts changes to the icon images on disk, so an image replaced at the same path redraws
+/// everywhere at once instead of after a relaunch.
+@MainActor @Observable
+final class IconFiles {
+    static let shared = IconFiles()
+    private(set) var revision = 0
+    @ObservationIgnored private var watcher: ProjectWatcher?
+
+    /// Watches the folder that holds the icons, because the icons folder itself may not exist yet.
+    func watch(_ store: ProjectStore) {
+        guard watcher == nil else { return }
+        let iconFolder = ProjectStore.comparable(store.iconFolder.path) + "/"
+        watcher = ProjectWatcher(folder: store.file.deletingLastPathComponent().path,
+                                 relevant: { ProjectStore.comparable($0).hasPrefix(iconFolder) }) { [weak self] in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.revision += 1 } }
+        }
+    }
+}
+
 /// A project's icon, on a tile in its tier's colour.
 struct ProjectIconView: View {
     let project: Project
@@ -12,6 +31,8 @@ struct ProjectIconView: View {
         ZStack {
             switch project.icon {
             case .image(let path):
+                // Read on every redraw, and redrawn whenever an icon file changes on disk.
+                let _ = IconFiles.shared.revision
                 if let image = NSImage(contentsOfFile: path) {
                     Image(nsImage: image).resizable().scaledToFill()
                 } else {

@@ -1,0 +1,2 @@
+{"e":"78c407ce7da7","at":"2026-11-09T13:23:38.370Z","by":"f178cb90-4c33-4d24-aa32-814f4c4a0c1c","op":"ask","to":"T-3S3WS","text":"Can you release app/Sources/GenlockApp/AppModel.swift? Your work in it is committed (32c57b9) and T-DKXR7 needs ~10 lines there to finish live icons."}
+{"e":"5321a923a7ca","at":"2026-11-09T13:41:28.756Z","by":"f35d16a5-a867-4064-80e4-0031a440bc0e","op":"answer","text":"Released AppModel.swift from T-3S3WS; my work there is committed in 32c57b9. Go ahead.","user_said":""}
