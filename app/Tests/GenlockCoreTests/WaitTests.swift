@@ -19,7 +19,49 @@ final class WaitTests: XCTestCase {
         let w = SessionWait.pick(phase: "working", tool: E(label: "testq", since: now - 60_000), background: [],
                                  declared: [E(label: "behind bikes-5", since: now - 5_000, kind: "queued")], nowMs: now)
         XCTAssertEqual(w?.kind, .queued)
-        XCTAssertEqual(w?.headline, "Queued: behind bikes-5")
+        XCTAssertEqual(w?.state, .queued)
+        XCTAssertEqual(w?.headline, "behind bikes-5", "the script's own words; the state is shown by color and glyph")
+    }
+
+    func testDeclaredStateAndTextAreTheAgents() {
+        let w = SessionWait.pick(phase: "working", tool: nil, background: [],
+                                 declared: [E(label: "testing the town", since: now - 5_000, kind: "testing")], nowMs: now)
+        XCTAssertEqual(w?.state, .testing)
+        XCTAssertEqual(w?.headline, "testing the town")
+        XCTAssertEqual(w?.gist, "testing")
+        XCTAssertTrue(w?.state.isWork == true)
+        let idle = SessionWait.pick(phase: "holding", tool: nil, background: [],
+                                    declared: [E(label: "for the deploy lock", since: now, kind: "waiting")], nowMs: now)
+        XCTAssertEqual(idle?.state, .waiting)
+        XCTAssertFalse(idle?.state.isWork == true, "waiting is no work being done")
+    }
+
+    func testTheWordAndTheColorNeverDisagree() {
+        // nightmaremode, 2026-11-09: a default-state declaration about a test queue said
+        // "testing" in running's blue beside a real testing wait in green.
+        let d = SessionWait.pick(phase: "holding", tool: nil, background: [],
+                                 declared: [E(label: "truck_net4 (test queue)", since: now, kind: "running")], nowMs: now)
+        XCTAssertEqual(d?.state, .testing, "a state nobody chose is guessed like any command")
+        XCTAssertEqual(d?.gist, "testing")
+        let chosen = SessionWait.pick(phase: "holding", tool: nil, background: [],
+                                      declared: [E(label: "truck_net4 (test queue)", since: now, kind: "running", explicit: true)], nowMs: now)
+        XCTAssertEqual(chosen?.state, .running, "a state the agent chose stands")
+        XCTAssertEqual(chosen?.gist, "running", "and running never says testing")
+        for label in ["Run net_test", "Build it", "Do the thing", "test queue"] {
+            for kind in [SessionWait.Kind.tool, .background, .running] {
+                for state in SessionWait.State.allCases {
+                    let w = SessionWait(label: label, kind: kind, state: state, since: 0)
+                    XCTAssertEqual(w.gist == "testing", w.state == .testing, "\(label) \(kind) \(state)")
+                }
+            }
+        }
+    }
+
+    func testUndeclaredCommandsGuessTestingOrRunning() {
+        let t = SessionWait.pick(phase: "working", tool: E(label: "Run the slow tests", since: now - 15_000), background: [], declared: [], nowMs: now)
+        XCTAssertEqual(t?.state, .testing)
+        let b = SessionWait.pick(phase: "working", tool: E(label: "Build the app", since: now - 15_000), background: [], declared: [], nowMs: now)
+        XCTAssertEqual(b?.state, .running)
     }
 
     func testBackgroundShowsOnlyOnceTheAgentStops() {

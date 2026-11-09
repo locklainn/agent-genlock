@@ -207,11 +207,22 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
             }) { Icon(if (speak) Icons.Default.VolumeUp else Icons.Default.VolumeOff, if (speak) "Stop reading replies aloud" else "Read replies aloud") }
             IconButton(onClick = { menu = true }) { Icon(Icons.Default.MoreVert, "More") }
             DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                val ctx = LocalContext.current
+                DropdownMenuItem(text = { Text(buildLabel(ctx), style = MaterialTheme.typography.labelMedium) }, onClick = {}, enabled = false)
+                HorizontalDivider()
                 DropdownMenuItem(text = { Text("Unpair this phone") }, onClick = { menu = false; link.unpair() })
             }
         },
     )
 }
+
+/** "v0.1.450271 · built Nov 9, 11:52 AM". The version code is minutes since 2026-01-01 (build.gradle.kts), so it carries its own date. */
+fun buildLabel(ctx: Context): String = runCatching {
+    val info = ctx.packageManager.getPackageInfo(ctx.packageName, 0)
+    @Suppress("DEPRECATION") val code = if (android.os.Build.VERSION.SDK_INT >= 28) info.longVersionCode else info.versionCode.toLong()
+    val built = java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.MEDIUM, java.text.DateFormat.SHORT).format(java.util.Date((1767225600L + code * 60) * 1000))
+    "v${info.versionName} · built $built"
+}.getOrDefault("version unknown")
 
 const val STATUS_REQUEST = "Status update: what changed since you last told me, what finished, and what is waiting on me."
 
@@ -321,12 +332,28 @@ fun Bubble(line: Line, name: String) {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun StatusScreen(link: Link, ask: (String) -> Unit) {
     val projects by link.projects.collectAsStateWithLifecycle()
     val at by link.statusAt.collectAsStateWithLifecycle()
     val conn by link.conn.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
+    val ui = remember { ctx.getSharedPreferences("genlock-ui", Context.MODE_PRIVATE) }
+    // Sessions: what each session is doing. Tasks: only goals and tasks, none of the agents' words.
+    var tasksMode by remember { mutableStateOf(ui.getBoolean("statusTasks", false)) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item {
+            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                listOf("Sessions", "Tasks").forEachIndexed { i, label ->
+                    SegmentedButton(
+                        selected = tasksMode == (i == 1),
+                        onClick = { tasksMode = i == 1; ui.edit().putBoolean("statusTasks", tasksMode).apply() },
+                        shape = SegmentedButtonDefaults.itemShape(i, 2),
+                    ) { Text(label) }
+                }
+            }
+        }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
@@ -341,7 +368,16 @@ fun StatusScreen(link: Link, ask: (String) -> Unit) {
         val ps = projects
         if (ps == null) item { Text(if (conn == Conn.CONNECTED) "Asking the laptop…" else "Waiting for a connection.") }
         else if (ps.isEmpty()) item { Text("Nothing open on the laptop.") }
+        else if (tasksMode) {
+            val withTasks = ps.filter { it.goals.isNotEmpty() }
+            if (withTasks.isEmpty()) item { Text("No open tasks in any project.") }
+            items(withTasks, key = { "t-" + it.name }) { ProjectTasksCard(it) }
+        }
         else items(ps, key = { it.name }) { ProjectCard(it, ask) }
+        item(key = "build") {
+            Text("Genlock " + buildLabel(ctx), Modifier.fillMaxWidth().padding(top = 8.dp), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
     }
 }
 
@@ -353,20 +389,7 @@ fun ProjectCard(p: Project, ask: (String) -> Unit) {
                 Text(p.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 TextButton(onClick = { ask("What's happening in ${p.name}?") }) { Text("Ask") }
             }
-            for (s in p.sessions) {
-                val (word, color) = when (s.state) {
-                    "working" -> "working" to Color(0xFF7AA2F7)
-                    "waiting" -> "needs you" to MaterialTheme.colorScheme.error
-                    "done" -> "idle" to MaterialTheme.colorScheme.onSurfaceVariant
-                    else -> s.state to MaterialTheme.colorScheme.onSurfaceVariant
-                }
-                Column {
-                    Text("${s.name} · $word", style = MaterialTheme.typography.labelLarge, color = color)
-                    s.task?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                    if (s.said.isNotBlank()) Text(s.said, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            for (s in p.sessions) SessionLine(s)
             p.topGoal?.let { Text("Goal: $it", style = MaterialTheme.typography.bodySmall) }
             p.topTask?.let { Text("Next task: $it" + if (p.openTasks > 1) " (+${p.openTasks - 1} more)" else "", style = MaterialTheme.typography.bodySmall) }
             if (p.blocked > 0) Text("Blocked: ${p.blocked}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
@@ -378,6 +401,79 @@ fun ProjectCard(p: Project, ask: (String) -> Unit) {
         }
     }
 }
+
+/** A session as the Mac's Tasks view shows it: its title and state, the goal it serves, its task. */
+@Composable
+fun SessionLine(s: Session) {
+    val (word, color) = when (s.state) {
+        "working" -> "working" to Color(0xFF7AA2F7)
+        "waiting" -> "needs you" to MaterialTheme.colorScheme.error
+        "holding" -> "running a job" to Color(0xFF7AA2F7)
+        "done" -> "idle" to MaterialTheme.colorScheme.onSurfaceVariant
+        else -> s.state to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(s.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Spacer(Modifier.width(8.dp))
+            Text(word, style = MaterialTheme.typography.labelMedium, color = color)
+        }
+        s.goal?.let { g ->
+            Text("Goal: ${g.title}" + if (g.total > 0) " · ${g.done}/${g.total}" else "",
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        val w = s.work
+        if (w != null) TaskLine(w)
+        else Text("No task recorded", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (s.said.isNotBlank()) Text(s.said, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
+    }
+}
+
+/** One project in Tasks mode: each goal, and under it its open tasks with status, proof and latest update. */
+@Composable
+fun ProjectTasksCard(p: Project) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            for (g in p.goals) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(g.title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
+                        if (g.total > 0) Text("${g.done}/${g.total}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    for (t in g.tasks) TaskLine(t)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun TaskLine(t: TaskItem) {
+    val (word, color) = when (t.status) {
+        "in_progress" -> "in progress" to Color(0xFF7AA2F7)
+        "blocked" -> "blocked" to MaterialTheme.colorScheme.error
+        else -> "open" to MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(Modifier.padding(start = 8.dp)) {
+        Text(t.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        Text(listOfNotNull(word, t.proof.takeIf { it != "none" }, t.who?.let { "on $it" }).joinToString(" · "),
+            style = MaterialTheme.typography.labelMedium, color = color)
+        t.latest?.let {
+            Text(it + (ago(t.at)?.let { a -> " · $a" } ?: ""), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** "5m ago", from an ISO time. */
+fun ago(iso: String): String? = runCatching {
+    val s = ((System.currentTimeMillis() - java.time.Instant.parse(iso).toEpochMilli()) / 1000).coerceAtLeast(0)
+    when { s < 60 -> "just now"; s < 3600 -> "${s / 60}m ago"; s < 86400 -> "${s / 3600}h ago"; else -> "${s / 86400}d ago" }
+}.getOrNull()
 
 @Composable
 fun PairScreen(link: Link) {

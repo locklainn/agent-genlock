@@ -51,9 +51,6 @@ struct DashboardHeader: View {
                     .buttonStyle(GlassButtonStyle())
                     .help("Every goal you have finished")
             }
-            Button { model.statusSweep() } label: { Label("Status update", systemImage: "checklist") }
-                .buttonStyle(GlassButtonStyle())
-                .help("\(model.assistantName) goes through every session in every project, says where each stands, and suggests what to close or finish.")
             Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects. Right ⌥ from here talks to it.")

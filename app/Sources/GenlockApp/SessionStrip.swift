@@ -80,7 +80,7 @@ struct SessionStatusRow: View {
         case .working: return ("bolt.fill", Theme.tint(tier)[0])
         case .workingUnrecorded: return ("bolt.fill", Theme.amber)
         case .needsYou: return ("bell.fill", Theme.red)
-        case .waitingOn: return ("hourglass", Theme.violet)
+        case .waitingOn: let st = status.waitState ?? .running; return (st.symbol, st.color)
         case .paused: return ("pause.fill", Theme.textSecondary)
         case .untracked: return ("exclamationmark.triangle.fill", Theme.amber)
         case .waitingForWork: return ("hourglass", Theme.textTertiary)
@@ -92,8 +92,8 @@ struct SessionStatusRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 6) {
                 if status.kind == .waitingOn {
-                    SpinningHourglass(size: 10.5).foregroundStyle(symbol.color)
-                    // What it waits on is the news here, so it reads in violet and may truncate.
+                    WaitGlyph(state: status.waitState ?? .running, size: 10.5)
+                    // What it is on is the news here, so it reads in its state's color and may truncate.
                     Text(status.headline).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(symbol.color)
                         .lineLimit(1).truncationMode(.tail)
                 } else {
@@ -114,7 +114,7 @@ struct SessionStatusRow: View {
         .padding(.horizontal, 8).padding(.vertical, compact ? 2 : 4)
         .frame(maxWidth: compact ? nil : .infinity, alignment: .leading)
         .help(compact ? (status.detail ?? "") : "")
-        .modifier(StatusSurface(kind: status.kind, tier: tier))
+        .modifier(StatusSurface(kind: status.kind, tier: tier, wait: status.waitState))
         .accessibilityElement(children: .combine)
     }
 }
@@ -122,6 +122,7 @@ struct SessionStatusRow: View {
 private struct StatusSurface: ViewModifier {
     let kind: Snapshot.SessionStatus.Kind
     let tier: Tier
+    var wait: SessionWait.State? = nil
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: 8, style: .continuous)
@@ -129,7 +130,10 @@ private struct StatusSurface: ViewModifier {
         case .working: content.modifier(WorkingGlow(active: true, tier: tier))
         case .needsYou: content.background(Theme.red.opacity(0.14), in: shape).overlay(shape.strokeBorder(Theme.red.opacity(0.8), lineWidth: 1))
         case .workingUnrecorded, .untracked: content.background(Theme.amber.opacity(0.1), in: shape).overlay(shape.strokeBorder(Theme.amber.opacity(0.6), lineWidth: 1))
-        case .waitingOn: content.background(Theme.violet.opacity(0.12), in: shape).overlay(shape.strokeBorder(Theme.violet.opacity(0.5), lineWidth: 1))
+        case .waitingOn:
+            let st = wait ?? .running
+            content.background(st.color.opacity(st.isWork ? 0.12 : 0.05), in: shape)
+                .overlay(shape.strokeBorder(st.color.opacity(st.isWork ? 0.5 : 0.25), style: StrokeStyle(lineWidth: 1, dash: st.isWork ? [] : [3, 2])))
         case .paused: content.background(Color.white.opacity(0.05), in: shape).overlay(shape.strokeBorder(Theme.hairline, lineWidth: 1))
         case .waitingForWork, .ended: content
         }

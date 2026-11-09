@@ -27,6 +27,10 @@ struct GenlockApp: App {
                 Button("Focus on LATER") { model.focusDashboard(.later) }.keyboardShortcut("3")
                 Button("Show All Tiers") { model.focusDashboard(.all) }.keyboardShortcut("4")
                 Divider()
+                Button(model.paneMode == .cli ? "Show Tasks" : "Show Terminals") {
+                    model.paneMode = model.paneMode == .cli ? .tasks : .cli
+                }.keyboardShortcut("t")
+                Divider()
                 Button("Talk to Agent") { model.pressVoice() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button(model.voice.speakReplies ? "Turn Spoken Replies Off" : "Turn Spoken Replies On") {
                     model.voice.speakReplies.toggle()

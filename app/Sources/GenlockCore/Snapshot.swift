@@ -95,10 +95,19 @@ public struct Snapshot: Decodable, Equatable {
         public var updated: String
         public var summary: String
         public var latest: Latest?
+        /// Its last few moves, newest first: updates, proved requirements, status changes. Older CLIs leave it out.
+        public var recent: [Event]?
         public var blockedReason: String?
         public var requirements: [Requirement]
         public var hazards: [Hazard]
         public var forbids: [Forbid]
+    }
+
+    public struct Event: Decodable, Equatable {
+        /// update, proved, failed, waived, started, blocked, done, abandoned, handed off, opened
+        public var kind: String
+        public var text: String
+        public var at: String
     }
 
     public struct Latest: Decodable, Equatable {
@@ -319,6 +328,8 @@ public struct Snapshot: Decodable, Equatable {
         public var headline: String
         public var task: Ticket?
         public var detail: String?
+        /// For `waitingOn`: testing, running, queued or waiting, which decides its color.
+        public var waitState: SessionWait.State? = nil
     }
 
     public static func sessionStatus(phase: String?, isRunning: Bool, message: String?, focus: SessionFocus, wait: SessionWait? = nil) -> SessionStatus {
@@ -328,7 +339,7 @@ public struct Snapshot: Decodable, Equatable {
         if !isRunning { return SessionStatus(kind: .ended, headline: "Session ended", task: task, detail: nil) }
         // Blocked on a queue or a job: say on what. Only a question for the user outranks it.
         if let wait, phase != "waiting" {
-            return SessionStatus(kind: .waitingOn, headline: wait.headline, task: task, detail: said ?? progress)
+            return SessionStatus(kind: .waitingOn, headline: wait.headline, task: task, detail: said ?? progress, waitState: wait.state)
         }
         switch phase {
         case "working":

@@ -123,6 +123,8 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(card.deadline?.label, "due in 3d")
         XCTAssertNotNil(card.lastTaskUpdated)
         XCTAssertEqual(s.ticket(ticket)?.latest?.text, "9 of 12 tables render")
+        XCTAssertEqual(s.ticket(ticket)?.recent?.first?.kind, "update", "Tasks mode reads the feed newest first")
+        XCTAssertEqual(s.ticket(ticket)?.recent?.first?.text, "9 of 12 tables render")
         XCTAssertEqual(s.ticket(ticket)?.hazards.count, 1)
         XCTAssertEqual(s.goal(goal)?.forbids.first?.text, "Do not deploy")
     }

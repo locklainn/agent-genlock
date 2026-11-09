@@ -728,6 +728,10 @@ check('doctor sees the hook once installed', /guard hook in/.test(r.out), r.out)
 inst('--skill');
 check('--skill installs each module\'s skill', ['ticketed-work', 'goals', 'continuity', 'coordination', 'reviews', 'spinoffs', 'status-labels']
   .every((n) => fs.existsSync(path.join(IN, '.claude/skills', n, 'SKILL.md'))));
+check('...but not the opt-in phone-builds skill, or its rule', !fs.existsSync(path.join(IN, '.claude/skills/phone-builds')) && !/phone\.sh/.test(agents()), agents());
+inst('--with', 'phone', '--skill');
+check('--with phone adds the phone rule to the rest and copies the skill with its templates folder',
+  /phone\.sh --device/.test(agents()) && /goal add/.test(agents()) && fs.existsSync(path.join(IN, '.claude/skills/phone-builds/templates/phone.sh')), agents());
 
 /* ---- reviews and the snapshot --------------------------------------------------- */
 
@@ -777,6 +781,8 @@ const sa = sn.goals.find((x) => x.id === GB);
 check('snapshot: next things with days until due', sa.next[0].days_until === 3, JSON.stringify(sa.next));
 const st0 = sn.tickets.find((x) => x.id === TA);
 check('snapshot: a ticket has its latest', st0.latest.text === 'half done', JSON.stringify(st0));
+check('snapshot: a ticket has a recent feed, newest first, at most 4', Array.isArray(st0.recent) && st0.recent.length <= 4 && st0.recent[0].kind === 'update' && st0.recent[0].text === 'half done'
+  && st0.recent.every((x, i, a) => !i || a[i - 1].at >= x.at), JSON.stringify(st0.recent));
 check('snapshot: progress is counted', sn.goals.find((x) => x.id === GA).progress.total === 1);
 rv('claim', TA, '--path', 'src');
 check('snapshot: live claims', snap().claims[0].paths[0] === 'src');
@@ -951,6 +957,12 @@ check('an idle reminder ends a turn that never reported ending', stateOf().state
   check('genlock wait declares a wait, keyed by its caller', r.code === 0 && decl.length === 1 && json(decl[0]).label === 'build queue' && json(decl[0]).kind === 'queued', r.err + decl.join());
   voiceRun(['wait', '--clear']);
   check('...and --clear ends it', !fs.readdirSync(VOICE).some((x) => x.startsWith('wait-decl-')));
+  r = voiceRun(['wait', 'testing', 'the', 'town', '--state', 'testing']);
+  const st = fs.readdirSync(VOICE).filter((x) => x.startsWith('wait-decl-'));
+  check('genlock wait --state keeps the state and the agent\'s own text', r.code === 0 && st.length === 1 && json(st[0]).kind === 'testing' && json(st[0]).explicit === true && json(st[0]).label === 'testing the town', r.err + st.join());
+  voiceRun(['wait', '--clear']);
+  r = voiceRun(['wait', 'x', '--state', 'bogus']);
+  check('genlock wait refuses a state the app does not know', r.code !== 0 && /unknown state/.test(r.err) && !fs.readdirSync(VOICE).some((x) => x.startsWith('wait-decl-')), r.err);
   fs.writeFileSync(w('wait-decl-999999.json'), '{"label":"old","kind":"running","since":1,"pid":999999}');
   voiceRun(['session-state'], '{"hook_event_name":"PreToolUse","tool_name":"Read","tool_input":{}}');
   check('a declared wait whose caller has gone ends at the next tool call', !fs.existsSync(w('wait-decl-999999.json')));

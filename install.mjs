@@ -7,6 +7,7 @@
  *   genlock install --hooks               # Claude Code hooks: orient, guard, deliver, session-end
  *   genlock install --mcp                 # register the MCP server in .mcp.json
  *   genlock install --skill               # also install the Claude Code skills
+ *   genlock install --with phone          # add an opt-in module (phone builds) to the rest
  *   genlock install --global              # into ~/.claude rather than this repository
  *   genlock install --full                # the long form of the tickets protocol
  *   genlock install --private             # keep records out of git, on this machine only
@@ -35,6 +36,8 @@ const MODULES = {
   coordination: { file: 'coordination.md', skill: 'coordination', needs: [] },
   reviews: { file: 'reviews.md', skill: 'reviews', needs: [] },
   spinoffs: { file: 'spinoffs.md', skill: 'spinoffs', needs: ['tickets', 'coordination'] },
+  // Opt-in: only for projects with a phone app, so only with --with phone or --only phone.
+  phone: { file: 'phone.md', skill: 'phone-builds', needs: [], optIn: true },
 };
 
 const CANDIDATES = [
@@ -50,7 +53,8 @@ const global = has('--global');
 
 function selected() {
   const only = many('--only').flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean);
-  const want = new Set(only.length ? only : Object.keys(MODULES));
+  const extra = many('--with').flatMap((s) => s.split(',')).map((s) => s.trim()).filter(Boolean);
+  const want = new Set(only.length ? only : [...Object.keys(MODULES).filter((m) => !MODULES[m].optIn), ...extra]);
   for (const m of want) {
     if (!MODULES[m]) {
       console.error(`genlock: no module '${m}'. There are: ${Object.keys(MODULES).join(', ')}`);
@@ -167,8 +171,9 @@ if (has('--skill')) {
     const src = path.join(HERE, 'skills', skill);
     const dest = path.join(base, skill);
     if (!check) {
+      // Recursive: a skill can carry a folder of templates (phone-builds does).
       fs.mkdirSync(dest, { recursive: true });
-      for (const f of fs.readdirSync(src)) fs.copyFileSync(path.join(src, f), path.join(dest, f));
+      fs.cpSync(src, dest, { recursive: true });
     }
     console.log(`  ${check ? 'would install' : 'installed'} skill: ${dest}`);
   }

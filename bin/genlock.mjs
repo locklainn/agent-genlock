@@ -108,7 +108,9 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
   genlock say "TEXT"                              speak a reply, in a session started with a voice channel
-  genlock wait "WHAT" [--queued]  |  genlock wait --clear   show the app what this session is blocked on (a queue, a job)
+  genlock wait "TEXT" --state testing|running|queued|waiting  |  genlock wait --clear
+                                  show the app what this session is on, in your words: testing and running
+                                  are work happening; queued and waiting are nothing happening until something moves
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
   genlock where
   genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--private] [--global] [--full] [--check]

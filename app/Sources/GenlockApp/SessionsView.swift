@@ -46,9 +46,11 @@ struct SessionBar: View {
                 projectTabs
                 UsageMeter()
                 UpdatePill()
+                PaneModeToggle()
                 Button { showEverything() } label: { Image(systemName: showingEverything ? "rectangle" : "square.grid.2x2") }
                     .buttonStyle(GlassButtonStyle(active: showingEverything, compact: true))
-                    .help(showingEverything ? "Back to one session" : "Show every session at once")
+                    .keyboardShortcut("g")
+                    .help(showingEverything ? "Back to one session (⌘G)" : "Show every session at once (⌘G)")
                     .accessibilityLabel("Show every session")
                 Button { showingSwitcher = true } label: { Image(systemName: "magnifyingglass") }
                     .buttonStyle(GlassButtonStyle(compact: true))
@@ -57,9 +59,6 @@ struct SessionBar: View {
                     .popover(isPresented: $showingSwitcher, arrowEdge: .bottom) { SessionSwitcher(close: { showingSwitcher = false }) }
                 Button { model.showPrevious() } label: { EmptyView() }
                     .keyboardShortcut(.tab, modifiers: .control).frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-                Button { model.statusSweep() } label: { Image(systemName: "checklist") }
-                    .buttonStyle(GlassButtonStyle(compact: true))
-                    .help("Status update: \(model.assistantName) goes through every session in every project and suggests what to close or finish.")
                 Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                     .buttonStyle(GlassButtonStyle())
                     .help("One session across all your projects")
@@ -109,7 +108,7 @@ struct SpeechSettings: View {
 extension SessionBar {
     /// Every session with a tab, grouped by project, as many as a split holds.
     private var everySession: [String] {
-        model.projectsWithTabs.flatMap { model.sessionKeys(in: $0) }
+        model.projectsWithTabs.flatMap { model.gridKeys($0, start: false) }
     }
 
     private var showingEverything: Bool {
@@ -139,7 +138,8 @@ extension SessionBar {
 
     /// One tab per project. Its dot is the most urgent of its sessions.
     private var projectTabs: some View {
-        let order = model.projectsWithTabs
+        // No tab for Tally: its button sits at the top right of every screen already.
+        let order = model.projectsWithTabs.filter { $0 != model.assistantFolder }
         let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.projectName($0))) + 14 }
         var layout = TabOverflow.layout(order: order, priority: model.currentProject.map { [$0] } ?? [], room: projectsWidth - 40, natural: natural)
         if !layout.hidden.isEmpty {
@@ -318,15 +318,14 @@ struct HeaderSessionTabs: View {
                 .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
                 .help("Sessions in this project without a tab here")
             }
-            if order.count > 1 {
+            if !order.isEmpty {
                 Button {
-                    let keys = model.sessionKeys(in: projectID)
-                    model.openSessions(Array(keys.prefix(SplitLayout.maxPanes)))
+                    model.openProjectGrid(projectID)
                 } label: {
                     Image(systemName: "square.grid.2x2").font(.system(size: 10.5, weight: .semibold)).frame(width: 22, height: 22).contentShape(Rectangle())
                 }
                 .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-                .help("Show all of \(model.projectName(projectID))'s sessions side by side")
+                .help("Show all of \(model.projectName(projectID))'s sessions side by side, its Assistant first if open")
                 .accessibilityLabel("Show all sessions in this project")
             }
             Button { model.newSession(in: projectID) } label: {
@@ -355,12 +354,15 @@ struct SessionStripTab: View {
         let current = key == paneKey
         let session = model.sessions[key]
         let need = session?.attention
-        let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (session?.wait != nil ? Theme.violet : (session?.isRunning == true ? Theme.green : Theme.textTertiary)))
+        let dot = need == .waiting ? Theme.red : (need == .done ? Theme.amber : (session?.wait.map { $0.state.color } ?? (session?.isRunning == true ? Theme.green : Theme.textTertiary)))
         let label = model.tabLabel(key)
         Button { model.showInPane(key, replacing: paneKey) } label: {
             HStack(spacing: 5) {
-                if session?.wait != nil && need == nil {
-                    SpinningHourglass(size: 8).foregroundStyle(Theme.violet).frame(width: 6, height: 6)
+                if let wait = session?.wait, need == nil {
+                    HStack(spacing: 3) {
+                        WaitGlyph(state: wait.state, size: 8).frame(width: 8, height: 8)
+                        Text(wait.gist).font(.system(size: 10, weight: .semibold)).foregroundStyle(wait.state.color).fixedSize()
+                    }
                 } else {
                     Circle().fill(dot).frame(width: 6, height: 6)
                 }
@@ -451,7 +453,7 @@ struct ProjectTab: View {
         let active = model.currentProject == project
         let count = model.sessionKeys(in: project).count
         let name = model.projectName(project)
-        Button { model.showProject(project) } label: {
+        Button { project == model.assistantFolder ? model.showProject(project) : model.openProjectHub(project) } label: {
             HStack(spacing: 6) {
                 Circle().fill(dot).frame(width: 7, height: 7).shadow(color: dot == Theme.textTertiary ? .clear : dot, radius: 4)
                 if let p = model.store.project(project) { ProjectIconView(project: p, size: 16) }
@@ -469,8 +471,8 @@ struct ProjectTab: View {
         .buttonStyle(GlassButtonStyle(active: active))
         .help("\(name): \(count) session\(count == 1 ? "" : "s")")
         .contextMenu {
-            if count > 1 {
-                Button("Show All Its Sessions") { model.openSessions(Array(model.sessionKeys(in: project).prefix(SplitLayout.maxPanes))) }
+            if count > 0 {
+                Button("Show All Its Sessions") { model.openProjectGrid(project) }
             }
             Button("New Session in \(name)") { model.newSession(in: project) }
             Button("Close All Its Sessions…") { model.requestClose(model.sessionKeys(in: project)) }
@@ -535,8 +537,30 @@ struct PaneView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            Rectangle().fill(Theme.gradient(tier)).frame(height: 2)
+            // An Assistant's pane is violet from the top, so it never reads as an ordinary session.
+            Rectangle().fill(isAssistantPane ? AnyShapeStyle(Theme.violet) : AnyShapeStyle(Theme.gradient(tier))).frame(height: isAssistantPane ? 3 : 2)
             header
+            if model.paneMode == .tasks {
+                tasks
+            } else {
+                cli
+            }
+        }
+    }
+
+    /// Tasks mode: the Assistant sees every project, a project's Assistant its project, a session its own work.
+    @ViewBuilder private var tasks: some View {
+        if projectID == model.assistantFolder {
+            TaskBoardView(projectID: nil)
+        } else if model.isSubassistant(sessionKey) {
+            TaskBoardView(projectID: projectID)
+        } else if let session = model.sessions[sessionKey] {
+            TaskPaneView(session: session, tier: tier)
+        }
+    }
+
+    @ViewBuilder private var cli: some View {
+        VStack(spacing: 0) {
             if isSplit, projectID != model.assistantFolder, let session = model.sessions[sessionKey] {
                 SessionStrip(session: session, tier: tier, openPanel: toggleInspector)
             }
@@ -566,6 +590,9 @@ struct PaneView: View {
         }
     }
 
+    /// Tally's pane, or a project's Assistant.
+    private var isAssistantPane: Bool { projectID == model.assistantFolder || model.isSubassistant(sessionKey) }
+
     private var header: some View {
         let voice = model.voice
         let listeningHere = voice.isListening && voice.target == sessionKey
@@ -574,8 +601,12 @@ struct PaneView: View {
             if isSplit {
                 // Several panes: each says only which session it is. Switching is the bar's job.
                 Circle().fill(paneDot).frame(width: 7, height: 7)
-                Text(model.tabLabel(sessionKey)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
-                    .lineLimit(1).truncationMode(.tail).help("\(name): \(model.tabLabel(sessionKey))")
+                Button { model.breakOut(sessionKey) } label: {
+                    Text(model.tabLabel(sessionKey)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+                        .lineLimit(1).truncationMode(.tail).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
+                .help("\(name): \(model.tabLabel(sessionKey)). Click to open it alone, with its terminal.")
                 if let wait = model.sessions[sessionKey]?.wait, model.sessions[sessionKey]?.attention == nil { WaitPill(wait: wait, compact: true) }
             } else {
                 Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
@@ -638,7 +669,7 @@ struct PaneView: View {
                 .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
-        .background(Color.white.opacity(0.03))
+        .background(isAssistantPane ? Theme.violet.opacity(0.16) : Color.white.opacity(0.03))
         .contentShape(Rectangle())
         .onTapGesture { model.focus(sessionKey) }
     }
@@ -646,7 +677,7 @@ struct PaneView: View {
     /// The pane's status in split view, where there is no room for the pill.
     private var paneDot: SwiftUI.Color {
         let session = model.sessions[sessionKey]
-        if session?.isRunning == true, session?.wait != nil, session?.phase != "waiting" { return Theme.violet }
+        if session?.isRunning == true, let wait = session?.wait, session?.phase != "waiting" { return wait.state.color }
         switch session?.isRunning == true ? session?.phase : nil {
         case "working": return Theme.cyan
         case "waiting": return Theme.red

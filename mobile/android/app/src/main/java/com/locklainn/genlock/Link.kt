@@ -42,10 +42,18 @@ enum class Who { ME, LAPTOP_PROMPT, ASSISTANT, NOTE, INFO }
 
 data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false)
 
-data class Session(val name: String, val state: String, val said: String, val task: String?)
+data class Session(val name: String, val state: String, val said: String, val task: String?,
+                   val title: String = name, val goal: SessionGoal? = null, val work: TaskItem? = null)
+
+data class SessionGoal(val title: String, val done: Int, val total: Int)
+
+data class GoalTasks(val title: String, val done: Int, val total: Int, val tasks: List<TaskItem>)
+
+data class TaskItem(val title: String, val status: String, val proof: String, val latest: String?, val at: String, val who: String?)
 
 data class Project(
     val name: String,
+    val goals: List<GoalTasks>,
     val sessions: List<Session>,
     val topGoal: String?,
     val topTask: String?,
@@ -239,11 +247,26 @@ class Link(app: Application) : AndroidViewModel(app) {
         val s = p.optJSONArray("sessions") ?: JSONArray()
         val due = p.optJSONArray("due") ?: JSONArray()
         val waiting = p.optJSONArray("waiting") ?: JSONArray()
+        val gs = p.optJSONArray("goals") ?: JSONArray()
+        fun str(o: JSONObject, k: String) = o.optString(k).takeIf { it.isNotEmpty() && it != "null" }
         Project(
             name = p.optString("name"),
+            goals = (0 until gs.length()).map { j ->
+                val g = gs.getJSONObject(j)
+                val ts = g.optJSONArray("tasks") ?: JSONArray()
+                GoalTasks(g.optString("title"), g.optInt("done"), g.optInt("total"), (0 until ts.length()).map { k ->
+                    val t = ts.getJSONObject(k)
+                    TaskItem(t.optString("title"), t.optString("status"), t.optString("proof"), str(t, "latest"), t.optString("at"), str(t, "who"))
+                })
+            },
             sessions = (0 until s.length()).map { j ->
                 val x = s.getJSONObject(j)
-                Session(x.optString("name"), x.optString("state"), x.optString("said"), x.optString("task").takeIf { it.isNotEmpty() && it != "null" })
+                val g = x.optJSONObject("goal")
+                val w = x.optJSONObject("work")
+                Session(x.optString("name"), x.optString("state"), x.optString("said"), str(x, "task"),
+                    title = str(x, "title") ?: x.optString("name"),
+                    goal = g?.let { SessionGoal(it.optString("title"), it.optInt("done"), it.optInt("total")) },
+                    work = w?.let { TaskItem(it.optString("title"), it.optString("status"), it.optString("proof"), str(it, "latest"), it.optString("at"), null) })
             },
             topGoal = p.optString("topGoal").takeIf { it.isNotEmpty() && it != "null" },
             topTask = p.optString("topTask").takeIf { it.isNotEmpty() && it != "null" },

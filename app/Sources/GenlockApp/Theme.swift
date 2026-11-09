@@ -263,27 +263,64 @@ struct SpinningHourglass: View {
     }
 }
 
-/// A session blocked on something that is not the agent: a long command, a queue, a background
-/// job. Violet and an hourglass, so it reads apart from working (cyan), needs you (red) and done.
+extension SessionWait.State {
+    /// Work happening is colored; nothing happening is muted, so the two read apart at a glance.
+    var color: Color {
+        switch self {
+        case .testing: return Theme.green
+        case .running: return Color(hex: 0x5B9BFF)
+        case .queued: return Theme.violet.opacity(0.8)
+        case .waiting: return Theme.textSecondary
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .testing: return "testtube.2"
+        case .running: return "gearshape.fill"
+        case .queued: return "hourglass"
+        case .waiting: return "pause.circle.fill"
+        }
+    }
+}
+
+/// What a wait is, as a glyph: it pulses while work is happening and keeps still when none is.
+struct WaitGlyph: View {
+    let state: SessionWait.State
+    var size: CGFloat
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        Image(systemName: state.symbol).font(.system(size: size, weight: .bold))
+            .symbolEffect(.pulse, options: .repeating, isActive: state.isWork && !reduceMotion)
+            .foregroundStyle(state.color)
+    }
+}
+
+/// A session on something that is not the agent thinking: tests, a build, a queue, a lock. Its
+/// color says which, and whether anything is being done.
 struct WaitPill: View {
     let wait: SessionWait
     var compact = false
 
     var body: some View {
+        let color = wait.state.color
         TimelineView(.periodic(from: .now, by: 1)) { context in
             HStack(spacing: 4) {
-                SpinningHourglass(size: 10)
-                if !compact { Text(wait.headline).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.tail) }
+                WaitGlyph(state: wait.state, size: 10)
+                Text(compact ? wait.gist : wait.headline).font(.system(size: 11, weight: .semibold)).lineLimit(1).truncationMode(.tail)
                 Text(wait.elapsed(now: context.date)).font(.system(size: 11, weight: .semibold)).monospacedDigit().opacity(0.75)
             }
-            .foregroundStyle(Theme.violet)
+            .foregroundStyle(color)
             .padding(.horizontal, 8).padding(.vertical, 4)
-            .background(Theme.violet.opacity(0.15), in: Capsule())
-            .overlay(Capsule().strokeBorder(Theme.violet.opacity(0.28), lineWidth: 1))
+            .background(color.opacity(wait.state.isWork ? 0.15 : 0.07), in: Capsule())
+            .overlay(Capsule().strokeBorder(color.opacity(wait.state.isWork ? 0.35 : 0.2), lineWidth: 1))
             .frame(maxWidth: compact ? nil : 320)
             .fixedSize(horizontal: compact, vertical: false)
         }
-        .help("Waiting on something that is not the agent: \(wait.headline). The agent is not thinking; it resumes when this finishes.")
+        .help(wait.state.isWork
+              ? "\(wait.state.rawValue.capitalized): \(wait.headline). Work is happening; the agent resumes when it finishes."
+              : "\(wait.state.rawValue.capitalized): \(wait.headline). Nothing is being done until something else moves.")
     }
 }
 

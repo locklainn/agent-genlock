@@ -59,6 +59,10 @@ final class AppModel {
     @ObservationIgnored private var messageTimer: DispatchWorkItem?
     var suggestions: [String] = []
     var hiddenInspectors: Set<String> = []
+    /// What a pane shows: its terminal, or only the goal and tasks it is on.
+    var paneMode = PaneMode(rawValue: UserDefaults.standard.string(forKey: "paneMode") ?? "") ?? .cli {
+        didSet { UserDefaults.standard.set(paneMode.rawValue, forKey: "paneMode") }
+    }
     var hoveredCard: String?
     var setupTarget: String?
     var completingGoal: CompletingGoal?
@@ -401,7 +405,10 @@ final class AppModel {
     func clickCard(_ id: String) {
         let shift = lastClickHadShift
         lastClickHadShift = false
-        if let open = selection.click(id, shift: shift) { openSessions(open) }
+        if let open = selection.click(id, shift: shift) {
+            // A single project opens on its hub; the Assistant's card, and Shift-picks, open as before.
+            if !shift, open.count == 1, open[0] != assistantFolder { openProjectHub(open[0]) } else { openSessions(open) }
+        }
         if selection.overflowed { message = "A split holds up to \(DashSelection.maxPanes) sessions." }
     }
 
@@ -707,6 +714,32 @@ final class AppModel {
     func subKey(_ project: String) -> String { SessionMemory.key(project: project, ticket: nil, slot: Self.subSlot) }
 
     func isSubassistant(_ key: String) -> Bool { sessions[key]?.slot == Self.subSlot }
+
+    /// A project's sessions as its grid shows them: its Assistant first, then the rest. `start`
+    /// opens the Assistant when it is not running; without it, only an open one is included.
+    func gridKeys(_ project: String, start: Bool) -> [String] {
+        let sub = subKey(project)
+        if start && sessions[sub] == nil { startSubassistant(project) }
+        return (sessions[sub] == nil ? [] : [sub]) + sessionKeys(in: project)
+    }
+
+    /// Shows a project's grid, its Assistant first if you opened it. Never starts one.
+    func openProjectGrid(_ project: String) {
+        openSessions(Array(gridKeys(project, start: false).prefix(SplitLayout.maxPanes)))
+    }
+
+    /// What clicking a project opens: its hub, its sessions side by side, in whichever mode you
+    /// are already in (switching it on a click is disorienting). Its Assistant leads only if you
+    /// already opened it; a click never starts one.
+    func openProjectHub(_ project: String) {
+        openSessions(Array(gridKeys(project, start: false).prefix(SplitLayout.maxPanes)))
+    }
+
+    /// Out of the hub: one session alone, with its terminal.
+    func breakOut(_ key: String) {
+        paneMode = .cli
+        show(key)
+    }
 
     /// Shows a project's Assistant, starting it on a project status when it is not open yet.
     func openSubassistant(_ project: String, replacing pane: String? = nil) {

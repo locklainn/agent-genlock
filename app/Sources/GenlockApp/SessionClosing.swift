@@ -31,6 +31,6 @@ extension AppModel {
     /// Shows a project from the bar's plus menu: where you were in it, else a new session.
     func openProject(_ project: String) {
         if let onScreen = visible.first(where: { sessions[$0]?.projectID == project }) { return focus(onScreen) }
-        if sessionKeys(in: project).isEmpty { newSession(in: project) } else { showProject(project) }
+        if sessionKeys(in: project).isEmpty { newSession(in: project) } else { openProjectHub(project) }
     }
 }

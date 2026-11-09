@@ -147,6 +147,13 @@ export class TranscriptFollower {
 
 const TIERS = ['today', 'week', 'someday'];
 const sessionName = (o) => (o.spawn?.ticket ? o.spawn.ticket : o.slot ? `+${o.slot}` : 'main');
+const SUB_SLOT = 'assistant';
+/** A goal or task's name as the Mac shows it: its short name in words, else its title. */
+const heading = (x) => {
+  if (!x.short || x.named === false) return x.title;
+  const w = String(x.short).replace(/-/g, ' ');
+  return w.charAt(0).toUpperCase() + w.slice(1);
+};
 const clip = (t, n) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 
 function snapshot(folder) {
@@ -169,19 +176,62 @@ export async function status(home = genlockHome(), snap = snapshot) {
   const out = await Promise.all(projects.map(async (p) => {
     const s = await snap(p.path);
     const tickets = s?.tickets || [];
-    const sessions = open.filter((o) => o.project === p.path && o.token).map((o) => {
-      const st = readJSON(path.join(home, 'voice', o.token, 'state.json'), {});
-      const ticket = o.spawn?.ticket ? tickets.find((t) => t.id === o.spawn.ticket) : null;
-      return { name: ticket?.short || sessionName(o), state: st.state || 'starting', said: clip(String(st.message || '').replace(/\*\*|__|`/g, ''), 300), task: ticket ? clip(ticket.title, 120) : null };
-    });
+    const mine = open.filter((o) => o.project === p.path && o.token).map((o) => ({ o, st: readJSON(path.join(home, 'voice', o.token, 'state.json'), {}) }));
     const goals = (s?.goals || []).filter((g) => g.rank).sort((a, b) => a.rank - b.rank);
     const ranked = tickets.filter((t) => t.rank).sort((a, b) => a.rank - b.rank);
     const top = goals.find((g) => g.status === 'active');
     const asks = s?.questions_for_user || [];
     const due = [...goals, ...ranked].filter((r) => r.due && r.days_until <= 7)
       .sort((a, b) => a.days_until - b.days_until).map((r) => ({ title: clip(r.title, 100), days: r.days_until }));
+    // Tasks view: each active goal and the tasks open on it, with only what the records say.
+    const order = { in_progress: 0, blocked: 1, open: 2 };
+    const openTasks = ranked.filter((t) => t.status in order).sort((a, b) => order[a.status] - order[b.status] || a.rank - b.rank);
+    // A session's task, the way the Mac finds it: the ticket it was spawned on, else the open task
+    // its agent owns, in progress first. Its title follows the Mac's tab: that task, else the project.
+    const plain = mine.filter(({ o }) => !o.spawn && o.slot !== SUB_SLOT);
+    const workOf = ({ o, st }) => {
+      const agents = new Set([st.session, o.spawn?.session].filter(Boolean));
+      const first = (t) => (t.id === o.spawn?.ticket ? 0 : 1);
+      return tickets.filter((t) => t.id === o.spawn?.ticket || (t.rank && t.owner && agents.has(t.owner)))
+        .sort((a, b) => first(a) - first(b) || (order[a.status] ?? 3) - (order[b.status] ?? 3) || (a.rank || 1e9) - (b.rank || 1e9))[0] || null;
+    };
+    const titleOf = (m, work) => {
+      if (m.o.slot === SUB_SLOT) return 'Assistant';
+      if (work) return heading(work);
+      if (!m.o.spawn && !m.o.slot && plain.length === 1) return path.basename(p.path);
+      return `Session ${plain.indexOf(m) + 1}`;
+    };
+    const holder = (t) => {
+      const hit = mine.find((m) => workOf(m)?.id === t.id);
+      // Named without its task, which would only repeat the line it sits under.
+      return hit ? titleOf(hit, null) : null;
+    };
+    const taskView = (t) => ({
+      title: clip(t.short && t.named !== false ? `${t.short}: ${t.title}` : t.title, 140), status: t.status, proof: t.summary,
+      latest: t.latest ? clip(t.latest.text, 300) : null, at: t.latest?.at || t.updated, who: holder(t),
+    });
+    const sessions = mine.map((m) => {
+      const work = workOf(m);
+      const g = work?.goal ? goals.find((x) => x.id === work.goal) || (s?.goals || []).find((x) => x.id === work.goal) : null;
+      return {
+        name: m.o.spawn?.ticket || sessionName(m.o),
+        title: clip(titleOf(m, work), 80),
+        state: m.st.state || 'starting',
+        said: clip(String(m.st.message || '').replace(/\*\*|__|`/g, ''), 300),
+        task: work ? clip(work.title, 120) : null,
+        goal: g ? { title: clip(heading(g), 100), done: g.progress?.done || 0, total: g.progress?.total || 0 } : null,
+        work: work ? taskView(work) : null,
+      };
+    });
+    const goalTasks = goals.filter((g) => g.status === 'active')
+      .map((g) => ({ title: clip(g.short && g.named !== false ? `${g.short}: ${g.title}` : g.title, 140), done: g.progress?.done || 0, total: g.progress?.total || 0,
+        tasks: openTasks.filter((t) => t.goal === g.id).map(taskView) }))
+      .filter((g) => g.tasks.length);
+    const loose = openTasks.filter((t) => !goals.some((g) => g.status === 'active' && g.id === t.goal)).map(taskView);
+    if (loose.length) goalTasks.push({ title: 'No goal', done: 0, total: 0, tasks: loose });
     return {
       name: path.basename(p.path),
+      goals: goalTasks,
       tier: p.tier || null,
       sessions,
       topGoal: top ? clip(`${top.short}: ${top.title}`, 120) : null,
