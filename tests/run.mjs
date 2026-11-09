@@ -906,6 +906,25 @@ check('an idle reminder ends a turn that never reported ending', stateOf().state
   fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
   voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"tally"}', { GENLOCK_APP_PROJECTS: '/x/projects.json' });
   check('...but Tally, at the top, reports to nobody', relays().length === 0);
+  // A Subassistant holds its reply to Tally until the sessions it told have answered.
+  clear();
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), '{}');
+  fs.writeFileSync(path.join(VOICE, 'owed-tok-q'), String(Date.now()));
+  const subStop = (msg) => voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: msg }), { GENLOCK_APP_PROJECTS: '/x/projects.json', GENLOCK_APP_SCOPE: '/x/proj' });
+  subStop('Passed it on');
+  check('a Subassistant waiting on a session does not reply to Tally yet', relays().length === 0 && fs.existsSync(path.join(VOICE, 'awaiting-reply.json')));
+  fs.writeFileSync(path.join(VOICE, 'owed-tok-q'), String(Date.now() - 31 * 60000));
+  subStop('Both done');
+  check('...and replies once it is no longer owed anything (or the wait is stale)', relays().length === 1 && relays()[0].text === 'Both done', JSON.stringify(relays()));
+  fs.rmSync(path.join(VOICE, 'owed-tok-q'), { force: true });
+  clear();
+  const SUBDIR = path.join(path.dirname(VOICE), 'sub-paid');
+  fs.mkdirSync(SUBDIR, { recursive: true });
+  fs.writeFileSync(path.join(SUBDIR, `owed-${path.basename(VOICE)}`), String(Date.now()));
+  fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), JSON.stringify({ at: Date.now(), from: SUBDIR }));
+  voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"answered the sub"}');
+  check('a session answering a Subassistant clears what it owed', !fs.existsSync(path.join(SUBDIR, `owed-${path.basename(VOICE)}`)));
+  clear();
   fs.rmSync(path.join(VOICE, 'awaiting-reply.json'), { force: true });
 }
 
@@ -1466,6 +1485,48 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...carrying the user\'s words', JSON.parse(fs.readFileSync(path.join(CH, 'tok-s', 'close.json'), 'utf8')).user_said === 'yes close the side one');
   r = run(AS, 'someone', ['close', 'alpha', TS]);
   check('a project agent cannot close sessions', r.code !== 0, r.all);
+
+  // A project's Subassistant: scoped to its project, and Tally delegates to it.
+  const sessionsFile = path.join(AS, 'sessions.json');
+  const savedSessions = fs.readFileSync(sessionsFile, 'utf8');
+  const withSub = JSON.parse(savedSessions);
+  withSub.open.push({ project: PA, slot: 'assistant', token: 'tok-sub' });
+  fs.writeFileSync(sessionsFile, JSON.stringify(withSub));
+  const SUB = path.join(CH, 'tok-sub');
+  fs.mkdirSync(SUB, { recursive: true });
+  const subEnv = (args) => {
+    const env = { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_APP_SCOPE: PA, GENLOCK_APP_CHANNEL: SUB };
+    const x = spawnSync(process.execPath, [CLI, ...args], { cwd: PA, encoding: 'utf8', env });
+    return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
+  };
+  for (const t of ['tok-a', 'tok-s', 'tok-x']) for (const f of fs.readdirSync(path.join(CH, t)).filter((x) => x.startsWith('tell-') || x === 'awaiting-reply.json')) fs.rmSync(path.join(CH, t, f));
+  r = subEnv(['overview', '--all']);
+  check('a Subassistant\'s overview shows only its project', r.code === 0 && /alpha/.test(r.out) && !/beta/.test(r.out), r.out);
+  r = subEnv(['tell', 'beta', 'hello']);
+  check('a Subassistant cannot tell another project anything', r.code !== 0 && /only in alpha/.test(r.err), r.all);
+  r = subEnv(['at', 'beta', 'list']);
+  check('...nor change its records', r.code !== 0 && /only in alpha/.test(r.err), r.all);
+  r = subEnv(['open', 'beta']);
+  check('...nor open a session there', r.code !== 0 && /only in alpha/.test(r.err), r.all);
+  r = subEnv(['tell', TP, 'run done']);
+  const aw = (t) => { try { return JSON.parse(fs.readFileSync(path.join(CH, t, 'awaiting-reply.json'), 'utf8')); } catch { return null; } };
+  check('a Subassistant tells its sessions directly', r.code === 0 && tells('tok-a') === 1 && tells('tok-sub') === 0, r.all);
+  check('...and the reply is marked to come back to it, not Tally', aw('tok-a')?.from === SUB && fs.existsSync(path.join(SUB, 'owed-tok-a')), JSON.stringify(aw('tok-a')));
+  r = subEnv(['sweep']);
+  check('...and does not list itself as a session to sweep', r.code === 0 && !/\+assistant/.test(r.out), r.out);
+  fs.rmSync(path.join(CH, 'tok-a', 'awaiting-reply.json'));
+  for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
+  r = asEnv(['tell', TP, 'run done']);
+  const subTold = fs.readdirSync(SUB).filter((f) => f.startsWith('tell-'));
+  const subText = subTold.length === 1 ? JSON.parse(fs.readFileSync(path.join(SUB, subTold[0]), 'utf8')).text : '';
+  check('Tally\'s tell to a project with a Subassistant goes to the Subassistant', r.code === 0 && tells('tok-a') === 0 && /^\[from Tally\] For alpha \[main\]/.test(subText) && /run done/.test(subText), r.all + subText);
+  check('...which owes Tally the reply', !!aw('tok-sub') && !aw('tok-sub').from && !fs.existsSync(path.join(CH, 'tok-a', 'awaiting-reply.json')));
+  r = asEnv(['tell', 'alpha', 'swap', '--session', TS, '--relay-yes', 'yes swap it', '--for', 'swap']);
+  const relayText = fs.readdirSync(SUB).filter((f) => f.startsWith('tell-')).map((f) => JSON.parse(fs.readFileSync(path.join(SUB, f), 'utf8')).text).join('|');
+  check('...with the user\'s yes as their words to relay on, not a grant to the Subassistant', r.code === 0 && /--relay-yes "yes swap it" --for swap/.test(relayText) && !fs.existsSync(path.join(SUB, 'relay-yes.json')), relayText);
+  r = asEnv(['sweep']);
+  check('Tally\'s sweep does not list Subassistants as sessions', r.code === 0 && !/\+assistant/.test(r.out), r.out);
+  fs.writeFileSync(sessionsFile, savedSessions);
 }
 
 /* ---- completing goals ---------------------------------------------------------- */
