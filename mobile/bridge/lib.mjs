@@ -85,10 +85,12 @@ export function sendToAssistant(text, home = genlockHome(), { fresh = isStatusRe
  * Call poll() on a timer; it re-resolves the transcript, since a swap or restart changes it.
  */
 export class TranscriptFollower {
-  constructor(resolve, { onReply, onPrompt } = {}) {
+  constructor(resolve, { onReply, onPrompt, onPhone } = {}) {
     this.resolve = resolve;
     this.onReply = onReply || (() => {});
     this.onPrompt = onPrompt || (() => {});
+    // A message from the phone reached the conversation: the Assistant is starting on it.
+    this.onPhone = onPhone || (() => {});
     this.file = null;
     this.offset = 0;
     this.partial = '';
@@ -128,7 +130,8 @@ export class TranscriptFollower {
     const m = e.message;
     if (e.type === 'user' && m && typeof m.content === 'string' && !e.isMeta) {
       const text = m.content.trim();
-      if (text && !text.startsWith(PHONE_PREFIX) && !text.startsWith('<')) this.onPrompt({ text, turn: e.uuid });
+      if (text.startsWith(PHONE_PREFIX)) this.onPhone({ turn: e.uuid });
+      else if (text && !text.startsWith('<')) this.onPrompt({ text, turn: e.uuid });
       return;
     }
     if (e.type !== 'assistant' || !m || !Array.isArray(m.content)) return;

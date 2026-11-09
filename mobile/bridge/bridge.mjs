@@ -27,6 +27,7 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
   const follower = new TranscriptFollower(() => findAssistant(home)?.transcript, {
     onReply: ({ text, turn }) => { log('reply', text.slice(0, 60)); send({ kind: 'reply', text, turn }); },
     onPrompt: ({ text, turn }) => send({ kind: 'prompt', text, turn }),
+    onPhone: ({ turn }) => send({ kind: 'started', turn }),
   });
   follower.poll();
 

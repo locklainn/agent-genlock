@@ -31,33 +31,73 @@ class Dictation(
     private var segmented = Build.VERSION.SDK_INT >= 33
     private val settled = StringBuilder()
     private var failures = 0
+    /** Stopped, but the recognizer may still hand back the last words; waiting for them. */
+    private var closing = false
+    /** The phrase being spoken that has not settled yet. Used if the final result never comes. */
+    private var lastPartial = ""
+    private val waiters = mutableListOf<(String) -> Unit>()
+    private val giveUp = Runnable { finish() }
+    /** How long Stop or Send waits for the recognizer's last result before using what it has. */
+    var finishWithinMs = 3000L
     /** How long a segmented session may run. Overridable for testing: adb shell am start -n …/.MainActivity --ei minlen N */
     // The Pixel recognizer refuses more than 5 minutes (measured: 300000 accepted, 600000 refused).
     var minLength = 5 * 60_000
 
     val listening get() = wanted
+    /** Between Stop/Send and the recognizer's last result. */
+    val finishing get() = closing
 
     /** Starts listening; what was already heard (e.g. typed text) is kept in front. */
     fun start(prefix: String) {
         if (wanted) return
+        if (closing) finish()
         if (!SpeechRecognizer.isRecognitionAvailable(context)) { onProblem("This phone has no speech recognizer."); return }
         settled.clear()
         settled.append(prefix.trim())
+        lastPartial = ""
         wanted = true
         failures = 0
         onListening(true)
         session()
     }
 
-    fun stop() {
-        if (!wanted) return
+    /**
+     * Stops listening, but keeps the words still being processed: the recognizer hands back its
+     * last result a moment after stopListening(), and dropping it is what cut off the end of a
+     * sentence. [then] gets everything heard once that result is in (or after [finishWithinMs],
+     * with the last partial phrase standing in for it). Not dictating: [then] is not called.
+     */
+    fun stop(then: ((String) -> Unit)? = null): Boolean {
+        if (!wanted && !closing) return false
+        then?.let { waiters.add(it) }
+        if (closing) return true
         wanted = false
-        recognizer?.stopListening()
-        main.postDelayed({ if (!wanted) release() }, 1500)
+        closing = true
         onListening(false)
+        val r = recognizer
+        if (r == null) { finish(); return true }
+        r.stopListening()
+        main.removeCallbacks(giveUp)
+        main.postDelayed(giveUp, finishWithinMs)
+        return true
     }
 
-    fun destroy() { wanted = false; release() }
+    /** The last result is in, or waiting for it gave up: settle the text and hand it over. */
+    private fun finish() {
+        if (!closing) return
+        closing = false
+        main.removeCallbacks(giveUp)
+        add(lastPartial)
+        lastPartial = ""
+        val text = settled.toString()
+        onText(text, "")
+        release()
+        val ready = waiters.toList()
+        waiters.clear()
+        ready.forEach { it(text) }
+    }
+
+    fun destroy() { wanted = false; closing = false; waiters.clear(); main.removeCallbacks(giveUp); release() }
 
     private fun release() {
         recognizer?.destroy()
@@ -96,7 +136,8 @@ class Dictation(
 
     /** The recognizer ended on its own while the user still wants to talk: listen again. */
     private fun again() {
-        if (wanted) main.postDelayed({ session() }, 100)
+        if (closing) finish()
+        else if (wanted) main.postDelayed({ session() }, 100)
         else release()
     }
 
@@ -109,15 +150,17 @@ class Dictation(
         override fun onEvent(eventType: Int, params: Bundle?) {}
 
         override fun onPartialResults(partial: Bundle?) {
-            if (!wanted) return
+            if (!wanted && !closing) return
             val p = partial?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty()
+            if (p.isNotBlank()) lastPartial = p
             onText(settled.toString(), p)
         }
 
         // A phrase finished inside a segmented session; the session carries on.
         override fun onSegmentResults(segment: Bundle) {
-            if (!wanted) return
+            if (!wanted && !closing) return
             failures = 0
+            lastPartial = ""
             add(segment.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull())
             onText(settled.toString(), "")
         }
@@ -125,14 +168,16 @@ class Dictation(
         override fun onEndOfSegmentedSession() { again() }
 
         override fun onResults(results: Bundle?) {
-            if (!wanted) { release(); return }
+            if (!wanted && !closing) { release(); return }
             failures = 0
+            lastPartial = ""
             add(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull())
             onText(settled.toString(), "")
             again()
         }
 
         override fun onError(error: Int) {
+            if (closing) { finish(); return }
             when (error) {
                 SpeechRecognizer.ERROR_NO_MATCH, SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> again()
                 SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> { wanted = false; onListening(false); onProblem("Genlock needs the microphone permission.") }

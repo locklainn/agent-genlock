@@ -89,6 +89,15 @@ class Link(app: Application) : AndroidViewModel(app) {
     /** A message was sent and the Assistant has not answered yet. */
     val waiting = MutableStateFlow(false)
     private val giveUp = Runnable { waiting.value = false }
+    /** The "Assistant started" sound has played for the message now waiting. */
+    private var startCued = false
+
+    /** Once per message: the Assistant has picked it up. */
+    private fun cueStarted() {
+        if (!waiting.value || startCued) return
+        startCued = true
+        Cues.started()
+    }
 
     /** Each reply as it arrives, for reading aloud. */
     var onReply: ((String) -> Unit)? = null
@@ -182,6 +191,7 @@ class Link(app: Application) : AndroidViewModel(app) {
         val id = send(JSONObject().put("kind", "say").put("text", clean))
         lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true) }
         waiting.value = true
+        startCued = false
         main.removeCallbacks(giveUp)
         main.postDelayed(giveUp, 15 * 60_000L)
     }
@@ -204,7 +214,10 @@ class Link(app: Application) : AndroidViewModel(app) {
         when (m.optString("kind")) {
             "state" -> {
                 m.optString("laptop").takeIf { it.isNotEmpty() }?.let { laptop.value = it }
-                m.optString("assistant").takeIf { it.isNotEmpty() }?.let { assistant.value = it }
+                m.optString("assistant").takeIf { it.isNotEmpty() }?.let {
+                    if (it == "busy" && assistant.value != "busy") cueStarted()
+                    assistant.value = it
+                }
                 m.optString("assistantName").takeIf { it.isNotEmpty() }?.let {
                     assistantName.value = it
                     prefs.edit().putString("assistantName", it).apply()
@@ -213,9 +226,12 @@ class Link(app: Application) : AndroidViewModel(app) {
             }
             "ack" -> {
                 val of = m.optString("of")
+                if (lines.value.any { it.id == of && it.pending }) Cues.sent()
                 lines.update { list -> list.map { if (it.id == of) it.copy(pending = false) else it } }
                 seen(t)
             }
+            // The bridge saw the phone's message reach the Assistant's conversation.
+            "started" -> cueStarted()
             "reply" -> {
                 val id = m.optString("turn").ifEmpty { m.optString("id") }
                 seen(t)

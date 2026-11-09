@@ -1,0 +1,65 @@
+package com.locklainn.genlock
+
+import android.media.AudioAttributes
+import android.media.AudioFormat
+import android.media.AudioTrack
+import kotlin.math.PI
+import kotlin.math.min
+import kotlin.math.sin
+
+/**
+ * Three short sounds, so you can follow a conversation with the phone in your pocket:
+ *  - sent:    two notes rising (your message left the phone)
+ *  - started: one soft low note (the Assistant has picked it up and is working)
+ *  - done:    three notes rising to a resolve (the reply is here)
+ * Synthesised once as sine notes with a soft attack and decay; no sound files.
+ */
+object Cues {
+    private const val RATE = 44100
+
+    private val sent by lazy { tones(listOf(660.0 to 70, 990.0 to 110)) }
+    private val started by lazy { tones(listOf(440.0 to 160), volume = 0.22) }
+    private val done by lazy { tones(listOf(523.25 to 80, 659.25 to 80, 783.99 to 180)) }
+
+    /** How long [done] lasts, so speech can start after it rather than over it. */
+    const val DONE_MS = 360L
+
+    fun sent() = play(sent)
+    fun started() = play(started)
+    fun done() = play(done)
+
+    private fun tones(notes: List<Pair<Double, Int>>, volume: Double = 0.3): ShortArray {
+        val out = ArrayList<Short>()
+        for ((hz, ms) in notes) {
+            val n = RATE * ms / 1000
+            val attack = RATE * 8 / 1000
+            for (i in 0 until n) {
+                // Ramp in over 8 ms, fade out over the rest: no clicks between notes.
+                val env = min(1.0, i.toDouble() / attack) * (1.0 - i.toDouble() / n).let { it * it }
+                out.add((sin(2 * PI * hz * i / RATE) * env * volume * Short.MAX_VALUE).toInt().toShort())
+            }
+        }
+        return out.toShortArray()
+    }
+
+    private fun play(pcm: ShortArray) {
+        runCatching {
+            val track = AudioTrack.Builder()
+                .setAudioAttributes(AudioAttributes.Builder()
+                    .setUsage(AudioAttributes.USAGE_ASSISTANCE_SONIFICATION)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                .setAudioFormat(AudioFormat.Builder().setSampleRate(RATE)
+                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                .setTransferMode(AudioTrack.MODE_STATIC)
+                .setBufferSizeInBytes(pcm.size * 2)
+                .build()
+            track.write(pcm, 0, pcm.size)
+            track.setNotificationMarkerPosition(pcm.size)
+            track.setPlaybackPositionUpdateListener(object : AudioTrack.OnPlaybackPositionUpdateListener {
+                override fun onMarkerReached(t: AudioTrack) { t.release() }
+                override fun onPeriodicNotification(t: AudioTrack) {}
+            })
+            track.play()
+        }.onFailure { android.util.Log.w("GenlockCues", "cue failed", it) }
+    }
+}

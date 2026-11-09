@@ -65,10 +65,14 @@ class MainActivity : ComponentActivity() {
             override fun onStop(id: String?, interrupted: Boolean) = finished(id)
         })
         link.onReply = { text ->
+            Cues.done()
             if (prefs().getBoolean("speak", true)) {
                 val id = "reply-${nextId++}"
                 queued.add(id); speaking.value = true
-                if (tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
+                // After the "reply done" sound, not over it.
+                window.decorView.postDelayed({
+                    if (id in queued && tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
+                }, Cues.DONE_MS)
             }
         }
         handleLink(intent)
@@ -238,6 +242,7 @@ fun TalkScreen(link: Link) {
 
     val ctx = LocalContext.current
     var listening by remember { mutableStateOf(false) }
+    var finishing by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     val dictation = remember {
         Dictation(ctx,
@@ -252,15 +257,22 @@ fun TalkScreen(link: Link) {
     }
     fun toggleMic() {
         problem = null
-        if (dictation.listening) { dictation.stop(); return }
+        if (dictation.listening) {
+            dictation.stop { finishing = false }
+            finishing = dictation.finishing   // read after: the callback may already have run
+            return
+        }
         val ok = androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) ==
             android.content.pm.PackageManager.PERMISSION_GRANTED
         if (ok) dictation.start(draft) else askMic.launch(android.Manifest.permission.RECORD_AUDIO)
     }
+    // Send while dictating waits for the recognizer's last words before sending, so the end of the
+    // sentence is not cut off. The draft clears only once the text has gone.
     fun send() {
-        dictation.stop()
-        link.say(draft)
-        draft = ""
+        if (dictation.finishing) return
+        val dictating = dictation.stop { text -> finishing = false; link.say(text); draft = "" }
+        finishing = dictation.finishing   // read after: the callback may already have run
+        if (!dictating) { link.say(draft); draft = "" }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -301,8 +313,9 @@ fun TalkScreen(link: Link) {
             if (draft.isBlank() && !listening) {
                 FilledIconButton(onClick = { toggleMic() }, modifier = Modifier.size(56.dp)) { Icon(Icons.Default.Mic, "Dictate") }
             } else {
-                FilledIconButton(onClick = { send() }, enabled = conn == Conn.CONNECTED && draft.isNotBlank(), modifier = Modifier.size(56.dp)) {
-                    Icon(Icons.AutoMirrored.Filled.Send, "Send")
+                FilledIconButton(onClick = { send() }, enabled = conn == Conn.CONNECTED && draft.isNotBlank() && !finishing, modifier = Modifier.size(56.dp)) {
+                    if (finishing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                    else Icon(Icons.AutoMirrored.Filled.Send, "Send")
                 }
             }
         }
