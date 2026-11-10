@@ -5,3 +5,15 @@
 {"e":"430d5d7aa1c4","at":"2026-11-07T22:54:56.963Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"next_add","nid":"a25901","text":"End-to-end encrypt phone messages with a key from the QR, so whoever runs the relay cannot read them (needed before others use a shared relay)","due":null}
 {"e":"46fa2593014e","at":"2026-11-07T23:22:47.618Z","by":"3fe2785f-82f2-4587-91cf-0b4f1f5d723e","op":"next_keep"}
 {"e":"0b95a411d51c","at":"2026-11-09T21:31:50.823Z","by":"6910dc28-58da-4a9f-9720-02942b4eb92a","op":"next_keep"}
+{"e":"7fa46a32028d","at":"2026-11-10T13:03:32.407Z","by":"15b83553-acbe-4edc-9b5d-e59c84b747e2","op":"next_add","nid":"775b60","text":"Install the status-cards build on TJ's Pixel (phone.sh --device Pixel, from a session started after the relaunch), then have TJ check the Status cards and run Status a few times (phone-status-cards)","due":null}
+{"e":"6418183aaafc","at":"2026-11-10T13:03:32.608Z","by":"15b83553-acbe-4edc-9b5d-e59c84b747e2","op":"next_move","nid":"775b60","before":"20cb85"}
+{"e":"82ca3aa06020","at":"2026-11-10T13:06:40.219Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_done","nid":"775b60"}
+{"e":"8be2f114e878","at":"2026-11-10T13:06:40.463Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_add","nid":"c120ef","text":"TJ checks the Status cards on the Pixel and runs Status a few times with several projects changed (phone-status-cards)","due":null}
+{"e":"a75e99c85f1c","at":"2026-11-10T13:06:40.731Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_move","nid":"c120ef","before":"20cb85"}
+{"e":"c34557637060","at":"2026-11-10T13:19:04.123Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_done","nid":"c120ef"}
+{"e":"b513c07db0d4","at":"2026-11-10T15:59:50.255Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_done","nid":"20cb85"}
+{"e":"11a6247cb209","at":"2026-11-10T15:59:50.455Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_add","nid":"263608","text":"TJ installs 0.1.451677 from the R2 link and relaunches Genlock, then checks phone Status and a Tally status show only open sessions (session-only-status)","due":null}
+{"e":"7b25df54bdd6","at":"2026-11-10T15:59:57.079Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_add","nid":"f9fccc","text":"Pair a phone from the Mac app: a Pair phone button shows the QR and runs the bridge itself, so nobody runs node scripts (for other users)","due":null}
+{"e":"facea675d0fe","at":"2026-11-10T15:59:57.289Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_move","nid":"263608","before":"a25901"}
+{"e":"63a4e69f8168","at":"2026-11-10T15:59:57.482Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_move","nid":"f9fccc","before":"a25901"}
+{"e":"bf5c2bf72593","at":"2026-11-10T19:37:02.345Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"next_done","nid":"263608"}

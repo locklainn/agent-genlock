@@ -1287,9 +1287,10 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('overview puts TODAY first', r.code === 0 && r.out.indexOf('alpha') < r.out.indexOf('beta'), r.all);
   check('...skips a folder that has gone', !/gone/.test(r.out), r.out);
   check('...says a session needs the user, and what it said', /NEEDS THE USER/.test(r.out) && /May I run the migration/.test(r.out), r.out);
-  check('...shows the top goal and task', /top goal: \S+: Launch the site/.test(r.out) && /top task: \S+: Checkout page loads/.test(r.out), r.out);
-  check('...and how many questions wait on the user', /WAITING ON THE USER: 1, newest: Which colour/.test(r.out), r.out);
-  check('...and collapses a project with nothing going on', /No session and nothing tracked: beta/.test(r.out), r.out);
+  check('...and nothing but sessions: no goals, tasks, due dates or questions', !/top goal|top task|Launch the site|Checkout page|DUE|Which colour|WAITING ON THE USER|TO REVIEW/.test(r.out), r.out);
+  check('...and names a project with no session in a line', /No session open: beta/.test(r.out), r.out);
+  const full = asEnv(['overview', 'alpha']);
+  check('overview PROJECT still shows its goals, tasks and questions', /Launch the site/.test(full.out) && /Checkout page loads/.test(full.out) && /WAITING ON THE USER: Which colour/.test(full.out), full.out);
 
   r = asEnv(['overview']);
   check('looking again prints only that nothing changed', /Nothing has changed/.test(r.out) && /Unchanged: alpha/.test(r.out) && !/top goal/.test(r.out), r.out);
@@ -1298,7 +1299,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   r = asEnv(['overview']);
   check('a project that changed is shown again', /alpha/.test(r.out) && /The migration ran/.test(r.out), r.out);
   const quiet = asEnv(['overview', '--all']);
-  check('--all shows everything regardless', /top goal/.test(quiet.out), quiet.out);
+  check('--all shows everything regardless', /alpha/.test(quiet.out) && /The migration ran/.test(quiet.out) && !/Unchanged: alpha/.test(quiet.out), quiet.out);
   pa('ask', 'user', `${'A very long question '.repeat(30)}end`);
   r = asEnv(['overview']);
   check('a long line is clipped', r.out.split('\n').every((l) => l.length < 200) && !/end$/m.test(r.out), r.out);
@@ -1326,8 +1327,19 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   asEnv(['overview']);
   const later = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
     env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_SESSION: 'a-new-conversation' } });
-  check('a new conversation gets everything, not "unchanged"', /top goal/.test(later.stdout) && !/Unchanged: alpha/.test(later.stdout), later.stdout);
-  check('...but still knows what changed since the last status, across the clear', /Same as at the last status:\n\nalpha/.test(later.stdout) && /Nothing has changed since the last status/.test(later.stdout), later.stdout);
+  check('a new conversation gets everything, not "unchanged"', /^alpha \(.*\), (NO CHANGE|CHANGED)/m.test(later.stdout) && !/Unchanged: alpha/.test(later.stdout), later.stdout);
+  check('...but still knows what changed since the last status, across the clear', /alpha \(\w+\), NO CHANGE since the last status/.test(later.stdout), later.stdout);
+  check('...and asks for every project in the status, changed or not', /Report each one in your status, changed or not/.test(later.stdout), later.stdout);
+  // A Subassistant scoped to alpha looks; Tally's own record of what it last reported must not move.
+  const tallySeen = fs.readFileSync(path.join(AS, 'assistant-seen.json'), 'utf8');
+  fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'working', message: 'Seen only by the Subassistant.', at: Date.now() }));
+  const sub = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
+    env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_APP_SCOPE: PA, GENLOCK_SESSION: 'a-sub' } });
+  check('a Subassistant\'s status keeps its own record of what it reported', /Seen only by the Subassistant/.test(sub.stdout)
+    && fs.readFileSync(path.join(AS, 'assistant-seen.json'), 'utf8') === tallySeen, sub.stdout);
+  const tallyNext = spawnSync(process.execPath, [CLI, 'overview'], { cwd: AS, encoding: 'utf8',
+    env: { ...baseEnv, GENLOCK_APP_PROJECTS: path.join(AS, 'projects.json'), GENLOCK_APP_CHANNELS: CH, GENLOCK_SESSION: 'tally-again' } });
+  check('...so Tally still reports that project as changed', /alpha \(\w+\), CHANGED since the last status/.test(tallyNext.stdout), tallyNext.stdout);
 
   r = run(AS, 'someone', ['name', 'Juno']);
   check('a project agent cannot name the Assistant', r.code !== 0, r.all);
@@ -1436,8 +1448,10 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...suggests running done on a task that is fully proved', new RegExp(`SUGGEST: every requirement of \\S+ is proved.*genlock done ${TP}`).test(r.out), r.out);
   check('...suggests closing a spin-off whose task is done, never swapping it onto the next goal', /SUGGEST: its task is finished: it can close/.test(r.out) && !/next goal/.test(r.out), r.out);
   check('...suggests closing a session idle for hours with no task', /SUGGEST: idle 20h with no task: close it/.test(r.out), r.out);
-  check('...flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
+  check('...leaves out work in progress whose session is gone', !/Left behind|no open session owns it/.test(r.out), r.out);
   check('...counts what it found and changes nothing', /3 sessions open, \d+ suggestions\. Nothing has been changed/.test(r.out), r.out);
+  r = asEnv(['sweep', '--orphans']);
+  check('sweep --orphans flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
 
   // The overview counts every open session and names each by its task, spawned ones included.
   fs.writeFileSync(path.join(CH, 'tok-a', 'state.json'), JSON.stringify({ state: 'working', at: Date.now(), session: 'pa' }));
@@ -1454,15 +1468,14 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   for (const f of ['old.md', 'new.md']) fs.writeFileSync(path.join(PA, f), 'x\n');
   const RV = (/\b(R-[0-9A-Z]{5})\b/.exec(pa('review', 'old.md', '--why', 'Already looked at?').out) || [])[1];
   pa('review', 'new.md', '--why', 'Is the new page right?');
-  let before = asEnv(['overview', '--all']).out;
-  const waiting = (out) => Number((/WAITING ON THE USER: (\d+)/.exec(out) || [])[1]);
-  check('an open question and review wait on the user', /Answered already/.test(before) && /TO REVIEW: 2/.test(before), before);
+  let before = asEnv(['overview', 'alpha']).out;
+  const waiting = (out) => (out.match(/WAITING ON THE USER: /g) || []).length;
+  check('an open question and review wait on the user', /Answered already/.test(before) && /2 to review/.test(before), before);
   pa('answer', QA, 'yes', '--user-said', 'yes'); pa('review', 'done', RV);
-  r = asEnv(['overview', '--all']);
+  r = asEnv(['overview', 'alpha']);
   check('...an answered question no longer does', !!QA && waiting(r.out) === waiting(before) - 1 && !/Answered already/.test(r.out), r.out);
-  check('...nor a review marked done, while the open one stays', !!RV && /TO REVIEW: 1, newest: new\.md/.test(r.out), r.out);
-  before = asEnv(['overview', 'alpha']).out;
-  check('one project lists the same', !/Answered already/.test(before) && /1 to review/.test(before), before);
+  check('...nor a review marked done, while the open one stays', !!RV && /1 to review/.test(r.out), r.out);
+  check('a status overview carries neither', !/Answered already|to review|TO REVIEW/i.test(asEnv(['overview', '--all']).out));
 
   // Routing by task: a project with several sessions is never guessed at.
   for (const t of ['tok-a', 'tok-s', 'tok-x']) for (const f of fs.readdirSync(path.join(CH, t)).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, t, f));
@@ -1651,7 +1664,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   };
   const asked = () => fs.existsSync(path.join(CHAN, 'swap.json'));
   r = inApp(['swap', 'refunds']);
-  check('a swap needs the user\'s yes', r.code !== 0 && /user's yes/.test(r.err) && !asked(), r.all);
+  check('a swap needs no yes: it saves tokens, so it goes straight to the checkpoint check', r.code === 3 && !/user's yes/.test(r.err) && !asked(), r.all);
   r = inApp(['swap', 'refunds', '--user-said', 'yes, swap']);
   check('a swap refuses while a fresh session would be missing something', r.code === 3 && r.err.includes(`${T} has no latest`) && !asked(), r.all);
   me('update', T, 'Button wired, not yet proved');
@@ -1670,6 +1683,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('a swap hands each open task it owned to the fresh session', handedT.op === 'handoff' && handedT.goal === G && sw.tickets?.includes(T), JSON.stringify(handedT) + JSON.stringify(sw.tickets));
   check('...releases its claim on it', !me('claims').out.includes(T), me('claims').out);
   check('...and the opening prompt tells the fresh session to take it', sw.prompt?.includes('genlock start ID') && sw.prompt.includes(T), sw.prompt);
+  check('...and to begin at once, not ask the user whether to start', /begin on it at once/.test(sw.prompt) && !/ask the user whether to begin/.test(sw.prompt), sw.prompt);
   check('...a task another session owns is not handed', !sw.tickets?.includes(OT), JSON.stringify(sw.tickets));
   const fresh = (...args) => run(repo, 'fresh-one', args);
   r = fresh('start', T);
@@ -1721,6 +1735,49 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...with the user\'s words on record', closeLog.some((e) => e.op === 'close' && e.user_said === 'great, you can close'));
   r = me('close', '--self', '--user-said', 'ok', '--uncommitted', 'stray.txt is scratch');
   check('outside the app close --self says the user closes it by hand', r.code === 0 && /\/exit/.test(r.out), r.all);
+
+  // A project session opens a fresh session itself, in its own project, with no yes.
+  const BASE = path.join(ROOT, 'app-channels');
+  const SELF = path.join(BASE, 'self');
+  const seat = (name, o) => { fs.mkdirSync(path.join(BASE, name), { recursive: true }); fs.writeFileSync(path.join(BASE, name, 'session.json'), JSON.stringify(o)); };
+  seat('self', { project: repo });
+  seat('sub', { project: repo, slot: 'assistant' });
+  seat('elsewhere', { project: path.join(ROOT, 'other-project') });
+  const proj = (args, env = {}) => {
+    const x = spawnSync(process.execPath, [CLI, ...args], { cwd: repo, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'swapper', GENLOCK_APP_CHANNEL: SELF, ...env } });
+    return { code: x.status, out: x.stdout || '', err: x.stderr || '', all: (x.stdout || '') + (x.stderr || '') };
+  };
+  const reqs = () => fs.readdirSync(SELF).filter((f) => f.startsWith('open-') && f.endsWith('.json')).map((f) => {
+    const o = JSON.parse(fs.readFileSync(path.join(SELF, f), 'utf8')); fs.rmSync(path.join(SELF, f)); return o;
+  });
+  r = proj(['open', 'some-other-project', '--prompt', 'do it']);
+  check('a project session cannot open a session in another project', r.code !== 0 && /only in its own project/.test(r.err) && !reqs().length, r.all);
+  r = proj(['open']);
+  check('...and an open with no prompt and no handoff is refused', r.code !== 0 && /--prompt/.test(r.err) && !reqs().length, r.all);
+  r = proj(['open', '--prompt', 'Start ticket T-X: the opening cutscene']);
+  let req2 = reqs();
+  check('a project session opens one beside it in its own project, with no yes', r.code === 0 && req2.length === 1 && req2[0].project === repo
+    && req2[0].prompt === 'Start ticket T-X: the opening cutscene' && req2[0].handoff === false && !fs.existsSync(path.join(SELF, 'close.json')), r.all + JSON.stringify(req2));
+  check('...counting its own project\'s sessions, not a Subassistant or another project\'s', /\(2 of at most 4\)/.test(r.out), r.out);
+  seat('two', { project: repo }); seat('three', { project: repo }); seat('four', { project: repo });
+  r = proj(['open', '--prompt', 'more work']);
+  check('...and is refused at the cap, pointing at a handoff instead', r.code !== 0 && /cap is 4/.test(r.err) && /--handoff/.test(r.err) && !reqs().length, r.all);
+  me('start', T, '--take-over', '--user-said', 'take it back');
+  check('(this session owns the task again before handing off)', /owner: swapper/.test(me('show', T).out), me('show', T).out);
+  r = proj(['open', '--handoff']);
+  check('a handoff refuses while a fresh session would be missing something', r.code === 3 && !reqs().length && !fs.existsSync(path.join(SELF, 'close.json')), r.all);
+  me('update', T, 'Handing off: refund button next');
+  me('goal', 'next', G, '--still-right');
+  r = proj(['open', '--handoff', '--uncommitted', 'stray.txt is scratch']);
+  req2 = reqs();
+  const hc = fs.existsSync(path.join(SELF, 'close.json')) ? JSON.parse(fs.readFileSync(path.join(SELF, 'close.json'), 'utf8')) : {};
+  check('a handoff goes through at the cap, with no yes, and closes this session', r.code === 0 && req2.length === 1 && req2[0].handoff === true && hc.by === 'self', r.all + JSON.stringify(req2) + JSON.stringify(hc));
+  check('...its prompt hands over the task and says to begin at once', req2[0]?.prompt.includes(T) && /genlock start ID/.test(req2[0].prompt) && /begin on it at once/.test(req2[0].prompt), req2[0]?.prompt);
+  const hlog = fs.readFileSync(projectLog.replace('project.jsonl', `${T}.jsonl`), 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  check('...and the task is handed off and its claim released', hlog.at(-1).op === 'handoff' && !me('claims').out.includes(T), JSON.stringify(hlog.at(-1)));
+  r = run(repo, 'swapper', ['open', '--prompt', 'carry on'], undefined, { GENLOCK_TERMINAL: 'print' });
+  const started = (r.out.match(/sh '([^']+start\.sh)'/) || [])[1];
+  check('outside the app, open starts claude in a terminal or prints the command to', r.code === 0 && started && /claude -n .* "\$\(cat .*prompt\.txt/.test(fs.readFileSync(started, 'utf8')), r.all);
 }
 
 /* ---- report ------------------------------------------------------------------- */

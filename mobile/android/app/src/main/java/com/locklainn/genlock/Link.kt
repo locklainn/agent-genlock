@@ -47,20 +47,14 @@ data class Session(val name: String, val state: String, val said: String, val ta
 
 data class SessionGoal(val title: String, val done: Int, val total: Int)
 
-data class GoalTasks(val title: String, val done: Int, val total: Int, val tasks: List<TaskItem>)
+data class GoalTasks(val title: String, val done: Int, val total: Int, val tasks: List<TaskItem>, val status: String = "active")
 
-data class TaskItem(val title: String, val status: String, val proof: String, val latest: String?, val at: String, val who: String?)
+data class TaskItem(val title: String, val status: String, val proof: String, val latest: String?, val at: String, val who: String?, val name: String? = null)
 
 data class Project(
     val name: String,
     val goals: List<GoalTasks>,
     val sessions: List<Session>,
-    val topGoal: String?,
-    val topTask: String?,
-    val openTasks: Int,
-    val waiting: List<String>,
-    val blocked: Int,
-    val due: List<String>,
 )
 
 enum class Conn { CONNECTING, CONNECTED, OFFLINE, UNPAIRED }
@@ -261,8 +255,6 @@ class Link(app: Application) : AndroidViewModel(app) {
     private fun parseProjects(a: JSONArray): List<Project> = (0 until a.length()).map { i ->
         val p = a.getJSONObject(i)
         val s = p.optJSONArray("sessions") ?: JSONArray()
-        val due = p.optJSONArray("due") ?: JSONArray()
-        val waiting = p.optJSONArray("waiting") ?: JSONArray()
         val gs = p.optJSONArray("goals") ?: JSONArray()
         fun str(o: JSONObject, k: String) = o.optString(k).takeIf { it.isNotEmpty() && it != "null" }
         Project(
@@ -272,8 +264,8 @@ class Link(app: Application) : AndroidViewModel(app) {
                 val ts = g.optJSONArray("tasks") ?: JSONArray()
                 GoalTasks(g.optString("title"), g.optInt("done"), g.optInt("total"), (0 until ts.length()).map { k ->
                     val t = ts.getJSONObject(k)
-                    TaskItem(t.optString("title"), t.optString("status"), t.optString("proof"), str(t, "latest"), t.optString("at"), str(t, "who"))
-                })
+                    TaskItem(t.optString("title"), t.optString("status"), t.optString("proof"), str(t, "latest"), t.optString("at"), str(t, "who"), str(t, "name"))
+                }, g.optString("status").ifEmpty { "active" })
             },
             sessions = (0 until s.length()).map { j ->
                 val x = s.getJSONObject(j)
@@ -282,21 +274,7 @@ class Link(app: Application) : AndroidViewModel(app) {
                 Session(x.optString("name"), x.optString("state"), x.optString("said"), str(x, "task"),
                     title = str(x, "title") ?: x.optString("name"),
                     goal = g?.let { SessionGoal(it.optString("title"), it.optInt("done"), it.optInt("total")) },
-                    work = w?.let { TaskItem(it.optString("title"), it.optString("status"), it.optString("proof"), str(it, "latest"), it.optString("at"), null) })
-            },
-            topGoal = p.optString("topGoal").takeIf { it.isNotEmpty() && it != "null" },
-            topTask = p.optString("topTask").takeIf { it.isNotEmpty() && it != "null" },
-            openTasks = p.optInt("openTasks"),
-            waiting = (0 until waiting.length()).map { waiting.getString(it) },
-            blocked = p.optInt("blocked"),
-            due = (0 until due.length()).map { j ->
-                val d = due.getJSONObject(j)
-                val days = d.optInt("days")
-                "${d.optString("title")} — " + when {
-                    days < 0 -> "overdue ${-days}d"
-                    days == 0 -> "today"
-                    else -> "in ${days}d"
-                }
+                    work = w?.let { TaskItem(it.optString("title"), it.optString("status"), it.optString("proof"), str(it, "latest"), it.optString("at"), null, str(it, "name")) })
             },
         )
     }

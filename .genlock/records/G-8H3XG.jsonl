@@ -1,0 +1,2 @@
+{"e":"8237864f8357","at":"2026-11-10T13:44:06.018Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"add","title":"Genlock notices orphaned work (in progress with no live session) and spawns sessions or Assistants to pick it up","why":"","done_when":"","user_said":"things 'in progress' without an agent are orphaned, and the genlock app needs to be aware of this and spawning assistants t do something about it","due":null}
+{"e":"d462c8a7cd7c","at":"2026-11-10T13:44:06.077Z","by":"2a463501-8665-47e1-88ca-1c53b6a36bc2","op":"short","short":"orphan-supervisor"}

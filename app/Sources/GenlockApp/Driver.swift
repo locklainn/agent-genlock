@@ -87,6 +87,7 @@ enum Driver {
         if let name = step["iconPicker"] as? String { model.iconTarget = projectID(named: name) }
         if let name = step["open"] as? String, let id = projectID(named: name) { model.openSessions([id]) }
         if let name = step["focus"] as? String, let focus = DashFocus(rawValue: name) { model.focusDashboard(focus) }
+        if let name = step["focusPane"] as? String, let id = projectID(named: name) { model.focus(id) }
         if let path = step["addProject"] as? String { model.addProject(path: path) }
         if let args = step["tier"] as? [String], let id = projectID(named: args[0]), let tier = Tier(rawValue: args[1]) { model.move(id, to: tier) }
         if let args = step["dictate"] as? [String], let id = projectID(named: args[0]) { model.voice.submit(args[1], to: id) }

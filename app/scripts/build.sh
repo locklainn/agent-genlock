@@ -58,6 +58,13 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
   <key>NSHumanReadableCopyright</key><string>Genlock™ is a trademark of TJ Loughlin. © 2026 TJ Loughlin.</string>
   <key>NSMicrophoneUsageDescription</key><string>Genlock listens when you press the mic button, so you can talk to your agent.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Genlock turns what you say into a message for your agent.</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Genlock's agents install your app builds on your phone over Wi-Fi.</string>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_adb-tls-connect._tcp</string>
+    <string>_adb-tls-pairing._tcp</string>
+    <string>_adb._tcp</string>
+  </array>
 </dict>
 </plist>
 PLIST

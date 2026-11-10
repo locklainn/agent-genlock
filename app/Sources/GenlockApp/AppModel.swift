@@ -38,6 +38,11 @@ final class AppModel {
     @ObservationIgnored let usagePoller = UsagePoller()
     /// The project whose sessions the bar's second row lists.
     var activeProject: String?
+    /// The pane whose terminal last took the keyboard. Observable, unlike the first responder,
+    /// so a grid can show that pane's buttons and quiet the rest.
+    var keyPane: String?
+    @ObservationIgnored private var responderWatch: NSKeyValueObservation?
+    @ObservationIgnored private var keyWindowWatch: Any?
     @ObservationIgnored var lastShown: [String: String] = [:]
     /// Where Control-Tab goes back to.
     @ObservationIgnored var previousSession: String?
@@ -804,8 +809,20 @@ final class AppModel {
 
     /// Another session in a project that already has one: its own tab and its own conversation.
     /// New means a new conversation. Picking up an old one is Recently ended's job.
+    /// Command-N: a new session in the project of the pane you are in, joining the grid if one is showing.
+    func newSessionHere() {
+        let key = route == .sessions ? (focusedProject ?? visible.first) : nil
+        guard let project = key.flatMap({ sessions[$0]?.projectID }) ?? currentProject, project != assistantFolder else {
+            message = "Open a project's session first; ⌘N starts another in the project you are in."
+            return
+        }
+        newSession(in: project)
+    }
+
+    /// In a grid that shows this project, the new session joins it; otherwise it opens alone.
     func newSession(in project: String) {
-        show(startSession(in: project))
+        let key = startSession(in: project)
+        if joinGridIfShowing(key) { focus(key) } else { show(key) }
     }
 
     /// Starts a new conversation in a project without bringing it to the front, and returns its key.
@@ -843,8 +860,24 @@ final class AppModel {
     /// It starts in the background: whatever you are looking at stays in front.
     func openSessionsIfAsked() {
         guard tools != nil else { return }
-        let askers = sessions.values.filter { $0.projectID == assistantFolder || $0.slot == Self.subSlot }
-        for asker in askers {
+        let assistants = sessions.values.filter { $0.projectID == assistantFolder || $0.slot == Self.subSlot }
+        // A project session asks for its own project only: to hand its work over (it then closes
+        // itself) or to run agreed work beside it, which genlock caps per project.
+        for asker in sessions.values where !assistants.contains(where: { $0 === asker }) {
+            for request in asker.channel.takeOpens() {
+                guard resolvedPath(request.project) == resolvedPath(asker.projectID) else {
+                    message = "Ignored a request from \(tabLabel(asker.key)) to open a session in \(request.project), which is not its project."
+                    continue
+                }
+                let key = startSession(in: asker.projectID, opening: request.prompt)
+                // A handoff's asker closes at the end of its turn, and its pane falls to this one.
+                joinGridIfShowing(key)
+                message = request.handoff == true
+                    ? "\(tabLabel(asker.key)) handed its work to a fresh session in \(projectName(asker.projectID)) to save tokens."
+                    : "\(tabLabel(asker.key)) opened \(tabLabel(key)) in \(projectName(asker.projectID)), beside it."
+            }
+        }
+        for asker in assistants {
             let who = asker.slot == Self.subSlot ? "\(projectName(asker.projectID))'s Assistant" : assistantName
             for request in asker.channel.takeOpens() {
                 guard let project = store.project(request.project), project.exists else {
@@ -924,6 +957,29 @@ final class AppModel {
     func focus(_ id: String?) {
         guard let id, let view = sessions[id]?.view else { return }
         DispatchQueue.main.async { view.window?.makeFirstResponder(view) }
+    }
+
+    /// Keeps keyPane on whichever terminal holds the keyboard. SwiftTerm's view cannot be
+    /// overridden for this, so it watches the window's first responder instead.
+    func watchKeyPane() {
+        guard keyWindowWatch == nil else { return }
+        keyWindowWatch = NotificationCenter.default.addObserver(forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main) { [weak self] note in
+            let window = note.object as? NSWindow
+            MainActor.assumeIsolated { self?.watchResponder(in: window) }
+        }
+        watchResponder(in: NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible })
+    }
+
+    private func watchResponder(in window: NSWindow?) {
+        guard let window else { return }
+        responderWatch = window.observe(\.firstResponder, options: [.initial, .new]) { [weak self] w, _ in
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.noteResponder(w.firstResponder) } }
+        }
+    }
+
+    private func noteResponder(_ responder: NSResponder?) {
+        guard let responder, let key = sessions.first(where: { $0.value.view === responder })?.key, keyPane != key else { return }
+        keyPane = key
     }
 
     /// The session that dictation goes to: the terminal holding the keyboard, or the first on screen.

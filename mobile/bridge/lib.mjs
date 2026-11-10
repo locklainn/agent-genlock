@@ -157,6 +157,14 @@ const heading = (x) => {
   const w = String(x.short).replace(/-/g, ' ');
   return w.charAt(0).toUpperCase() + w.slice(1);
 };
+// Status is only what the open sessions are doing (TJ's rule): a task counts while an open session holds
+// it, or for RECENT_MS after one finished it (at most RECENT_MAX per project). No backlog, open tasks,
+// due dates or in-progress work no session holds.
+const RECENT_MS = 24 * 3600 * 1000;
+const RECENT_MAX = 5;
+const ENDED = new Set(['done', 'abandoned', 'dropped']);
+const taskOrder = (t) => (t.status === 'in_progress' ? 0 : t.status === 'done' ? 2 : 1);
+const goalOrder = ({ g, ts }) => (ts.some((t) => t.status === 'in_progress') ? 0 : g.status === 'done' ? 2 : 1);
 const clip = (t, n) => { const s = String(t || '').replace(/\s+/g, ' ').trim(); return s.length > n ? `${s.slice(0, n - 1)}…` : s; };
 
 function snapshot(folder) {
@@ -171,7 +179,7 @@ function snapshot(folder) {
 }
 
 /** Every project, its open sessions and what they are on, what waits on the user, what is due. */
-export async function status(home = genlockHome(), snap = snapshot) {
+export async function status(home = genlockHome(), snap = snapshot, now = Date.now()) {
   const projects = readJSON(path.join(home, 'projects.json'), [])
     .filter((p) => p.path && fs.existsSync(p.path))
     .sort((a, b) => TIERS.indexOf(a.tier) - TIERS.indexOf(b.tier));
@@ -181,14 +189,7 @@ export async function status(home = genlockHome(), snap = snapshot) {
     const tickets = s?.tickets || [];
     const mine = open.filter((o) => o.project === p.path && o.token).map((o) => ({ o, st: readJSON(path.join(home, 'voice', o.token, 'state.json'), {}) }));
     const goals = (s?.goals || []).filter((g) => g.rank).sort((a, b) => a.rank - b.rank);
-    const ranked = tickets.filter((t) => t.rank).sort((a, b) => a.rank - b.rank);
-    const top = goals.find((g) => g.status === 'active');
-    const asks = s?.questions_for_user || [];
-    const due = [...goals, ...ranked].filter((r) => r.due && r.days_until <= 7)
-      .sort((a, b) => a.days_until - b.days_until).map((r) => ({ title: clip(r.title, 100), days: r.days_until }));
-    // Tasks view: each active goal and the tasks open on it, with only what the records say.
     const order = { in_progress: 0, blocked: 1, open: 2 };
-    const openTasks = ranked.filter((t) => t.status in order).sort((a, b) => order[a.status] - order[b.status] || a.rank - b.rank);
     // A session's task, the way the Mac finds it: the ticket it was spawned on, else the open task
     // its agent owns, in progress first. Its title follows the Mac's tab: that task, else the project.
     const plain = mine.filter(({ o }) => !o.spawn && o.slot !== SUB_SLOT);
@@ -213,7 +214,7 @@ export async function status(home = genlockHome(), snap = snapshot) {
       return hit ? titleOf(hit, null) : null;
     };
     const taskView = (t) => ({
-      title: clip(t.short && t.named !== false ? `${t.short}: ${t.title}` : t.title, 140), status: t.status, proof: t.summary,
+      name: clip(heading(t), 80), title: clip(t.short && t.named !== false ? `${t.short}: ${t.title}` : t.title, 140), status: t.status, proof: t.summary,
       latest: t.latest ? clip(t.latest.text, 300) : null, at: t.latest?.at || t.updated, who: holder(t),
     });
     const sessions = mine.map((m) => {
@@ -229,24 +230,38 @@ export async function status(home = genlockHome(), snap = snapshot) {
         work: work ? taskView(work) : null,
       };
     });
-    const goalTasks = goals.filter((g) => g.status === 'active')
-      .map((g) => ({ title: clip(g.short && g.named !== false ? `${g.short}: ${g.title}` : g.title, 140), done: g.progress?.done || 0, total: g.progress?.total || 0,
-        tasks: openTasks.filter((t) => t.goal === g.id).map(taskView) }))
-      .filter((g) => g.tasks.length);
-    const loose = openTasks.filter((t) => !goals.some((g) => g.status === 'active' && g.id === t.goal)).map(taskView);
-    if (loose.length) goalTasks.push({ title: 'No goal', done: 0, total: 0, tasks: loose });
+    // Tasks view: what live sessions drive, grouped by goal.
+    // A session holds the task it was spawned on and every open task its agent owns.
+    const agents = new Set(mine.flatMap(({ o, st }) => [st.session, o.spawn?.session]).filter(Boolean));
+    const spawned = new Set(mine.map(({ o }) => o.spawn?.ticket).filter(Boolean));
+    const held = new Set(tickets.filter((t) => !ENDED.has(t.status)
+      && (spawned.has(t.id) || (t.owner && agents.has(t.owner)) || mine.some((m) => workOf(m)?.id === t.id))).map((t) => t.id));
+    const recent = (iso) => iso && now - Date.parse(iso) <= RECENT_MS;
+    const moved = (t) => t.latest?.at || t.updated;
+    const finished = (t) => t.closed || t.updated;
+    const live = tickets.filter((t) => held.has(t.id));
+    const theirs = (t) => spawned.has(t.id) || (t.owner && agents.has(t.owner));
+    const doneLately = tickets.filter((t) => t.status === 'done' && theirs(t) && recent(finished(t)))
+      .sort((a, b) => String(finished(b)).localeCompare(String(finished(a)))).slice(0, RECENT_MAX);
+    const current = [...live, ...doneLately]
+      .sort((a, b) => taskOrder(a) - taskOrder(b) || String(moved(b) || '').localeCompare(String(moved(a) || '')));
+    const allGoals = s?.goals || [];
+    const goalView = (g, ts) => ({ title: clip(heading(g), 100), status: g.status === 'done' ? 'done' : 'active',
+      done: g.progress?.done || 0, total: g.progress?.total || 0, tasks: ts.map(taskView) });
+    const goalTasks = allGoals
+      .map((g) => ({ g, ts: current.filter((t) => t.goal === g.id) }))
+      .filter(({ ts }) => ts.length)
+      .sort((a, b) => goalOrder(a) - goalOrder(b) || (a.g.rank || 1e9) - (b.g.rank || 1e9))
+      .map(({ g, ts }) => goalView(g, ts));
+    const loose = current.filter((t) => !allGoals.some((g) => g.id === t.goal)).map(taskView);
+    if (loose.length) goalTasks.push({ title: 'No goal', status: 'active', done: 0, total: 0, tasks: loose });
     return {
       name: path.basename(p.path),
       goals: goalTasks,
       tier: p.tier || null,
       sessions,
-      topGoal: top ? clip(`${top.short}: ${top.title}`, 120) : null,
-      topTask: ranked[0] ? clip(`${ranked[0].short}: ${ranked[0].title}`, 120) : null,
-      openTasks: ranked.length,
-      waiting: asks.map((q) => clip(q.text, 200)).reverse(),
-      blocked: ranked.filter((t) => t.blocked_reason).length,
-      due,
     };
   }));
-  return out.filter((p) => p.sessions.length || p.topGoal || p.topTask || p.waiting.length);
+  // Every project with a session open, every time, and no other.
+  return out.filter((p) => p.sessions.length);
 }

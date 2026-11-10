@@ -18,6 +18,7 @@ struct GenlockApp: App {
         .windowStyle(.hiddenTitleBar)
         .commands {
             CommandGroup(replacing: .newItem) {
+                Button("New Session") { model.newSessionHere() }.keyboardShortcut("n")
                 Button("Add Project…") { model.chooseFolders() }.keyboardShortcut("o")
             }
             CommandMenu("Session") {
@@ -201,6 +202,7 @@ struct RootView: View {
             if let id = model.iconTarget { IconPicker(projectID: id) }
         }
         .animation(.spring(duration: 0.34), value: model.route)
+        .onAppear { model.watchKeyPane() }
         .animation(.spring(duration: 0.3), value: model.setupTarget)
         .animation(.spring(duration: 0.3), value: model.iconTarget)
         .animation(.spring(duration: 0.3), value: model.voice.machine)

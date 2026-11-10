@@ -85,7 +85,7 @@ public struct SessionMemory: Codable, Equatable {
 
 /// Symlinks resolved by realpath, because Foundation's own resolving drops the /private that
 /// Claude Code and git both keep. A path that does not exist comes back as given.
-func resolvedPath(_ path: String) -> String {
+public func resolvedPath(_ path: String) -> String {
     guard let resolved = realpath(path, nil) else { return path }
     defer { free(resolved) }
     return String(cString: resolved)

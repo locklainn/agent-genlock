@@ -83,10 +83,11 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock checkpoint [--uncommitted ".."]         REFUSES until goals and tickets are current
   genlock continue [GOAL|TICKET]                  everything needed to carry on
   genlock followups [--json]                      what this session identified and has not finished
-  genlock swap GOAL --user-said ".."              on the user's yes: checkpoint, then this same work carried on
-                                                  in a fresh session, when the conversation has grown long
+  genlock swap GOAL                               conversation grown long: checkpoint, then this same work carried on
+                                                  in a fresh session in this tab (no yes needed: it saves tokens)
+  genlock open --handoff [--prompt ".."]          the same from anywhere: a fresh session takes this one's tasks, this one closes
+  genlock open --prompt ".."                      a fresh session beside this one, in this project (capped per project)
   genlock close --self --user-said ".."           when the user says you can close: checkpoint, then this session closes
-  genlock swap GOAL --relayed                     ...on a yes the Assistant relayed to this session
 
 REVIEWS   files the user should look at, kept findable
   genlock review PATH --why ".." [--about GOAL|TICKET]  |  genlock review list [--all]  |  genlock review done R [--note ..]
@@ -265,7 +266,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self']);
+const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self', 'handoff', 'orphans']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };

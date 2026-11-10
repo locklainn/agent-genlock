@@ -228,7 +228,7 @@ fun buildLabel(ctx: Context): String = runCatching {
     "v${info.versionName} · built $built"
 }.getOrDefault("version unknown")
 
-const val STATUS_REQUEST = "Status update: what changed since you last told me, what finished, and what is waiting on me."
+const val STATUS_REQUEST = "Status update: every project, each time. What changed since you last told me, what finished, and what is waiting on me; say no change for a project that has none."
 
 @Composable
 fun TalkScreen(link: Link) {
@@ -380,11 +380,10 @@ fun StatusScreen(link: Link, ask: (String) -> Unit) {
         }
         val ps = projects
         if (ps == null) item { Text(if (conn == Conn.CONNECTED) "Asking the laptop…" else "Waiting for a connection.") }
-        else if (ps.isEmpty()) item { Text("Nothing open on the laptop.") }
+        else if (ps.isEmpty()) item { Text("No sessions open on the laptop.") }
         else if (tasksMode) {
-            val withTasks = ps.filter { it.goals.isNotEmpty() }
-            if (withTasks.isEmpty()) item { Text("No open tasks in any project.") }
-            items(withTasks, key = { "t-" + it.name }) { ProjectTasksCard(it) }
+            // Every project, every time: one with nothing current says so rather than vanishing.
+            items(ps, key = { "t-" + it.name }) { ProjectTasks(it) }
         }
         else items(ps, key = { it.name }) { ProjectCard(it, ask) }
         item(key = "build") {
@@ -403,14 +402,6 @@ fun ProjectCard(p: Project, ask: (String) -> Unit) {
                 TextButton(onClick = { ask("What's happening in ${p.name}?") }) { Text("Ask") }
             }
             for (s in p.sessions) SessionLine(s)
-            p.topGoal?.let { Text("Goal: $it", style = MaterialTheme.typography.bodySmall) }
-            p.topTask?.let { Text("Next task: $it" + if (p.openTasks > 1) " (+${p.openTasks - 1} more)" else "", style = MaterialTheme.typography.bodySmall) }
-            if (p.blocked > 0) Text("Blocked: ${p.blocked}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-            for (d in p.due) Text("Due: $d", style = MaterialTheme.typography.bodySmall, color = Color(0xFFE0AF68))
-            if (p.waiting.isNotEmpty()) {
-                Text("Waiting on you: ${p.waiting.size}", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.error)
-                Text(p.waiting.first(), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
-            }
         }
     }
 }
@@ -437,47 +428,83 @@ fun SessionLine(s: Session) {
                 style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         val w = s.work
-        if (w != null) TaskLine(w)
+        if (w != null) TaskCard(w)
         else Text("No task recorded", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         if (s.said.isNotBlank()) Text(s.said, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
             color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f))
     }
 }
 
-/** One project in Tasks mode: each goal, and under it its open tasks with status, proof and latest update. */
+/** One project in Tasks mode: a minimal card per goal its open sessions are working on, holding their task cards. */
 @Composable
-fun ProjectTasksCard(p: Project) {
-    ElevatedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text(p.name, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-            for (g in p.goals) {
-                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(g.title, Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.Bold,
-                            maxLines = 2, overflow = TextOverflow.Ellipsis)
-                        if (g.total > 0) Text("${g.done}/${g.total}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
-                    for (t in g.tasks) TaskLine(t)
-                }
+fun ProjectTasks(p: Project) {
+    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(p.name, Modifier.padding(start = 4.dp, top = 4.dp), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        if (p.goals.isEmpty()) Text("No task recorded by its sessions.", Modifier.padding(start = 4.dp),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        for (g in p.goals) GoalCard(g)
+    }
+}
+
+@Composable
+fun GoalCard(g: GoalTasks) {
+    val done = g.status == "done"
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(Modifier.padding(horizontal = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(g.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                if (done) Pill("goal done", DONE_GREEN)
+                else if (g.total > 0) Text("${g.done}/${g.total}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
+            if (g.total > 0) LinearProgressIndicator(
+                progress = { g.done.toFloat() / g.total }, modifier = Modifier.fillMaxWidth().height(3.dp),
+                color = if (done) DONE_GREEN else WORKING_BLUE, trackColor = MaterialTheme.colorScheme.surfaceContainerHighest,
+            )
+            for (t in g.tasks) TaskCard(t)
         }
     }
 }
 
 @Composable
+fun TaskCard(t: TaskItem) {
+    Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.surfaceContainerHighest) {
+        Box(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) { TaskLine(t) }
+    }
+}
+
+@Composable
+fun Pill(text: String, color: Color) {
+    Surface(shape = RoundedCornerShape(50), color = color.copy(alpha = 0.16f)) {
+        Text(text, Modifier.padding(horizontal = 8.dp, vertical = 2.dp), style = MaterialTheme.typography.labelSmall, color = color)
+    }
+}
+
+val WORKING_BLUE = Color(0xFF7AA2F7)
+val DONE_GREEN = Color(0xFF9ECE6A)
+
+/** A task's name, its state as a pill, then proof, holder and its latest update. */
+@Composable
 fun TaskLine(t: TaskItem) {
-    val (word, color) = when (t.status) {
-        "in_progress" -> "in progress" to Color(0xFF7AA2F7)
-        "blocked" -> "blocked" to MaterialTheme.colorScheme.error
+    val (word, color) = when {
+        t.status == "in_progress" -> "in progress" to WORKING_BLUE
+        t.status == "done" -> "done" to DONE_GREEN
+        t.status == "blocked" -> "blocked" to MaterialTheme.colorScheme.error
         else -> "open" to MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Column(Modifier.padding(start = 8.dp)) {
-        Text(t.title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-        Text(listOfNotNull(word, t.proof.takeIf { it != "none" }, t.who?.let { "on $it" }).joinToString(" · "),
-            style = MaterialTheme.typography.labelMedium, color = color)
-        t.latest?.let {
-            Text(it + (ago(t.at)?.let { a -> " · $a" } ?: ""), style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+    val done = t.status == "done"
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(t.name ?: t.title, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                color = if (done) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface)
+            Spacer(Modifier.width(8.dp))
+            Pill(word, color)
+        }
+        val meta = listOfNotNull(t.proof.takeIf { it.isNotBlank() && it != "none" && !done }, t.who?.let { "on $it" }, ago(t.at))
+        if (meta.isNotEmpty()) Text(meta.joinToString(" · "), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (!done) t.latest?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

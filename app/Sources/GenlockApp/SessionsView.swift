@@ -9,6 +9,7 @@ struct SessionsView: View {
     var body: some View {
         VStack(spacing: 0) {
             SessionBar()
+            ProjectBar()
             // One flat list keyed by session, so a pane keeps its identity when the rows around it
             // change. Keyed by row, a swap or a new pane rebuilt every pane in that row, and the old
             // and new wrappers fought over the same terminal view; the loser left a blank pane.
@@ -20,16 +21,12 @@ struct SessionsView: View {
     }
 }
 
-/// Two rows: your projects, then the sessions in the one you picked. Nothing scrolls out of
-/// sight; what does not fit is in the menu at the end of each row.
+/// The top row: what acts on the whole app. Your projects are the row under it (ProjectBar),
+/// and each project's sessions are in its pane header.
 struct SessionBar: View {
     @Environment(AppModel.self) private var model
     @State private var showingSpeech = false
     @State private var showingSwitcher = false
-    /// The width each row has, measured, so it knows how many tabs fit.
-    @State private var projectsWidth: CGFloat = 0
-    @State private var sessionsWidth: CGFloat = 0
-
     var body: some View {
         let voice = model.voice
         VStack(spacing: 0) {
@@ -37,13 +34,13 @@ struct SessionBar: View {
                 Button { model.route = .dashboard } label: {
                     HStack(spacing: 7) {
                         SignalMark(size: 18, animated: false)
-                        if model.projectsWithTabs.count <= 5 { Text("Dashboard") }
+                        Text("Dashboard")
                     }
                 }
                 .buttonStyle(GlassButtonStyle())
                 .help("Dashboard")
 
-                projectTabs
+                Spacer(minLength: 8)
                 UsageMeter()
                 UpdatePill()
                 PaneModeToggle()
@@ -74,11 +71,77 @@ struct SessionBar: View {
                       : "Spoken replies are off")
                 .accessibilityLabel("Spoken replies")
             }
-            .padding(.leading, 86).padding(.trailing, 14).padding(.top, 9).padding(.bottom, 9)
+            .padding(.leading, 86).padding(.trailing, 14).padding(.top, 6).padding(.bottom, 6)
             .frame(minWidth: 0, maxWidth: .infinity)
         }
         .background(Color.black.opacity(0.25))
         .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+    }
+}
+
+/// The second row: your projects as tabs, and at its right end what acts on the project you
+/// are in: a new session in it, and its grid or back to one session. Shown on the dashboard
+/// too, so the way into a project stays in one place.
+struct ProjectBar: View {
+    @Environment(AppModel.self) private var model
+    /// The width the tabs have, measured, so they know how many fit.
+    @State private var projectsWidth: CGFloat = 0
+
+    var body: some View {
+        let order = model.projectsWithTabs.filter { $0 != model.assistantFolder }
+        if !order.isEmpty || model.route == .sessions {
+            HStack(spacing: 8) {
+                projectTabs(order)
+                if model.route == .sessions { projectControls }
+            }
+            .padding(.leading, 14).padding(.trailing, 14).padding(.vertical, 5)
+            .background(Color.black.opacity(0.15))
+            .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+        }
+    }
+
+    /// New session, and the grid toggle, for the project you are in. Nothing project-wide for Tally.
+    @ViewBuilder
+    private var projectControls: some View {
+        let key = model.focusedProject ?? model.visible.first
+        let project = key.flatMap { model.sessions[$0]?.projectID }
+        let gridded = model.visible.count > 1
+        if let project, project != model.assistantFolder {
+            let count = model.gridKeys(project, start: false).count
+            if gridded {
+                Text(model.showingProjectGrid(project) ? "\(model.visible.count) sessions" : "\(model.visible.count) sessions, every project")
+                    .font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1).fixedSize()
+            }
+            Button { model.newSession(in: project) } label: {
+                Label("New session", systemImage: "plus").font(.system(size: 11.5, weight: .semibold))
+            }
+            .buttonStyle(GlassButtonStyle(compact: true))
+            .fixedSize()
+            .help("A new session in \(model.projectName(project))\(gridded ? ", added to this grid" : "") (⌘N)")
+            if gridded {
+                oneSessionButton
+            } else if count > 1 {
+                Button { model.toggleProjectGrid() } label: {
+                    Label("All \(count)", systemImage: "square.grid.2x2").font(.system(size: 11.5, weight: .semibold))
+                }
+                .buttonStyle(GlassButtonStyle(compact: true))
+                .fixedSize()
+                .help("\(model.projectName(project))'s \(count) sessions side by side (⌘G)")
+            }
+        } else if gridded {
+            Text("\(model.visible.count) sessions").font(.system(size: 11.5, weight: .semibold)).foregroundStyle(Theme.textSecondary).fixedSize()
+            oneSessionButton
+        }
+    }
+
+    private var oneSessionButton: some View {
+        Button { model.toggleProjectGrid() } label: {
+            Label("One session", systemImage: "rectangle").font(.system(size: 11.5, weight: .semibold))
+        }
+        .buttonStyle(GlassButtonStyle(compact: true))
+        .fixedSize()
+        .help("Back to the session you are in, alone (⌘G)")
     }
 }
 
@@ -129,7 +192,9 @@ extension SessionBar {
         // No animation: panes and their strips sliding into place reads as the layout lurching.
         model.openSessions(Array(all.prefix(SplitLayout.maxPanes)))
     }
+}
 
+extension ProjectBar {
     private func measured(_ width: Binding<CGFloat>) -> some View {
         GeometryReader { geo in
             Color.clear
@@ -139,9 +204,8 @@ extension SessionBar {
     }
 
     /// One tab per project. Its dot is the most urgent of its sessions.
-    private var projectTabs: some View {
-        // No tab for Tally: its button sits at the top right of every screen already.
-        let order = model.projectsWithTabs.filter { $0 != model.assistantFolder }
+    /// No tab for Tally: its button sits at the top right of every screen already.
+    private func projectTabs(_ order: [String]) -> some View {
         let natural: (String) -> CGFloat = { TabOverflow.width(of: TabOverflow.short(model.projectName($0))) + 14 }
         var layout = TabOverflow.layout(order: order, priority: model.currentProject.map { [$0] } ?? [], room: projectsWidth - 40, natural: natural)
         if !layout.hidden.isEmpty {
@@ -149,7 +213,7 @@ extension SessionBar {
         }
         return HStack(spacing: 6) {
             ForEach(layout.shown, id: \.self) { project in
-                ProjectTab(project: project, width: layout.width, dot: projectDot(project))
+                ProjectTab(project: project, width: layout.width, dot: projectDot(project), active: model.route == .sessions && model.currentProject == project)
             }
             moreProjects(layout.hidden)
             openProjectMenu
@@ -247,7 +311,7 @@ enum TabOverflow {
     }
 }
 
-extension SessionBar {
+extension ProjectBar {
     /// Opens another project beside what you have, without going back to the dashboard.
     /// Projects with no session yet, and adding a folder.
     private var openProjectMenu: some View {
@@ -336,7 +400,7 @@ struct HeaderSessionTabs: View {
                 Image(systemName: "plus").font(.system(size: 10.5, weight: .bold)).frame(width: 22, height: 22).contentShape(Rectangle())
             }
             .buttonStyle(.plain).foregroundStyle(Theme.textSecondary)
-            .help("New session in \(model.projectName(projectID)), with its own conversation")
+            .help("New session in \(model.projectName(projectID)), with its own conversation (⌘N)")
             .accessibilityLabel("New session")
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -452,9 +516,9 @@ struct ProjectTab: View {
     let project: String
     let width: CGFloat?
     let dot: SwiftUI.Color
+    let active: Bool
 
     var body: some View {
-        let active = model.currentProject == project
         let count = model.sessionKeys(in: project).count
         let name = model.projectName(project)
         Button { project == model.assistantFolder ? model.showProject(project) : model.openProjectHub(project) } label: {
@@ -538,6 +602,15 @@ struct PaneView: View {
     private var inspectorHidden: Bool { model.hiddenInspectors.contains(sessionKey) }
     private var name: String { projectID == model.assistantFolder ? model.assistantName : URL(fileURLWithPath: projectID).lastPathComponent }
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
+    @State private var hovering = false
+
+    /// In a grid, only the pane you are in, or the one under the pointer, shows its buttons.
+    /// The rest fade but keep their room, so names do not shift as the pointer passes.
+    private var showsControls: Bool {
+        guard isSplit else { return true }
+        let key = model.keyPane.flatMap { model.visible.contains($0) ? $0 : nil } ?? model.visible.first
+        return hovering || key == sessionKey
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -550,6 +623,7 @@ struct PaneView: View {
                 cli
             }
         }
+        .onHover { over in withAnimation(.easeOut(duration: 0.15)) { hovering = over } }
     }
 
     /// Tasks mode: the Assistant sees every project, a project's Assistant its project, a session its own work.
@@ -628,6 +702,7 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
+            HStack(spacing: 10) {
             if model.isSubassistant(sessionKey) {
                 Button { model.projectStatus(projectID, replacing: sessionKey) } label: {
                     HStack(spacing: 6) {
@@ -671,6 +746,11 @@ struct PaneView: View {
             }
             Button { model.requestClose([sessionKey]) } label: { Image(systemName: "xmark") }
                 .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
+            }
+            // Listening keeps Talk lit wherever the pointer is: Send must stay pressable.
+            .opacity(showsControls || listeningHere ? 1 : 0)
+            .allowsHitTesting(showsControls || listeningHere)
+            .animation(.easeOut(duration: 0.15), value: showsControls)
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
         .background(isAssistantPane ? Theme.violet.opacity(0.16) : Color.white.opacity(0.03))

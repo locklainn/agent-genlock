@@ -109,7 +109,7 @@ test('dictated text reaches the Assistant, and its reply reaches the phone', asy
   p.ws.close();
 });
 
-test('the phone gets a status snapshot of every project', async () => {
+test('the phone gets a status snapshot of every project with a session open', async () => {
   const p = phone();
   await p.opened;
   p.send({ kind: 'status' });
@@ -119,8 +119,8 @@ test('the phone gets a status snapshot of every project', async () => {
   assert.equal(proj.name, 'proj');
   assert.equal(proj.sessions[0].state, 'working');
   assert.equal(proj.sessions[0].said, 'building the thing');
-  assert.equal(proj.topTask, 't: The task');
-  assert.deepEqual(proj.waiting, ['Which one?']);
+  // Sessions only: no top task or questions from the project's records.
+  assert.ok(!('topTask' in proj) && !('waiting' in proj));
   p.ws.close();
 });
 

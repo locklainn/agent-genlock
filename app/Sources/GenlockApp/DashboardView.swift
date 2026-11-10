@@ -8,6 +8,10 @@ struct DashboardView: View {
     var body: some View {
         VStack(spacing: 0) {
             DashboardHeader()
+            // The same project row as above the sessions, so the way into a project does not move.
+            if model.projectsWithTabs.contains(where: { $0 != model.assistantFolder }) {
+                ProjectBar().padding(.bottom, 14)
+            }
             if model.store.projects.isEmpty {
                 Onboarding()
             } else {

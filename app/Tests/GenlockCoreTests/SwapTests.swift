@@ -82,7 +82,10 @@ final class SwapTests: XCTestCase {
 
     func testProjectSessionsAreToldToOfferTheSwapAndTheAssistantIsNot() {
         let project = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", spinoffs: true, reportsState: true)
-        XCTAssertTrue(project.joined(separator: " ").contains("genlock swap GOAL --user-said"))
+        let told = project.joined(separator: " ")
+        XCTAssertTrue(told.contains("genlock swap GOAL with the goal you are on"))
+        XCTAssertTrue(told.contains("genlock open --handoff"))
+        XCTAssertTrue(told.contains("No yes is needed"))
         let assistant = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", reportsState: true, assistant: true)
         XCTAssertFalse(assistant.joined(separator: " ").contains("genlock swap"))
     }
