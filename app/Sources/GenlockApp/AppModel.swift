@@ -129,6 +129,7 @@ final class AppModel {
                 model.voice.collectReplies(from: Array(model.sessions.values))
                 model.collectSpawns()
                 model.openSessionsIfAsked()
+                model.takePhoneInbox()
                 model.collectTells()
                 model.closeSessionsIfAsked()
                 model.clearAssistantIfAsked()
@@ -753,7 +754,9 @@ final class AppModel {
     /// are already in (switching it on a click is disorienting). Its Assistant leads only if you
     /// already opened it; a click never starts one.
     func openProjectHub(_ project: String) {
-        openSessions(Array(gridKeys(project, start: false).prefix(SplitLayout.maxPanes)))
+        let keys = gridKeys(project, start: false)
+        // A project with no sessions yet starts its main one, rather than showing no panes at all.
+        openSessions(keys.isEmpty ? [project] : Array(keys.prefix(SplitLayout.maxPanes)))
     }
 
     /// Out of the hub: one session alone, with its terminal.
@@ -1284,6 +1287,41 @@ final class AppModel {
         try? FileManager.default.createDirectory(at: kept, withIntermediateDirectories: true)
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         try? FileManager.default.copyItem(atPath: transcript, toPath: kept.appendingPathComponent("\(stamp).jsonl").path)
+    }
+
+    /// Where the phone bridge leaves a message while the Assistant is closed.
+    private var phoneInbox: VoiceChannel {
+        VoiceChannel(session: "inbox", base: VoiceChannel.defaultBase.deletingLastPathComponent().appendingPathComponent("phone"))
+    }
+
+    /// A message from the phone that found the Assistant closed starts it, so nothing sent from the
+    /// phone is lost. Once it is running, anything still waiting goes into its channel as usual.
+    /// It starts in the background: what is on screen here stays put.
+    func takePhoneInbox() {
+        let inbox = phoneInbox
+        guard let names = try? FileManager.default.contentsOfDirectory(atPath: inbox.folder.path),
+              names.contains(where: { $0.hasPrefix("tell-") && $0.hasSuffix(".json") }) else { return }
+        let current = sessions[assistantFolder]
+        if let current, current.isRunning {
+            try? current.channel.prepare()
+            for name in names where name.hasPrefix("tell-") && name.hasSuffix(".json") {
+                try? FileManager.default.moveItem(at: inbox.folder.appendingPathComponent(name),
+                                                  to: current.channel.folder.appendingPathComponent(name))
+            }
+            return
+        }
+        // Still starting: it gets them once it is running.
+        if let current, current.exitCode == nil { return }
+        guard let tools else { return }
+        // A status update asks for a fresh conversation, which this already is; one opening carries all.
+        let opening = ([inbox.takeFreshTell()].compactMap { $0 } + inbox.takeTells()).joined(separator: "\n\n")
+        guard !opening.isEmpty else { return }
+        try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+        let fresh = TerminalSession(projectID: assistantFolder)
+        fresh.openingMessage = opening
+        sessions[assistantFolder] = fresh
+        launch(fresh, tools: tools)
+        message = "Started \(assistantName) for a message from your phone."
     }
 
     func collectTells() {

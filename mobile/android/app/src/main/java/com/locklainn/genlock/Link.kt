@@ -40,7 +40,8 @@ data class Pairing(val relay: String, val room: String, val key: String) {
 
 enum class Who { ME, LAPTOP_PROMPT, ASSISTANT, NOTE, INFO }
 
-data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false)
+/** `failed`: a message of yours that did not reach the laptop. It stays, with Retry, so nothing is lost. */
+data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false, val failed: Boolean = false)
 
 data class Session(val name: String, val state: String, val said: String, val task: String?,
                    val title: String = name, val goal: SessionGoal? = null, val work: TaskItem? = null)
@@ -175,19 +176,37 @@ class Link(app: Application) : AndroidViewModel(app) {
         return id
     }
 
-    fun say(text: String) {
+    /** False when it could not go: the caller keeps the draft, so nothing typed or dictated is lost. */
+    fun say(text: String): Boolean {
         val clean = text.trim()
-        if (clean.isEmpty()) return
+        if (clean.isEmpty()) return true
         if (conn.value != Conn.CONNECTED) {
-            note("Not connected, so that was not sent.")
-            return
+            flash.value = "Not connected. Your message is still in the box; send it again once connected."
+            return false
         }
         val id = send(JSONObject().put("kind", "say").put("text", clean))
         lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true) }
+        // No ack in time (the connection dropped as it went): mark it failed, so it can be retried.
+        main.postDelayed({ fail(id, null) }, 20_000L)
         waiting.value = true
         startCued = false
         main.removeCallbacks(giveUp)
         main.postDelayed(giveUp, 15 * 60_000L)
+        return true
+    }
+
+    /** Send a failed message again. It moves to the bottom, as a new message. */
+    fun retry(line: Line) {
+        if (conn.value != Conn.CONNECTED) { flash.value = "Not connected yet. Retry once it says ready."; return }
+        lines.update { list -> list.filterNot { it.id == line.id && it.who == Who.ME } }
+        say(line.text)
+    }
+
+    private fun fail(id: String, why: String?) {
+        if (lines.value.none { it.id == id && it.who == Who.ME && it.pending }) return
+        waiting.value = false
+        lines.update { list -> list.map { if (it.id == id && it.who == Who.ME) it.copy(pending = false, failed = true) else it } }
+        why?.let { note(it) }
     }
 
     fun askStatus() {
@@ -221,6 +240,9 @@ class Link(app: Application) : AndroidViewModel(app) {
             "ack" -> {
                 val of = m.optString("of")
                 if (lines.value.any { it.id == of && it.pending }) Cues.sent()
+                // The Assistant was closed: the laptop kept the message and is starting it.
+                if (m.optBoolean("queued")) lines.update { it + Line(UUID.randomUUID().toString(), Who.INFO,
+                    "${assistantName.value} was not open, so the laptop is starting it with your message.", t) }
                 lines.update { list -> list.map { if (it.id == of) it.copy(pending = false) else it } }
                 seen(t)
             }
@@ -243,12 +265,8 @@ class Link(app: Application) : AndroidViewModel(app) {
                 projects.value = parseProjects(m.optJSONArray("projects") ?: JSONArray())
                 statusAt.value = System.currentTimeMillis()
             }
-            "error" -> {
-                waiting.value = false
-                val of = m.optString("of")
-                lines.update { list -> list.filterNot { it.id == of && it.who == Who.ME && it.pending } +
-                    Line(UUID.randomUUID().toString(), Who.NOTE, m.optString("text"), t) }
-            }
+            // Kept, marked not sent, with Retry: a message is never thrown away.
+            "error" -> fail(m.optString("of"), m.optString("text").ifEmpty { "That did not reach the laptop." })
         }
     }
 

@@ -5,7 +5,7 @@
   "scripts": {
     "start": "node bridge.mjs",
     "pair": "node pair.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "GENLOCK_NO_WAKE=1 node --test test/*.test.mjs"
   },
   "dependencies": {
     "qrcode": "1.5.4"

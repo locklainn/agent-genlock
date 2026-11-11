@@ -67,17 +67,37 @@ export function findAssistant(home = genlockHome()) {
  */
 export const isStatusRequest = (text) => /^\s*status update\b/i.test(String(text || ''));
 
-/** Drop a message where the app types it into the Assistant's prompt. */
-export function sendToAssistant(text, home = genlockHome(), { fresh = isStatusRequest(text) } = {}) {
+/** Where a message waits while the Assistant is closed. The Mac app starts it with what is here. */
+export const assistantInbox = (home = genlockHome()) => path.join(home, 'phone', 'inbox');
+
+/** Bring the Mac app up, in the background, so it can start the Assistant. A no-op when it is running. */
+export function wakeApp() {
+  if (process.env.GENLOCK_NO_WAKE) return;
+  execFile('/usr/bin/pgrep', ['-x', 'Genlock'], (err) => {
+    // pgrep exits 1 when nothing matched: the app is not running.
+    if (err && err.code === 1) execFile('/usr/bin/open', ['-g', '-b', 'com.locklainn.genlock'], () => {});
+  });
+}
+
+/**
+ * Drop a message where the app types it into the Assistant's prompt. With the Assistant closed,
+ * it waits in the inbox and the app is woken to start the Assistant on it: nothing is lost.
+ * Returns the file's name and whether it was queued.
+ */
+export function deliverToAssistant(text, home = genlockHome(), { fresh = isStatusRequest(text), wake = wakeApp } = {}) {
   const a = findAssistant(home);
-  if (!a) throw new Error('The Assistant is not open on the laptop.');
-  fs.mkdirSync(a.channel, { recursive: true });
+  const folder = a ? a.channel : assistantInbox(home);
+  fs.mkdirSync(folder, { recursive: true });
   const name = `tell-${Date.now()}-${randomBytes(3).toString('hex')}.json`;
   const body = JSON.stringify({ text: `${PHONE_PREFIX} ${text.replace(/\s+/g, ' ').trim()}`, ...(fresh ? { fresh: true } : {}) });
-  fs.writeFileSync(path.join(a.channel, `${name}.tmp`), body);
-  fs.renameSync(path.join(a.channel, `${name}.tmp`), path.join(a.channel, name));
-  return name;
+  fs.writeFileSync(path.join(folder, `${name}.tmp`), body);
+  fs.renameSync(path.join(folder, `${name}.tmp`), path.join(folder, name));
+  if (!a) wake();
+  return { name, queued: !a, folder };
 }
+
+/** The same, returning only the file's name. */
+export const sendToAssistant = (text, home, opts) => deliverToAssistant(text, home, opts).name;
 
 /**
  * Follows a Claude Code transcript and reports each finished Assistant turn, plus prompts typed
@@ -95,6 +115,8 @@ export class TranscriptFollower {
     this.offset = 0;
     this.partial = '';
     this.texts = new Map();
+    /** Set when the Assistant is being started for a phone message: read its new conversation whole. */
+    this.readNextFromStart = false;
   }
 
   poll() {
@@ -106,8 +128,12 @@ export class TranscriptFollower {
       this.file = file;
       this.partial = '';
       this.texts.clear();
-      try { this.offset = fresh ? 0 : fs.statSync(file).size; } catch { this.offset = 0; }
-      if (!fresh) return;
+      // So is the first one after the bridge queued a message for a closed Assistant: the
+      // Assistant it starts may have written its first turn before this poll saw the file.
+      const fromStart = fresh || this.readNextFromStart;
+      this.readNextFromStart = false;
+      try { this.offset = fromStart ? 0 : fs.statSync(file).size; } catch { this.offset = 0; }
+      if (!fromStart) return;
     }
     let size;
     try { size = fs.statSync(file).size; } catch { return; }

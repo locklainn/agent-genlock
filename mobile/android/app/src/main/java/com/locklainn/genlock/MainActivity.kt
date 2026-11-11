@@ -184,6 +184,7 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
         laptop == "offline" -> "Laptop offline" to MaterialTheme.colorScheme.error
         assistant == "closed" -> "$name is not open" to Color(0xFFE0AF68)
         assistant == "busy" -> "$name is working…" to Color(0xFF7AA2F7)
+        assistant == "starting" -> "$name is starting…" to Color(0xFF7AA2F7)
         else -> "$name is ready" to Color(0xFF9ECE6A)
     }
     TopAppBar(
@@ -270,9 +271,9 @@ fun TalkScreen(link: Link) {
     // sentence is not cut off. The draft clears only once the text has gone.
     fun send() {
         if (dictation.finishing) return
-        val dictating = dictation.stop { text -> finishing = false; link.say(text); draft = "" }
+        val dictating = dictation.stop { text -> finishing = false; draft = if (link.say(text)) "" else text }
         finishing = dictation.finishing   // read after: the callback may already have run
-        if (!dictating) { link.say(draft); draft = "" }
+        if (!dictating && link.say(draft)) draft = ""
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -281,7 +282,7 @@ fun TalkScreen(link: Link) {
                 Text("Tap the mic and talk to $name. Replies show here, and are read aloud unless you turn that off.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            items(lines, key = { it.id + it.who }) { Bubble(it, name) }
+            items(lines, key = { it.id + it.who }) { Bubble(it, name, onRetry = { link.retry(it) }) }
             if (waiting) item(key = "waiting") {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -323,7 +324,7 @@ fun TalkScreen(link: Link) {
 }
 
 @Composable
-fun Bubble(line: Line, name: String) {
+fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}) {
     val mine = line.who == Who.ME || line.who == Who.LAPTOP_PROMPT
     if (line.who == Who.NOTE || line.who == Who.INFO) {
         Text(line.text, Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium,
@@ -332,7 +333,7 @@ fun Bubble(line: Line, name: String) {
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         Text(
-            when (line.who) { Who.ME -> if (line.pending) "You · sending…" else "You"; Who.LAPTOP_PROMPT -> "You, at the laptop"; else -> name },
+            when (line.who) { Who.ME -> if (line.failed) "You · not sent" else if (line.pending) "You · sending…" else "You"; Who.LAPTOP_PROMPT -> "You, at the laptop"; else -> name },
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Surface(
@@ -341,6 +342,13 @@ fun Bubble(line: Line, name: String) {
             modifier = Modifier.widthIn(max = 320.dp),
         ) {
             SelectionContainer { Text(line.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge) }
+        }
+        if (line.failed) {
+            TextButton(onClick = onRetry) {
+                Icon(Icons.Default.Refresh, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("Retry")
+            }
         }
     }
 }

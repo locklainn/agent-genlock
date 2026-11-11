@@ -4,11 +4,11 @@
 //   node mobile/bridge/bridge.mjs            run, using the pairing from pair.mjs
 
 import { randomUUID } from 'node:crypto';
-import { loadPairing, roomURL, findAssistant, sendToAssistant, TranscriptFollower, status } from './lib.mjs';
+import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status } from './lib.mjs';
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
-export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl = globalThis.WebSocket } = {}) {
+export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl = globalThis.WebSocket, wake } = {}) {
   let ws = null;
   let stopped = false;
   let retry = 1000;
@@ -41,8 +41,10 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     if (msg.kind === 'say') {
       log('phone said', String(msg.text || '').slice(0, 60));
       try {
-        sendToAssistant(String(msg.text || ''), home, msg.fresh ? { fresh: true } : undefined);
-        send({ kind: 'ack', of: msg.id });
+        const { queued } = deliverToAssistant(String(msg.text || ''), home, { ...(msg.fresh ? { fresh: true } : {}), ...(wake ? { wake } : {}) });
+        // Queued: the Assistant was closed, and the app is starting it with this message.
+        send({ kind: 'ack', of: msg.id, ...(queued ? { queued: true } : {}) });
+        if (queued) { follower.readNextFromStart = true; send({ ...stateMsg(), assistant: 'starting' }); }
       } catch (e) {
         send({ kind: 'error', of: msg.id, text: e.message });
       }

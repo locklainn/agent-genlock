@@ -440,11 +440,7 @@ struct SessionStripTab: View {
                     .lineLimit(1).truncationMode(.tail)
                     .fixedSize(horizontal: width == nil, vertical: false)
                 if hovering || current {
-                    Button { model.requestClose([key]) } label: {
-                        Image(systemName: "xmark").font(.system(size: 7.5, weight: .bold))
-                    }
-                    .buttonStyle(.plain).foregroundStyle(Theme.textTertiary)
-                    .help("Close this session. Its conversation stays under Recently ended.")
+                    TabCloseButton { model.requestClose([key]) }
                 }
             }
             .padding(.horizontal, 7).padding(.vertical, 4)
@@ -463,6 +459,29 @@ struct SessionStripTab: View {
             }
             Button("Close Session…") { model.requestClose([key]) }
         }
+    }
+}
+
+/// The x on a tab. The glyph stays small, but the click lands anywhere in a 22pt square, which
+/// lights up under the pointer so you can see where it counts. Negative padding keeps the tab's
+/// height and width where they were, so the row does not jump when it appears.
+struct TabCloseButton: View {
+    let action: () -> Void
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: "xmark").font(.system(size: 8, weight: .bold))
+                .frame(width: 22, height: 22)
+                .background(Circle().fill(hovering ? Theme.textPrimary.opacity(0.12) : .clear))
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(hovering ? Theme.textPrimary : Theme.textTertiary)
+        .padding(.vertical, -6).padding(.trailing, -7)
+        .onHover { hovering = $0 }
+        .help("Close this session. Its conversation stays under Recently ended.")
+        .accessibilityLabel("Close session")
     }
 }
 
