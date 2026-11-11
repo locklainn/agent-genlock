@@ -632,7 +632,8 @@ struct PaneView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
+        // Leading, not centred: a child wider than the pane must never push the terminal right.
+        VStack(alignment: .leading, spacing: 0) {
             // An Assistant's pane is violet from the top, so it never reads as an ordinary session.
             Rectangle().fill(isAssistantPane ? AnyShapeStyle(Theme.violet) : AnyShapeStyle(Theme.gradient(tier))).frame(height: isAssistantPane ? 3 : 2)
             header
@@ -657,7 +658,7 @@ struct PaneView: View {
     }
 
     @ViewBuilder private var cli: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             if isSplit, projectID != model.assistantFolder, let session = model.sessions[sessionKey] {
                 SessionStrip(session: session, tier: tier, openPanel: toggleInspector)
             }
@@ -772,6 +773,11 @@ struct PaneView: View {
             .animation(.easeOut(duration: 0.15), value: showsControls)
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
+        // Exactly the pane's width. Its pieces cannot shrink below their text, so with many tabs the
+        // row is wider than the pane; unclamped, that widened the pane's column, which centred the
+        // terminal in it: shifted right by half the overflow and clipped on the right.
+        .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
+        .clipped()
         .background(isAssistantPane ? Theme.violet.opacity(0.16) : Color.white.opacity(0.03))
         .contentShape(Rectangle())
         .onTapGesture { model.focus(sessionKey) }
