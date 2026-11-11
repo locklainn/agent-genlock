@@ -41,7 +41,9 @@ data class Pairing(val relay: String, val room: String, val key: String) {
 enum class Who { ME, LAPTOP_PROMPT, ASSISTANT, NOTE, INFO }
 
 /** `failed`: a message of yours that did not reach the laptop. It stays, with Retry, so nothing is lost. */
-data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false, val failed: Boolean = false)
+/** `file`: a local path to an image or file this message carries, sent or received; `mime` its type. */
+data class Line(val id: String, val who: Who, val text: String, val t: Long, val pending: Boolean = false, val failed: Boolean = false,
+                val file: String? = null, val mime: String? = null)
 
 data class Session(val name: String, val state: String, val said: String, val task: String?,
                    val title: String = name, val goal: SessionGoal? = null, val work: TaskItem? = null)
@@ -93,6 +95,8 @@ class Link(app: Application) : AndroidViewModel(app) {
         startCued = true
         Cues.started()
     }
+
+    private val assembler = FileAssembler(Files.receivedDir(app))
 
     /** Each reply as it arrives, for reading aloud. */
     var onReply: ((String) -> Unit)? = null
@@ -177,15 +181,23 @@ class Link(app: Application) : AndroidViewModel(app) {
     }
 
     /** False when it could not go: the caller keeps the draft, so nothing typed or dictated is lost. */
-    fun say(text: String): Boolean {
+    fun say(text: String, attachment: java.io.File? = null, mime: String = "image/jpeg"): Boolean {
         val clean = text.trim()
-        if (clean.isEmpty()) return true
+        if (clean.isEmpty() && attachment == null) return true
         if (conn.value != Conn.CONNECTED) {
             flash.value = "Not connected. Your message is still in the box; send it again once connected."
             return false
         }
-        val id = send(JSONObject().put("kind", "say").put("text", clean))
-        lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true) }
+        // The file goes first, in chunks; the say that follows names it, so the laptop hands both over together.
+        val fid = attachment?.let { f ->
+            val fid = UUID.randomUUID().toString()
+            Files.chunks(fid, f, mime).forEach { send(it) }
+            fid
+        }
+        val say = JSONObject().put("kind", "say").put("text", clean)
+        fid?.let { say.put("files", JSONArray().put(it)) }
+        val id = send(say)
+        lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true, file = attachment?.path, mime = attachment?.let { mime }) }
         // No ack in time (the connection dropped as it went): mark it failed, so it can be retried.
         main.postDelayed({ fail(id, null) }, 20_000L)
         waiting.value = true
@@ -199,7 +211,7 @@ class Link(app: Application) : AndroidViewModel(app) {
     fun retry(line: Line) {
         if (conn.value != Conn.CONNECTED) { flash.value = "Not connected yet. Retry once it says ready."; return }
         lines.update { list -> list.filterNot { it.id == line.id && it.who == Who.ME } }
-        say(line.text)
+        say(line.text, line.file?.let { java.io.File(it) }?.takeIf { it.exists() }, line.mime ?: "image/jpeg")
     }
 
     private fun fail(id: String, why: String?) {
@@ -246,6 +258,14 @@ class Link(app: Application) : AndroidViewModel(app) {
                 lines.update { list -> list.map { if (it.id == of) it.copy(pending = false) else it } }
                 seen(t)
             }
+            // A file from the Assistant, a chunk at a time. Shown once whole; a replay of one already shown is skipped.
+            "file" -> {
+                val whole = runCatching { assembler.add(m) }.getOrNull() ?: return
+                seen(whole.t)
+                if (lines.value.any { it.id == whole.fid }) return
+                lines.update { it + Line(whole.fid, Who.ASSISTANT, whole.caption ?: "", whole.t, file = whole.file.path, mime = whole.mime) }
+            }
+            "file-ack" -> {}
             // The bridge saw the phone's message reach the Assistant's conversation.
             "started" -> cueStarted()
             "reply" -> {

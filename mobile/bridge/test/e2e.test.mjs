@@ -132,3 +132,67 @@ test('a phone that was away catches up on replies it missed', async () => {
   await waitFor(() => p.got.find((m) => m.kind === 'reply' && m.text.startsWith('Two things.')));
   p.ws.close();
 });
+
+// Files both ways. Real bytes, several chunks, through the real relay.
+const bigBytes = (n) => { const b = Buffer.alloc(n); for (let i = 0; i < n; i++) b[i] = (i * 31 + 7) & 255; return b; };
+const reassemble = (msgs) => Buffer.concat(msgs.sort((a, b) => a.seq - b.seq).map((m) => Buffer.from(m.data, 'base64')));
+
+test('a file the Assistant sends with SendUserFile reaches the phone whole', async () => {
+  const src = path.join(home, 'concept.bin.png');
+  const bytes = bigBytes(500_000); // three chunks; under the shrink size, so sent as is
+  fs.writeFileSync(src, bytes);
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  await waitFor(() => p.got.find((m) => m.kind === 'state'));
+  fs.appendFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm9', content: [
+    { type: 'tool_use', id: 'toolu_X', name: 'SendUserFile', input: { files: [src], caption: 'Front door, option A' } }] } }) + '\n');
+  const chunks = await waitFor(() => { const c = p.got.filter((m) => m.kind === 'file'); return c.length && c.length === c[0].total ? c : null; });
+  assert.equal(chunks.length, 3);
+  assert.equal(chunks[0].name, 'concept.bin.png');
+  assert.equal(chunks[0].mime, 'image/png');
+  assert.equal(chunks.find((c) => c.seq === 0).caption, 'Front door, option A');
+  assert.ok(reassemble(chunks).equals(bytes));
+  p.ws.close();
+});
+
+test('a phone that was in the background gets the file when it comes back', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() - 600_000 });
+  const chunks = await waitFor(() => { const c = p.got.filter((m) => m.kind === 'file' && m.fid === 'toolu_X-0'); return c.length === 3 ? c : null; });
+  assert.equal(chunks[0].total, 3);
+  p.ws.close();
+});
+
+test('a photo from the phone is saved on the laptop and the Assistant is told its path', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  const photo = bigBytes(450_000);
+  const fid = 'phone-file-1';
+  const n = Math.ceil(photo.length / 192000);
+  for (let seq = 0; seq < n; seq++) {
+    p.send({ kind: 'file', fid, seq, total: n, name: 'IMG 2041.jpg', mime: 'image/jpeg', data: photo.subarray(seq * 192000, (seq + 1) * 192000).toString('base64') });
+  }
+  await waitFor(() => p.got.find((m) => m.kind === 'file-ack' && m.of === fid));
+  for (const f of fs.readdirSync(channel)) if (f.startsWith('tell-')) fs.rmSync(path.join(channel, f));
+  p.send({ kind: 'say', text: 'what do you think of this', files: [fid] });
+  const tell = await waitFor(() => fs.readdirSync(channel).find((f) => f.startsWith('tell-') && f.endsWith('.json')));
+  const text = JSON.parse(fs.readFileSync(path.join(channel, tell), 'utf8')).text;
+  const saved = text.match(/(\/\S+IMG_2041\.jpg)/)?.[1];
+  assert.ok(saved, text);
+  assert.match(text, /^\[phone\] what do you think of this \(TJ attached a file from the phone: /);
+  assert.ok(fs.readFileSync(saved).equals(photo));
+  await waitFor(() => p.got.find((m) => m.kind === 'ack'));
+  p.ws.close();
+});
+
+test('a say naming an attachment that never arrived is refused, so the phone can retry', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'say', text: 'see this', files: ['never-sent'], id: 'say-missing' });
+  const err = await waitFor(() => p.got.find((m) => m.kind === 'error' && m.of === 'say-missing'));
+  assert.match(err.text, /did not arrive whole/);
+  p.ws.close();
+});

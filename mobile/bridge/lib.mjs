@@ -105,12 +105,14 @@ export const sendToAssistant = (text, home, opts) => deliverToAssistant(text, ho
  * Call poll() on a timer; it re-resolves the transcript, since a swap or restart changes it.
  */
 export class TranscriptFollower {
-  constructor(resolve, { onReply, onPrompt, onPhone } = {}) {
+  constructor(resolve, { onReply, onPrompt, onPhone, onFiles } = {}) {
     this.resolve = resolve;
     this.onReply = onReply || (() => {});
     this.onPrompt = onPrompt || (() => {});
     // A message from the phone reached the conversation: the Assistant is starting on it.
     this.onPhone = onPhone || (() => {});
+    // The Assistant sent files with SendUserFile: they go to the phone too, not only to Remote Control.
+    this.onFiles = onFiles || (() => {});
     this.file = null;
     this.offset = 0;
     this.partial = '';
@@ -160,10 +162,22 @@ export class TranscriptFollower {
       else if (text && !text.startsWith('<')) this.onPrompt({ text, turn: e.uuid });
       return;
     }
+    // A message sent while the Assistant was mid-turn is folded into that turn as a queued command,
+    // not a user prompt. It has still reached the Assistant, so the phone hears it was picked up.
+    if (e.type === 'attachment' && e.attachment?.type === 'queued_command') {
+      const text = String(e.attachment.prompt || '').trim();
+      if (text.startsWith(PHONE_PREFIX)) this.onPhone({ turn: e.uuid });
+      return;
+    }
     if (e.type !== 'assistant' || !m || !Array.isArray(m.content)) return;
     const id = m.id || e.uuid;
     const got = this.texts.get(id) || [];
-    for (const c of m.content) if (c.type === 'text' && c.text?.trim()) got.push(c.text.trim());
+    for (const c of m.content) {
+      if (c.type === 'text' && c.text?.trim()) got.push(c.text.trim());
+      if (c.type === 'tool_use' && c.name === 'SendUserFile' && Array.isArray(c.input?.files) && c.input.files.length) {
+        this.onFiles({ files: c.input.files.map(String), caption: c.input.caption ? String(c.input.caption) : undefined, turn: c.id });
+      }
+    }
     this.texts.set(id, got);
     if (m.stop_reason === 'end_turn') {
       this.texts.delete(id);

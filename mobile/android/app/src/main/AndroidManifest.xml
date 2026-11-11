@@ -38,6 +38,14 @@
                 <data android:scheme="genlock" android:host="pair" />
             </intent-filter>
         </activity>
+        <!-- Hands a received image or file to Photos or another viewer, full size. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.files"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data android:name="android.support.FILE_PROVIDER_PATHS" android:resource="@xml/file_paths" />
+        </provider>
         <!-- Listens to the relay in the background and posts a notification per Assistant reply. -->
         <service
             android:name=".Watch"

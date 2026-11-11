@@ -116,12 +116,17 @@ class Watch : Service() {
 
     private fun receive(raw: String) {
         val m = runCatching { JSONObject(raw) }.getOrNull() ?: return
-        if (m.optString("kind") != "reply") return
+        val kind = m.optString("kind")
+        // A file is kept for the app to fetch when it opens (the bridge replays it); here it only notifies, once.
+        val isFile = kind == "file" && m.optInt("seq", -1) == 0
+        if (kind != "reply" && !isFile) return
         val t = m.optLong("t", 0)
         if (t != 0L && t <= mine.getLong("notifiedUpTo", 0)) return
         if (t != 0L) mine.edit().putLong("notifiedUpTo", t).apply()
         if (visible) return
-        notifyReply(this, link.getString("assistantName", null) ?: "Assistant", m.optString("text"), t)
+        val text = if (isFile) m.optString("caption").ifEmpty { if (m.optString("mime").startsWith("image/")) "Sent you an image" else "Sent you ${m.optString("name")}" }
+                   else m.optString("text")
+        notifyReply(this, link.getString("assistantName", null) ?: "Assistant", text, t)
     }
 
     companion object {

@@ -11,6 +11,24 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
@@ -48,15 +66,23 @@ class MainActivity : ComponentActivity() {
     private val speaking = MutableStateFlow(false)
     private var nextId = 0
 
-    private fun finished(id: String?) { queued.remove(id); speaking.value = queued.isNotEmpty() }
+    private fun finished(id: String?) {
+        queued.remove(id)
+        speaking.value = queued.isNotEmpty()
+        if (queued.isEmpty()) releaseAudio()
+    }
 
     /** Silence the readout now and drop anything still queued. Read-aloud stays on for the next reply. */
-    private fun hush() { queued.clear(); speaking.value = false; tts?.stop() }
+    private fun hush() { queued.clear(); speaking.value = false; tts?.stop(); AudioHold.dropAll() }
+
+    private val speech = AudioHold.speech
+    private fun takeAudio() = AudioHold.take(this, AudioHold.REPLY)
+    private fun releaseAudio() = AudioHold.drop(AudioHold.REPLY)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) tts?.language = Locale.getDefault() }
+        tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) { tts?.language = Locale.getDefault(); tts?.setAudioAttributes(speech) } }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) = finished(id)
@@ -69,6 +95,7 @@ class MainActivity : ComponentActivity() {
             if (prefs().getBoolean("speak", true)) {
                 val id = "reply-${nextId++}"
                 queued.add(id); speaking.value = true
+                takeAudio()   // before the "reply done" sound, so the music is already paused under it
                 // After the "reply done" sound, not over it.
                 window.decorView.postDelayed({
                     if (id in queued && tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
@@ -102,7 +129,7 @@ class MainActivity : ComponentActivity() {
         getSystemService(android.app.NotificationManager::class.java).cancelAll()
     }
     override fun onStop() { super.onStop(); Watch.hidden(); link.close() }
-    override fun onDestroy() { tts?.shutdown(); super.onDestroy() }
+    override fun onDestroy() { tts?.shutdown(); AudioHold.dropAll(); super.onDestroy() }
 }
 
 /** Ask once for permission to post notifications (Android 13+), then start listening in the background. */
@@ -200,11 +227,27 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
         },
         actions = {
             // One tap for the question asked most. Up here, not by the text box, where it read as an attachment.
-            val waiting by link.waiting.collectAsStateWithLifecycle()
+            // Always pressable. The dot on it says whether the laptop is listening: a slow green pulse when
+            // connected, amber while connecting, red when the laptop or the connection is down.
+            val live = conn == Conn.CONNECTED && laptop != "offline"
+            val dot = when {
+                live -> Color(0xFF9ECE6A)
+                conn == Conn.CONNECTING || conn == Conn.CONNECTED -> Color(0xFFE0AF68)
+                else -> MaterialTheme.colorScheme.error
+            }
+            val pulse by rememberInfiniteTransition(label = "live").animateFloat(
+                initialValue = 1f, targetValue = 0.35f,
+                animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "live",
+            )
             FilledTonalButton(
-                onClick = { link.say(STATUS_REQUEST) }, enabled = conn == Conn.CONNECTED && !waiting,
-                contentPadding = PaddingValues(horizontal = 14.dp), modifier = Modifier.height(36.dp),
-            ) { Text("Status update", style = MaterialTheme.typography.labelLarge) }
+                onClick = { link.say(STATUS_REQUEST) },
+                contentPadding = PaddingValues(start = 10.dp, end = 14.dp), modifier = Modifier.height(36.dp)
+                    .semantics { stateDescription = if (live) "Connected" else if (conn == Conn.CONNECTING) "Connecting" else "Not connected" },
+            ) {
+                Box(Modifier.size(9.dp).graphicsLayer { alpha = if (live) pulse else 1f }.background(dot, CircleShape))
+                Spacer(Modifier.width(7.dp))
+                Text("Status update", style = MaterialTheme.typography.labelLarge)
+            }
             IconButton(onClick = {
                 speak = !speak
                 prefs().edit().putBoolean("speak", speak).apply()
@@ -245,10 +288,34 @@ fun TalkScreen(link: Link) {
     var listening by remember { mutableStateOf(false) }
     var finishing by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
+    // A photo to send with the next message, already scaled and saved as a JPEG.
+    var attachment by remember { mutableStateOf<java.io.File?>(null) }
+    var preparing by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val pickPhoto = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        preparing = true
+        scope.launch {
+            val made = withContext(kotlinx.coroutines.Dispatchers.IO) { runCatching { Files.prepareImage(ctx, uri) } }
+            preparing = false
+            made.onSuccess { attachment = it }.onFailure { problem = "That photo could not be read: ${it.message}" }
+        }
+    }
+    var dictated by remember { mutableStateOf(false) }
+    LaunchedEffect(waiting) { if (!waiting) AudioHold.drop(AudioHold.WAITING) }
+    // A message you spoke holds the music paused through to the reply; a cancelled one lets it back.
+    fun sent(ok: Boolean) {
+        if (ok && dictated) AudioHold.take(ctx, AudioHold.WAITING)
+        if (ok) dictated = false
+    }
     val dictation = remember {
         Dictation(ctx,
             onText = { settled, partial -> draft = listOf(settled, partial).filter { it.isNotBlank() }.joinToString(" ") },
-            onListening = { listening = it },
+            onListening = {
+                listening = it
+                // Music pauses while you talk. A dictated message keeps it paused until its reply is read.
+                if (it) { dictated = true; AudioHold.take(ctx, AudioHold.MIC) } else AudioHold.drop(AudioHold.MIC)
+            },
             onProblem = { problem = it })
             .also { d -> (ctx as? android.app.Activity)?.intent?.getIntExtra("minlen", 0)?.takeIf { it > 0 }?.let { d.minLength = it } }
     }
@@ -271,9 +338,14 @@ fun TalkScreen(link: Link) {
     // sentence is not cut off. The draft clears only once the text has gone.
     fun send() {
         if (dictation.finishing) return
-        val dictating = dictation.stop { text -> finishing = false; draft = if (link.say(text)) "" else text }
+        val dictating = dictation.stop { text ->
+            finishing = false
+            val ok = link.say(text, attachment)
+            sent(ok)
+            if (ok) { draft = ""; attachment = null } else draft = text
+        }
         finishing = dictation.finishing   // read after: the callback may already have run
-        if (!dictating && link.say(draft)) draft = ""
+        if (!dictating) { val ok = link.say(draft, attachment); sent(ok); if (ok) { draft = ""; attachment = null } }
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -282,7 +354,7 @@ fun TalkScreen(link: Link) {
                 Text("Tap the mic and talk to $name. Replies show here, and are read aloud unless you turn that off.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            items(lines, key = { it.id + it.who }) { Bubble(it, name, onRetry = { link.retry(it) }) }
+            items(lines, key = { it.id + it.who }) { Bubble(it, name, onRetry = { link.retry(it) }, onOpen = { Files.open(ctx, it.file!!, it.mime) }) }
             if (waiting) item(key = "waiting") {
                 Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(start = 4.dp, top = 4.dp)) {
                     CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
@@ -292,6 +364,20 @@ fun TalkScreen(link: Link) {
             }
         }
         problem?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
+        // The photo going with the next message, with a way to take it back off.
+        if (attachment != null || preparing) {
+            Row(Modifier.padding(start = 16.dp, top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box {
+                    val thumb = remember(attachment) { attachment?.let { Files.preview(it.path, 256)?.asImageBitmap() } }
+                    if (thumb != null) {
+                        Image(thumb, "Photo to send", Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)), contentScale = ContentScale.Crop)
+                    } else {
+                        Box(Modifier.size(72.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp) }
+                    }
+                }
+                if (attachment != null) IconButton(onClick = { attachment = null }) { Icon(Icons.Default.Close, "Remove photo") }
+            }
+        }
         // Stop and Send do opposite things, so they sit at opposite ends of the row, never side by side.
         // The right-hand button is the one next step: Mic when there is nothing yet, Send once there is.
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -302,6 +388,11 @@ fun TalkScreen(link: Link) {
                 ) { Icon(Icons.Default.Stop, "Stop dictating", tint = MaterialTheme.colorScheme.error) }
                 Spacer(Modifier.width(8.dp))
             }
+            if (!listening) {
+                IconButton(onClick = { pickPhoto.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !preparing) {
+                    Icon(Icons.Default.AddPhotoAlternate, "Attach a photo")
+                }
+            }
             OutlinedTextField(
                 value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f),
                 placeholder = { Text(if (listening) "Listening…" else "Say or type…") },
@@ -311,10 +402,10 @@ fun TalkScreen(link: Link) {
                 } else null,
             )
             Spacer(Modifier.width(8.dp))
-            if (draft.isBlank() && !listening) {
+            if (draft.isBlank() && attachment == null && !listening) {
                 FilledIconButton(onClick = { toggleMic() }, modifier = Modifier.size(56.dp)) { Icon(Icons.Default.Mic, "Dictate") }
             } else {
-                FilledIconButton(onClick = { send() }, enabled = conn == Conn.CONNECTED && draft.isNotBlank() && !finishing, modifier = Modifier.size(56.dp)) {
+                FilledIconButton(onClick = { send() }, enabled = conn == Conn.CONNECTED && (draft.isNotBlank() || attachment != null) && !finishing && !preparing, modifier = Modifier.size(56.dp)) {
                     if (finishing) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                     else Icon(Icons.AutoMirrored.Filled.Send, "Send")
                 }
@@ -324,7 +415,7 @@ fun TalkScreen(link: Link) {
 }
 
 @Composable
-fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}) {
+fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}, onOpen: () -> Unit = {}) {
     val mine = line.who == Who.ME || line.who == Who.LAPTOP_PROMPT
     if (line.who == Who.NOTE || line.who == Who.INFO) {
         Text(line.text, Modifier.fillMaxWidth(), style = MaterialTheme.typography.labelMedium,
@@ -341,7 +432,24 @@ fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}) {
             color = if (mine) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant,
             modifier = Modifier.widthIn(max = 320.dp),
         ) {
-            SelectionContainer { Text(line.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge) }
+            Column {
+                line.file?.let { path ->
+                    if (Files.isImage(line.mime)) {
+                        // Decoded small for the chat; a tap opens the full image.
+                        val img = remember(path) { Files.preview(path, 1024)?.asImageBitmap() }
+                        if (img != null) Image(img, line.text.ifEmpty { "Image" },
+                            Modifier.fillMaxWidth().heightIn(max = 360.dp).clickable(onClick = onOpen), contentScale = ContentScale.Fit)
+                        else Text("Image could not be shown", Modifier.padding(12.dp))
+                    } else {
+                        Row(Modifier.clickable(onClick = onOpen).padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.AttachFile, null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(java.io.File(path).name.substringAfter('-'), style = MaterialTheme.typography.bodyLarge)
+                        }
+                    }
+                }
+                if (line.text.isNotEmpty()) SelectionContainer { Text(line.text, Modifier.padding(12.dp), style = MaterialTheme.typography.bodyLarge) }
+            }
         }
         if (line.failed) {
             TextButton(onClick = onRetry) {

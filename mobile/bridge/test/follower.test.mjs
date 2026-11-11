@@ -26,3 +26,16 @@ test('a [phone] prompt fires onPhone, not onPrompt; a reply follows', () => {
   f.poll();
   assert.deepEqual(got, [['phone', 'u1'], ['prompt', 'typed at the laptop'], ['reply', 'Hi.']]);
 });
+
+test('a phone message sent mid-turn (a queued command) also fires onPhone', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'follower-'));
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, '');
+  const got = [];
+  const f = new TranscriptFollower(() => file, { onPhone: (e) => got.push(['phone', e.turn]), onPrompt: (e) => got.push(['prompt', e.text]) });
+  f.poll();
+  fs.appendFileSync(file, JSON.stringify({ type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: '[phone] hi' } }) + '\n');
+  fs.appendFileSync(file, JSON.stringify({ type: 'attachment', uuid: 'q2', attachment: { type: 'queued_command', prompt: 'typed at the desk' } }) + '\n');
+  f.poll();
+  assert.deepEqual(got, [['phone', 'q1']]);
+});

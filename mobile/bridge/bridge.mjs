@@ -4,6 +4,7 @@
 //   node mobile/bridge/bridge.mjs            run, using the pairing from pair.mjs
 
 import { randomUUID } from 'node:crypto';
+import { Assembler, chunksFor, prepareOutgoing, saveIncoming, withAttachments } from './files.mjs';
 import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status } from './lib.mjs';
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -28,7 +29,29 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     onReply: ({ text, turn }) => { log('reply', text.slice(0, 60)); send({ kind: 'reply', text, turn }); },
     onPrompt: ({ text, turn }) => send({ kind: 'prompt', text, turn }),
     onPhone: ({ turn }) => send({ kind: 'started', turn }),
+    onFiles: ({ files, caption, turn }) => files.forEach((f, i) => sendFile(f, { caption: i === 0 ? caption : undefined, turn: `${turn}-${i}` })),
   });
+
+  // Files the Assistant sent recently. A phone that was in the background (its watcher ignores
+  // files) gets them when the app comes back, the same way the relay replays missed replies.
+  let outbox = [];
+  const KEEP_FILES = 10, KEEP_MS = 24 * 3600_000;
+  function sendFile(file, { caption, turn }) {
+    let prepared;
+    try { prepared = prepareOutgoing(file); } catch (e) {
+      log('file', e.message);
+      send({ kind: 'reply', text: `(Could not send ${file} to the phone: ${e.message})`, turn: `${turn}-err` });
+      return;
+    }
+    const msgs = chunksFor(prepared.buf, { fid: turn, name: prepared.name, mime: prepared.mime, caption, turn });
+    outbox = [...outbox.filter((o) => Date.now() - o.t < KEEP_MS), { t: msgs[0].t, msgs }].slice(-KEEP_FILES);
+    log('file to phone', prepared.name, prepared.buf.length);
+    for (const m of msgs) send(m);
+  }
+
+  // Files from the phone, put back together; a "say" names the ones it carries.
+  const incoming = new Assembler();
+  const received = new Map();
   follower.poll();
 
   const tick = setInterval(() => {
@@ -41,18 +64,39 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     if (msg.kind === 'say') {
       log('phone said', String(msg.text || '').slice(0, 60));
       try {
-        const { queued } = deliverToAssistant(String(msg.text || ''), home, { ...(msg.fresh ? { fresh: true } : {}), ...(wake ? { wake } : {}) });
+        const fids = Array.isArray(msg.files) ? msg.files.map(String) : [];
+        const missing = fids.filter((f) => !received.has(f));
+        if (missing.length) throw new Error('An attachment did not arrive whole. Retry to send it again.');
+        const text = withAttachments(msg.text, fids.map((f) => received.get(f)));
+        fids.forEach((f) => received.delete(f));
+        const { queued } = deliverToAssistant(text, home, { ...(msg.fresh ? { fresh: true } : {}), ...(wake ? { wake } : {}) });
         // Queued: the Assistant was closed, and the app is starting it with this message.
         send({ kind: 'ack', of: msg.id, ...(queued ? { queued: true } : {}) });
         if (queued) { follower.readNextFromStart = true; send({ ...stateMsg(), assistant: 'starting' }); }
       } catch (e) {
+        log('say failed', e.message);
         send({ kind: 'error', of: msg.id, text: e.message });
       }
     } else if (msg.kind === 'status') {
       send({ kind: 'status', of: msg.id, projects: await status(home, snap) });
+    } else if (msg.kind === 'file') {
+      try {
+        const whole = incoming.add(msg);
+        if (whole) {
+          const file = saveIncoming(home, whole);
+          received.set(whole.fid, file);
+          log('file from phone', file, whole.buf.length);
+          send({ kind: 'file-ack', of: whole.fid });
+        }
+      } catch (e) {
+        log('file from phone failed', e.message);
+        send({ kind: 'error', of: msg.fid, text: e.message });
+      }
     } else if (msg.kind === 'hello') {
       log('phone connected');
       send(stateMsg());
+      const since = Number(msg.lastSeen) || 0;
+      for (const o of outbox) if (o.t > since) for (const m of o.msgs) send(m);
     }
   }
 

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- What the app may hand to another app (Photos, a PDF viewer) to open full size. -->
+<paths>
+    <files-path name="received" path="received/" />
+    <files-path name="outgoing" path="outgoing/" />
+</paths>

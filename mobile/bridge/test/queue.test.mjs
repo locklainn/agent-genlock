@@ -39,3 +39,17 @@ test('the conversation started for a queued message is read from its first turn'
   f.poll();
   assert.deepEqual(got, ['u1']);
 });
+
+test('a file from the phone is saved even when the bridge runs with no home given (the launch agent)', async () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'gl-files-'));
+  const was = process.env.GENLOCK_HOME;
+  process.env.GENLOCK_HOME = home;
+  try {
+    const { saveIncoming } = await import('../files.mjs');
+    const file = saveIncoming(undefined, { name: 'photo-ab.jpg', buf: Buffer.from('jpeg bytes') });
+    assert.ok(file.startsWith(path.join(home, 'phone', 'files')), file);
+    assert.equal(fs.readFileSync(file, 'utf8'), 'jpeg bytes');
+  } finally {
+    if (was === undefined) delete process.env.GENLOCK_HOME; else process.env.GENLOCK_HOME = was;
+  }
+});
