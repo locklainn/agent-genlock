@@ -457,9 +457,18 @@ struct SessionStripTab: View {
             if session?.spawn == nil {
                 Button("Start New Conversation") { model.restart(key, fresh: true); model.showInPane(key, replacing: paneKey) }
             }
+            Button("Are You Done?") { session?.submit(DoneCheck.question) }
+                .disabled(session?.isRunning != true)
+            Divider()
             Button("Close Session…") { model.requestClose([key]) }
         }
     }
+}
+
+/// Agents often end a turn on a progress update with the work unfinished, and it reads the same
+/// as done. One question that forces a yes or no up front, and sends a "no" straight back to work.
+enum DoneCheck {
+    static let question = "Are you done with your work?"
 }
 
 /// The x on a tab. The glyph stays small, but the click lands anywhere in a 22pt square, which
@@ -627,8 +636,20 @@ struct PaneView: View {
     /// The rest fade but keep their room, so names do not shift as the pointer passes.
     private var showsControls: Bool {
         guard isSplit else { return true }
+        return hovering || isKeyPane
+    }
+
+    /// The pane you are typing in: the terminal holding the keyboard, else the first on screen.
+    private var isKeyPane: Bool {
         let key = model.keyPane.flatMap { model.visible.contains($0) ? $0 : nil } ?? model.visible.first
-        return hovering || key == sessionKey
+        return key == sessionKey
+    }
+
+    /// In a split, the pane you are typing in has a lit header, so you can tell where keys will land.
+    private var headerLit: Bool { isSplit && isKeyPane }
+    private var headerFill: SwiftUI.Color {
+        if isAssistantPane { return Theme.violet.opacity(headerLit ? 0.34 : 0.16) }
+        return headerLit ? Theme.cyan.opacity(0.16) : Color.white.opacity(0.03)
     }
 
     var body: some View {
@@ -705,7 +726,10 @@ struct PaneView: View {
                 }
                 .buttonStyle(.plain).onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
                 .help("\(name): \(model.tabLabel(sessionKey)). Click to open it alone, with its terminal.")
-                if let wait = model.sessions[sessionKey]?.wait, model.sessions[sessionKey]?.attention == nil { WaitPill(wait: wait, compact: true) }
+                // The strip under the header already says what a project session is waiting on;
+                // only Tally's pane, which has no strip, carries it here.
+                if projectID == model.assistantFolder, let wait = model.sessions[sessionKey]?.wait,
+                   model.sessions[sessionKey]?.attention == nil { WaitPill(wait: wait, compact: true) }
             } else {
                 Text(name).font(.system(size: 13, weight: .bold, design: .rounded)).foregroundStyle(Theme.gradient(tier)).lineLimit(1).fixedSize()
                 Rectangle().fill(Theme.hairline).frame(width: 1, height: 16)
@@ -755,6 +779,12 @@ struct PaneView: View {
                       : "Turn on Remote Control, to reach \(model.assistantName) from the Claude Code app on your phone or claude.ai/code. It restarts on the same conversation.")
                 .accessibilityLabel("Remote Control")
             }
+            if let session = model.sessions[sessionKey], session.isRunning {
+                Button { session.submit(DoneCheck.question) } label: { Image(systemName: "questionmark.bubble") }
+                    .buttonStyle(IconButtonStyle())
+                    .help("Are you done with your work? (⌘⇧Y)")
+                    .accessibilityLabel("Ask if done")
+            }
             MicButton(listening: listeningHere, compact: isSplit) { model.pressVoice(for: sessionKey) }
             if projectID != model.assistantFolder {
                 Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
@@ -778,7 +808,11 @@ struct PaneView: View {
         // terminal in it: shifted right by half the overflow and clipped on the right.
         .frame(minWidth: 0, maxWidth: .infinity, alignment: .leading)
         .clipped()
-        .background(isAssistantPane ? Theme.violet.opacity(0.16) : Color.white.opacity(0.03))
+        .background(headerFill)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(headerLit ? (isAssistantPane ? Theme.violet : Theme.cyan) : .clear).frame(height: 1.5)
+        }
+        .animation(.easeOut(duration: 0.15), value: headerLit)
         .contentShape(Rectangle())
         .onTapGesture { model.focus(sessionKey) }
     }

@@ -32,6 +32,8 @@ struct GenlockApp: App {
                     model.paneMode = model.paneMode == .cli ? .tasks : .cli
                 }.keyboardShortcut("t")
                 Divider()
+                Button("Ask: Are You Done?") { model.focusedProject.flatMap { model.sessions[$0] }?.submit(DoneCheck.question) }
+                    .keyboardShortcut("y", modifiers: [.command, .shift])
                 Button("Talk to Agent") { model.pressVoice() }.keyboardShortcut("d", modifiers: [.command, .shift])
                 Button(model.voice.speakReplies ? "Turn Spoken Replies Off" : "Turn Spoken Replies On") {
                     model.voice.speakReplies.toggle()
