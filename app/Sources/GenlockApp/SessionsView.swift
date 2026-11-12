@@ -86,6 +86,8 @@ struct ProjectBar: View {
     @Environment(AppModel.self) private var model
     /// The width the tabs have, measured, so they know how many fit.
     @State private var projectsWidth: CGFloat = 0
+    /// The project whose Whole project sheet is open, kept so the sheet stays on it while focus moves.
+    @State private var wholeProjectFor: String?
 
     var body: some View {
         let order = model.projectsWithTabs.filter { $0 != model.assistantFolder }
@@ -97,8 +99,13 @@ struct ProjectBar: View {
             .padding(.leading, 14).padding(.trailing, 14).padding(.vertical, 5)
             .background(Color.black.opacity(0.15))
             .overlay(alignment: .bottom) { Rectangle().fill(Theme.hairline).frame(height: 1) }
+            .sheet(item: Binding(get: { wholeProjectFor.map(SheetProject.init) }, set: { wholeProjectFor = $0?.id })) { item in
+                WholeProjectView(projectID: item.id, session: model.focusedProject).environment(model)
+            }
         }
     }
+
+    private struct SheetProject: Identifiable { let id: String }
 
     /// New session, and the grid toggle, for the project you are in. Nothing project-wide for Tally.
     @ViewBuilder
@@ -120,6 +127,16 @@ struct ProjectBar: View {
             .fixedSize()
             .help("A new session in \(model.projectName(project))\(gridded ? ", added to this grid" : "") (⌘N)")
             if gridded {
+                // In a grid each pane's panel is cramped and its way to the whole project is two clicks deep.
+                if model.state(for: project).snapshot?.initialized == true {
+                    Button { wholeProjectFor = project } label: {
+                        Label("Whole project", systemImage: "square.stack.3d.up").font(.system(size: 11.5, weight: .semibold))
+                    }
+                    .buttonStyle(GlassButtonStyle(compact: true))
+                    .fixedSize()
+                    .help("\(model.projectName(project)): goals, all open work, questions, reviews, backlog and completed goals")
+                    .accessibilityLabel("Whole project")
+                }
                 oneSessionButton
             } else if count > 1 {
                 Button { model.toggleProjectGrid() } label: {
