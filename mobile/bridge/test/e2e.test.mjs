@@ -196,3 +196,33 @@ test('a say naming an attachment that never arrived is refused, so the phone can
   assert.match(err.text, /did not arrive whole/);
   p.ws.close();
 });
+
+test('a reply with an items block reaches the phone as tagged items, the block cut from its text', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  const items = [{ project: 'genlock', task: 'phone digest', kind: 'question', say: 'Built.', ask: 'Ship it?' }, { project: 'budget', task: 'pages', say: 'Done.' }];
+  fs.appendFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm-items', content: [{ type: 'text', text: 'Shown.\n\n```items\n' + JSON.stringify(items) + '\n```' }], stop_reason: 'end_turn' } }) + '\n');
+  const reply = await waitFor(() => p.got.find((m) => m.kind === 'reply' && m.turn === 'm-items'));
+  assert.equal(reply.text, 'Shown.');
+  assert.deepEqual(reply.items.map((i) => [i.id, i.project, i.task, i.kind]), [['m-items-0', 'genlock', 'phone digest', 'question'], ['m-items-1', 'budget', 'pages', 'update']]);
+  p.ws.close();
+});
+
+test('a walk\'s answers reach the Assistant as one message, each labelled with its project and task', async () => {
+  const p = phone();
+  await p.opened;
+  for (const f of fs.readdirSync(channel)) if (f.startsWith('tell-')) fs.rmSync(path.join(channel, f));
+  p.send({ kind: 'say', text: '', left: 1, answers: [
+    { item: 'a-0', project: 'genlock', task: 'phone digest', ask: 'Ship it?', answer: 'yes' },
+    { item: 'a-1', project: 'budget', task: 'pages', skipped: true },
+    { item: 'a-2', project: 'budget', task: 'audit', answer: 'next week' },
+  ] });
+  await waitFor(() => p.got.find((m) => m.kind === 'ack'));
+  const tells = fs.readdirSync(channel).filter((f) => f.startsWith('tell-') && f.endsWith('.json'));
+  assert.equal(tells.length, 1, 'one message for the whole walk');
+  const text = JSON.parse(fs.readFileSync(path.join(channel, tells[0]), 'utf8')).text;
+  assert.match(text, /^\[phone\] Answers from the phone walk-through: \(1\) genlock \/ phone digest - asked "Ship it\?": yes \(2\) budget \/ pages: skipped/);
+  assert.match(text, /\(3\) budget \/ audit: next week 1 more item is still unheard/);
+  p.ws.close();
+});

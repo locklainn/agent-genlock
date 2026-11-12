@@ -5,6 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { Assembler, chunksFor, prepareOutgoing, saveIncoming, withAttachments } from './files.mjs';
+import { parseItems, formatAnswers } from './items.mjs';
 import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status } from './lib.mjs';
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
@@ -26,7 +27,12 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
   const stateMsg = () => ({ kind: 'state', laptop: 'online', assistant: assistantState(), assistantName: findAssistant(home)?.name || undefined });
 
   const follower = new TranscriptFollower(() => findAssistant(home)?.transcript, {
-    onReply: ({ text, turn }) => { log('reply', text.slice(0, 60)); send({ kind: 'reply', text, turn }); },
+    onReply: ({ text: raw, turn }) => {
+      // Cut into items for the phone to walk; the text shown loses the items block.
+      const { text, items } = parseItems(raw, turn);
+      log('reply', items.length, 'items', text.slice(0, 60));
+      send({ kind: 'reply', text, turn, items });
+    },
     onPrompt: ({ text, turn }) => send({ kind: 'prompt', text, turn }),
     onPhone: ({ turn }) => send({ kind: 'started', turn }),
     onFiles: ({ files, caption, turn }) => files.forEach((f, i) => sendFile(f, { caption: i === 0 ? caption : undefined, turn: `${turn}-${i}` })),
@@ -67,7 +73,9 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
         const fids = Array.isArray(msg.files) ? msg.files.map(String) : [];
         const missing = fids.filter((f) => !received.has(f));
         if (missing.length) throw new Error('An attachment did not arrive whole. Retry to send it again.');
-        const text = withAttachments(msg.text, fids.map((f) => received.get(f)));
+        // A walk's answers arrive as one batch and go to Tally as one message: one walk, one turn.
+        const said = Array.isArray(msg.answers) ? formatAnswers(msg.answers, { left: Number(msg.left) || 0 }) : msg.text;
+        const text = withAttachments(said, fids.map((f) => received.get(f)));
         fids.forEach((f) => received.delete(f));
         const { queued } = deliverToAssistant(text, home, { ...(msg.fresh ? { fresh: true } : {}), ...(wake ? { wake } : {}) });
         // Queued: the Assistant was closed, and the app is starting it with this message.

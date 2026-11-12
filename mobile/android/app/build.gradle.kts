@@ -48,4 +48,5 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     // Google's own QR scanner UI: no camera permission in this app.
     implementation("com.google.android.gms:play-services-code-scanner:16.1.0")
+    testImplementation("junit:junit:4.13.2")
 }

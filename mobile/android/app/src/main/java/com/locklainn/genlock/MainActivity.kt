@@ -28,6 +28,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.launch
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.withContext
 import androidx.activity.viewModels
 import androidx.compose.foundation.isSystemInDarkTheme
@@ -66,14 +67,19 @@ class MainActivity : ComponentActivity() {
     private val speaking = MutableStateFlow(false)
     private var nextId = 0
 
+    private lateinit var walker: Walker
+    /** A reply came while you were dictating: the walk starts once the mic is off. */
+    private var walkWhenFree = false
+
     private fun finished(id: String?) {
+        if (id?.startsWith("walk-") == true) { walker.utteranceDone(id); return }
         queued.remove(id)
         speaking.value = queued.isNotEmpty()
         if (queued.isEmpty()) releaseAudio()
     }
 
     /** Silence the readout now and drop anything still queued. Read-aloud stays on for the next reply. */
-    private fun hush() { queued.clear(); speaking.value = false; tts?.stop(); AudioHold.dropAll() }
+    private fun hush() { walker.pause(); queued.clear(); speaking.value = false; tts?.stop(); AudioHold.dropAll() }
 
     private val speech = AudioHold.speech
     private fun takeAudio() = AudioHold.take(this, AudioHold.REPLY)
@@ -89,23 +95,29 @@ class MainActivity : ComponentActivity() {
             @Deprecated("Deprecated in Java") override fun onError(id: String?) = finished(id)
             override fun onError(id: String?, code: Int) = finished(id)
             override fun onStop(id: String?, interrupted: Boolean) = finished(id)
+            override fun onRangeStart(id: String?, start: Int, end: Int, frame: Int) {
+                if (id?.startsWith("walk-") == true) walker.range(id, end)
+            }
         })
-        link.onReply = { text ->
+        walker = Walker(this, link) { tts }
+        // A reply's items are merged into the queue by Link. Nothing is read over a walk already on,
+        // or over you while you dictate: the walk picks new items up in their place.
+        link.onReply = {
             Cues.done()
             if (prefs().getBoolean("speak", true)) {
-                val id = "reply-${nextId++}"
-                queued.add(id); speaking.value = true
-                takeAudio()   // before the "reply done" sound, so the music is already paused under it
-                // After the "reply done" sound, not over it.
-                window.decorView.postDelayed({
-                    if (id in queued && tts?.speak(text.replace(Regex("[*`#_]"), ""), TextToSpeech.QUEUE_ADD, null, id) != TextToSpeech.SUCCESS) finished(id)
-                }, Cues.DONE_MS)
+                if (Walker.dictating.value) walkWhenFree = true
+                else window.decorView.postDelayed({ if (!Walker.dictating.value) walker.start() }, Cues.DONE_MS)
+            }
+        }
+        lifecycleScope.launch {
+            Walker.dictating.collect { on ->
+                if (!on && walkWhenFree) { walkWhenFree = false; window.decorView.postDelayed({ walker.start() }, 600) }
             }
         }
         handleLink(intent)
         setContent {
             MaterialTheme(colorScheme = if (isSystemInDarkTheme()) darkColorScheme() else lightColorScheme()) {
-                Surface(Modifier.fillMaxSize()) { App(link, ::prefs, speaking, ::hush) }
+                Surface(Modifier.fillMaxSize()) { App(link, ::prefs, speaking, ::hush, walker) }
             }
         }
     }
@@ -129,7 +141,7 @@ class MainActivity : ComponentActivity() {
         getSystemService(android.app.NotificationManager::class.java).cancelAll()
     }
     override fun onStop() { super.onStop(); Watch.hidden(); link.close() }
-    override fun onDestroy() { tts?.shutdown(); AudioHold.dropAll(); super.onDestroy() }
+    override fun onDestroy() { walker.pause(); tts?.shutdown(); AudioHold.dropAll(); super.onDestroy() }
 }
 
 /** Ask once for permission to post notifications (Android 13+), then start listening in the background. */
@@ -146,13 +158,24 @@ fun AskForNotifications() {
 }
 
 @Composable
-fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: StateFlow<Boolean>, hush: () -> Unit) {
+fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: StateFlow<Boolean>, hush: () -> Unit, walker: Walker) {
     val ctx = LocalContext.current
     val pairing by link.pairing.collectAsStateWithLifecycle()
     if (pairing == null) { PairScreen(link); return }
     AskForNotifications()
     LaunchedEffect(pairing) { Watch.start(ctx) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
+    // Two ways to see the Talk tab: Messages (the chat) or Focus (the walk-through, full screen). Remembered.
+    var focus by remember { mutableStateOf(prefs().getBoolean("focus", false)) }
+    // A walk always shows as the digest. In Messages mode it switches over for the walk (paused
+    // included) and back once everything is heard; the toggle still works at any time.
+    val walking by walker.active.collectAsStateWithLifecycle()
+    val waitingItems by link.pending.collectAsStateWithLifecycle()
+    var auto by remember { mutableStateOf(false) }
+    LaunchedEffect(walking, waitingItems.isEmpty()) {
+        if (walking && !focus) { focus = true; auto = true; tab = 0 }
+        if (!walking && auto && waitingItems.isEmpty()) { focus = false; auto = false }
+    }
     val snackbar = remember { SnackbarHostState() }
     val flash by link.flash.collectAsStateWithLifecycle()
     val reading by speaking.collectAsStateWithLifecycle()
@@ -164,10 +187,13 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: St
     }
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
-        topBar = { TopBar(link, prefs, hush) },
+        topBar = { TopBar(link, prefs, hush, focus) { focus = it; auto = false; prefs().edit().putBoolean("focus", it).apply(); if (it) tab = 0 } },
         bottomBar = {
             // Above the tabs, so it can be reached from either screen while a reply is being read out.
             Column {
+                // On Talk the digest has the walk built in.
+                // Messages mode keeps its one-line "N to hear · Walk" strip; a running walk becomes the digest.
+                if (tab != 0 || !focus) WalkBar(link, walker)
                 if (reading) ReadingBar(hush)
                 NavigationBar {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Default.Mic, null) }, label = { Text("Talk") })
@@ -177,7 +203,65 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: St
         },
     ) { pad ->
         Box(Modifier.padding(pad).consumeWindowInsets(pad).imePadding()) {
-            if (tab == 0) TalkScreen(link) else StatusScreen(link) { tab = 0; link.say(it) }
+            if (tab == 0) TalkScreen(link, walker, focus) else StatusScreen(link) { tab = 0; link.say(it) }
+        }
+    }
+}
+
+/**
+ * The walk-through: the item being heard, with Repeat, Next and Send, and what is coming up (tap
+ * one to hear it next). When no walk is on but items or answers are waiting, it offers to walk
+ * them or send the answers. Send is the flush: the answers so far go as one batch, and anything
+ * not yet heard stays for next time.
+ */
+@Composable
+fun WalkBar(link: Link, walker: Walker) {
+    val pending by link.pending.collectAsStateWithLifecycle()
+    val held by link.held.collectAsStateWithLifecycle()
+    val active by walker.active.collectAsStateWithLifecycle()
+    val phase by walker.phase.collectAsStateWithLifecycle()
+    val hearing by walker.hearing.collectAsStateWithLifecycle()
+    val answered = held.count { it.answer != null }
+    if (!active && pending.isEmpty() && answered == 0) return
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+            val now = if (active) pending.firstOrNull() else null
+            if (now != null) {
+                Text(listOf(now.label.ifBlank { "Reply" }, "${pending.size} to go").joinToString(" · "),
+                    style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                Text((now.ask ?: now.say), style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+                Text(when (phase) {
+                    Walker.Phase.SPEAKING -> "Reading…"
+                    Walker.Phase.LISTENING -> hearing.ifBlank { "Listening… answer, or say next, repeat or send" }
+                    Walker.Phase.IDLE -> ""
+                }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { walker.pause() }) { Icon(Icons.Default.Pause, "Pause the walk") }
+                    TextButton(onClick = { walker.repeat() }) { Text("Repeat") }
+                    TextButton(onClick = { walker.next() }) { Text("Next") }
+                    Spacer(Modifier.weight(1f))
+                    Button(onClick = { walker.flush() }, enabled = answered > 0, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(if (answered > 0) "Send $answered" else "Send")
+                    }
+                }
+                val upcoming = pending.drop(1)
+                upcoming.take(3).forEach { i ->
+                    Text("Next: ${i.label.ifBlank { i.say.take(40) }}", Modifier.fillMaxWidth().clickable { walker.jumpTo(i) }.padding(vertical = 6.dp),
+                        style = MaterialTheme.typography.bodySmall, maxLines = 1)
+                }
+                if (upcoming.size > 3) Text("and ${upcoming.size - 3} more", style = MaterialTheme.typography.bodySmall)
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(listOfNotNull(
+                        if (pending.isNotEmpty()) "${pending.size} to hear" else null,
+                        if (answered > 0) "$answered answer${if (answered == 1) "" else "s"} not sent" else null,
+                    ).joinToString(" · "), Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
+                    if (answered > 0) TextButton(onClick = { walker.flush() }) { Text("Send $answered") }
+                    if (pending.isNotEmpty()) Button(onClick = { walker.start() }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Icon(Icons.Default.PlayArrow, null); Spacer(Modifier.width(6.dp)); Text("Walk")
+                    }
+                }
+            }
         }
     }
 }
@@ -198,7 +282,7 @@ fun ReadingBar(hush: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () -> Unit) {
+fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () -> Unit, focus: Boolean, setFocus: (Boolean) -> Unit) {
     val conn by link.conn.collectAsStateWithLifecycle()
     val laptop by link.laptop.collectAsStateWithLifecycle()
     val assistant by link.assistant.collectAsStateWithLifecycle()
@@ -239,14 +323,21 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
                 initialValue = 1f, targetValue = 0.35f,
                 animationSpec = infiniteRepeatable(tween(1100), RepeatMode.Reverse), label = "live",
             )
-            FilledTonalButton(
+            // Icon only, with the connection dot as a badge on its corner.
+            FilledTonalIconButton(
                 onClick = { link.say(STATUS_REQUEST) },
-                contentPadding = PaddingValues(start = 10.dp, end = 14.dp), modifier = Modifier.height(36.dp)
+                modifier = Modifier.size(44.dp)
                     .semantics { stateDescription = if (live) "Connected" else if (conn == Conn.CONNECTING) "Connecting" else "Not connected" },
             ) {
-                Box(Modifier.size(9.dp).graphicsLayer { alpha = if (live) pulse else 1f }.background(dot, CircleShape))
-                Spacer(Modifier.width(7.dp))
-                Text("Status update", style = MaterialTheme.typography.labelLarge)
+                Box {
+                    Icon(Icons.Default.Summarize, "Status update")
+                    Box(Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-3).dp).size(10.dp)
+                        .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape).padding(1.5.dp)
+                        .graphicsLayer { alpha = if (live) pulse else 1f }.background(dot, CircleShape))
+                }
+            }
+            IconButton(onClick = { setFocus(!focus) }) {
+                Icon(if (focus) Icons.Default.Forum else Icons.Default.GraphicEq, if (focus) "Show messages" else "Show digest")
             }
             IconButton(onClick = {
                 speak = !speak
@@ -275,7 +366,7 @@ fun buildLabel(ctx: Context): String = runCatching {
 const val STATUS_REQUEST = "Status update: every project, each time. What changed since you last told me, what finished, and what is waiting on me; say no change for a project that has none."
 
 @Composable
-fun TalkScreen(link: Link) {
+fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
     val lines by link.lines.collectAsStateWithLifecycle()
     val name by link.assistantName.collectAsStateWithLifecycle()
     val conn by link.conn.collectAsStateWithLifecycle()
@@ -315,6 +406,7 @@ fun TalkScreen(link: Link) {
                 listening = it
                 // Music pauses while you talk. A dictated message keeps it paused until its reply is read.
                 if (it) { dictated = true; AudioHold.take(ctx, AudioHold.MIC) } else AudioHold.drop(AudioHold.MIC)
+                Walker.dictating.value = it
             },
             onProblem = { problem = it })
             .also { d -> (ctx as? android.app.Activity)?.intent?.getIntExtra("minlen", 0)?.takeIf { it > 0 }?.let { d.minLength = it } }
@@ -349,7 +441,7 @@ fun TalkScreen(link: Link) {
     }
 
     Column(Modifier.fillMaxSize()) {
-        LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        if (focus) FocusView(link, walker, Modifier.weight(1f)) else LazyColumn(Modifier.weight(1f).fillMaxWidth(), state = list, contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
             if (lines.isEmpty()) item {
                 Text("Tap the mic and talk to $name. Replies show here, and are read aloud unless you turn that off.",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)

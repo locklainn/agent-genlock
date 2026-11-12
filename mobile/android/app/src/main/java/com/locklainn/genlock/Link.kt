@@ -98,8 +98,87 @@ class Link(app: Application) : AndroidViewModel(app) {
 
     private val assembler = FileAssembler(Files.receivedDir(app))
 
-    /** Each reply as it arrives, for reading aloud. */
-    var onReply: ((String) -> Unit)? = null
+    /** A reply arrived; its items are already merged into [pending]. */
+    var onReply: (() -> Unit)? = null
+
+    /**
+     * The walk-through queue: items not yet heard, in the order to hear them. While a walk is on,
+     * the first is the one being heard. New items merge in by WalkPlan's rule and never interrupt.
+     * Kept across restarts, so an unheard item is never lost.
+     */
+    val pending = MutableStateFlow(loadItems("pending"))
+    /** Answers given and not sent yet: they go as one batch when the walk ends or TJ sends early. */
+    val held = MutableStateFlow(loadAnswers())
+    /** Subjects heard in the current walk: news about them is read last, as "came in while we talked". */
+    val heardKeys = mutableSetOf<String>()
+    /** A walk is on: its first pending item is being heard, so a merge treats it as heard. */
+    var walking = false
+    /** Items heard in the latest walk, in order, for the Focus screen's agenda. Cleared when a walk starts. */
+    val walked = MutableStateFlow<List<Item>>(emptyList())
+
+    fun mergeItems(items: List<Item>) {
+        val head = if (walking) pending.value.take(1) else emptyList()
+        val keys = if (walking) heardKeys + head.map { it.key } else emptySet()
+        pending.value = head + WalkPlan.merge(pending.value.drop(head.size), items, keys)
+        saveItems()
+    }
+
+    fun moveFirst(item: Item) {
+        pending.value = listOf(item) + pending.value.filterNot { it.id == item.id }
+        saveItems()
+    }
+
+    /** The item being heard is finished with, answered or not. */
+    fun heard(item: Item, answer: Answer?) {
+        heardKeys += item.key
+        walked.value = walked.value.filterNot { it.id == item.id } + item
+        pending.value = pending.value.filterNot { it.id == item.id }
+        answer?.let { held.value = held.value + it }
+        saveItems()
+    }
+
+    /**
+     * Sends every held answer as one message, so a walk costs one Assistant turn. Nothing is sent
+     * when there is no actual answer: hearing items needs no reply. False when not connected (kept).
+     */
+    fun sendAnswers(): Boolean {
+        val batch = held.value
+        if (batch.none { it.answer != null }) { held.value = emptyList(); saveItems(); return true }
+        if (conn.value != Conn.CONNECTED) { flash.value = "Not connected. Your answers are kept and go once connected."; return false }
+        val arr = JSONArray()
+        batch.forEach { a ->
+            arr.put(JSONObject().put("item", a.item.id).put("project", a.item.project).put("task", a.item.task)
+                .apply { a.item.ask?.let { put("ask", it) }; a.answer?.let { put("answer", it) }; if (a.skipped) put("skipped", true) })
+        }
+        val summary = batch.joinToString("\n") { a -> "${a.item.label.ifBlank { "Reply" }}: ${a.answer ?: "skipped"}" }
+        sayJson(JSONObject().put("kind", "say").put("text", summary).put("answers", arr).put("left", pending.value.size), summary, null, null)
+        held.value = emptyList()
+        saveItems()
+        return true
+    }
+
+    private fun itemJson(i: Item) = JSONObject().put("id", i.id).put("project", i.project).put("task", i.task).put("kind", i.kind)
+        .put("say", i.say).put("late", i.late).put("at", i.at).apply { i.ask?.let { put("ask", it) }; i.re?.let { put("re", it) }; put("options", JSONArray(i.options)) }
+
+    private fun itemOf(o: JSONObject) = Item(o.optString("id"), o.optString("project"), o.optString("task"), o.optString("kind", "update"),
+        o.optString("say"), o.optString("ask").takeIf { it.isNotEmpty() },
+        o.optJSONArray("options")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList(), o.optBoolean("late"),
+        o.optString("re").takeIf { it.isNotEmpty() }, o.optLong("at"))
+
+    private fun loadItems(key: String): List<Item> = runCatching {
+        val a = JSONArray(prefs.getString(key, "[]")); (0 until a.length()).map { itemOf(a.getJSONObject(it)) }
+    }.getOrDefault(emptyList())
+
+    private fun loadAnswers(): List<Answer> = runCatching {
+        val a = JSONArray(prefs.getString("held", "[]"))
+        (0 until a.length()).map { val o = a.getJSONObject(it); Answer(itemOf(o.getJSONObject("item")), o.optString("answer").takeIf { s -> s.isNotEmpty() }, o.optBoolean("skipped")) }
+    }.getOrDefault(emptyList())
+
+    private fun saveItems() {
+        val held = JSONArray().apply { this@Link.held.value.forEach { a -> put(JSONObject().put("item", itemJson(a.item)).put("skipped", a.skipped).apply { a.answer?.let { put("answer", it) } }) } }
+        prefs.edit().putString("pending", JSONArray().apply { pending.value.forEach { put(itemJson(it)) } }.toString())
+            .putString("held", held.toString()).apply()
+    }
 
     private fun loadPairing(): Pairing? {
         val relay = prefs.getString("relay", null) ?: return null
@@ -196,15 +275,19 @@ class Link(app: Application) : AndroidViewModel(app) {
         }
         val say = JSONObject().put("kind", "say").put("text", clean)
         fid?.let { say.put("files", JSONArray().put(it)) }
+        sayJson(say, clean, attachment?.path, attachment?.let { mime })
+        return true
+    }
+
+    private fun sayJson(say: JSONObject, shown: String, file: String?, mime: String?) {
         val id = send(say)
-        lines.update { it + Line(id, Who.ME, clean, System.currentTimeMillis(), pending = true, file = attachment?.path, mime = attachment?.let { mime }) }
+        lines.update { it + Line(id, Who.ME, shown, System.currentTimeMillis(), pending = true, file = file, mime = mime) }
         // No ack in time (the connection dropped as it went): mark it failed, so it can be retried.
         main.postDelayed({ fail(id, null) }, 20_000L)
         waiting.value = true
         startCued = false
         main.removeCallbacks(giveUp)
         main.postDelayed(giveUp, 15 * 60_000L)
-        return true
     }
 
     /** Send a failed message again. It moves to the bottom, as a new message. */
@@ -275,7 +358,15 @@ class Link(app: Application) : AndroidViewModel(app) {
                 val text = m.optString("text")
                 lines.update { it + Line(id, Who.ASSISTANT, text, t) }
                 waiting.value = false
-                onReply?.invoke(text)
+                // Items to walk; an older bridge sends none, and the whole reply is one item.
+                val items = m.optJSONArray("items")?.let { a -> (0 until a.length()).map { itemOf(a.getJSONObject(it)) } }
+                    ?.filter { it.say.isNotBlank() }?.takeIf { it.isNotEmpty() }
+                    ?: listOf(Item("$id-0", "", "", "update", text.replace(Regex("[*`#_]"), "")))
+                // What this answers: the last thing said to the Assistant before it, from the phone or the laptop.
+                val re = lines.value.lastOrNull { it.who == Who.ME || it.who == Who.LAPTOP_PROMPT }?.text?.takeIf { it.isNotBlank() }
+                val tagged = items.map { it.copy(re = re?.take(400), at = t) }
+                if (pending.value.none { p -> tagged.any { it.id == p.id } }) mergeItems(tagged)
+                onReply?.invoke()
             }
             "prompt" -> {
                 val id = m.optString("turn").ifEmpty { m.optString("id") }
