@@ -126,13 +126,51 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
         isRunning = true
     }
 
-    /// Text and Return arrive separately, because a terminal app treats a burst that
-    /// includes Return as a paste rather than as pressing Enter.
+    /// Messages typed in and not yet seen in the transcript (see Delivery).
+    @ObservationIgnored private var pending: [Delivery.Pending] = []
+    @ObservationIgnored private var checkedAt = Date.distantPast
+
+    /// Typed as a paste, because Claude Code reads plain keystrokes over about 1 KB in pieces and
+    /// could keep only the last. Return goes separately, because a burst that includes it is read
+    /// as part of the paste rather than as pressing Enter. Each message is then checked against
+    /// the transcript (confirmDeliveries).
     func submit(_ text: String) {
-        view.send(txt: text)
+        type(text)
+        pending.append(Delivery.Pending(text: text, at: Date()))
+    }
+
+    private func type(_ text: String) {
+        view.send(txt: TerminalInput.bracketed(text, enabled: view.terminalStateSnapshot().bracketedPasteMode))
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             self?.view.send(txt: "\r")
         }
+    }
+
+    /// Checks what was typed in against the transcript, every few seconds while anything is
+    /// unconfirmed: types a missing message once more when the session is idle, and returns those
+    /// that never arrived, for the sender to hear about.
+    func confirmDeliveries(now: Date = Date()) -> [String] {
+        guard !pending.isEmpty, now.timeIntervalSince(checkedAt) >= 3 else { return [] }
+        checkedAt = now
+        let tail = channel.readState()?.transcript.flatMap { Delivery.tail(of: URL(fileURLWithPath: $0)) }
+        var lost: [String] = []
+        var keep: [Delivery.Pending] = []
+        for var p in pending {
+            // No transcript yet (a session still starting): only the half-hour limit applies.
+            let arrived = tail.map { Delivery.arrived(p.text, inTranscript: $0) } ?? false
+            switch Delivery.verdict(p, arrived: arrived, phase: tail == nil ? "working" : phase, now: now) {
+            case .arrived: continue
+            case .wait: keep.append(p)
+            case .retype:
+                type(p.text)
+                p.tries += 1
+                p.at = now
+                keep.append(p)
+            case .lost: lost.append(p.text)
+            }
+        }
+        pending = keep
+        return lost
     }
 
     /// Really ends it. Quitting the app does not come through here.

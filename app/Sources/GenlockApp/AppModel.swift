@@ -1327,7 +1327,16 @@ final class AppModel {
     func collectTells() {
         for session in sessions.values where session.isRunning {
             for text in session.channel.takeTells() { session.submit(text) }
+            for text in session.confirmDeliveries() { undelivered(text, to: session) }
         }
+    }
+
+    /// Typed twice and never seen whole in the session's transcript. A project session's sender
+    /// hears it as a report; for an Assistant, which nobody else sends to, it is said here.
+    private func undelivered(_ text: String, to session: TerminalSession) {
+        let name = session.projectID == assistantFolder ? assistantName : tabLabel(session.key)
+        if session.projectID != assistantFolder, session.channel.owesReply, (try? session.channel.reportUndelivered(text)) != nil { return }
+        message = "A message to \(name) did not arrive whole after two tries: \(text.prefix(80))…"
     }
 
     // MARK: Reviews

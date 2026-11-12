@@ -931,6 +931,19 @@ check('an idle reminder ends a turn that never reported ending', stateOf().state
   voiceRun(['session-state'], '{"hook_event_name":"Stop","last_assistant_message":"answered the sub"}');
   check('a session answering a Subassistant clears what it owed', !fs.existsSync(path.join(SUBDIR, `owed-${path.basename(VOICE)}`)));
   clear();
+  // Told to act: the reply says whether it started, and one that says neither is flagged.
+  const doStop = (msg, kind = 'do') => {
+    clear();
+    fs.writeFileSync(path.join(VOICE, 'awaiting-reply.json'), JSON.stringify({ at: Date.now(), kind }));
+    voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'Stop', last_assistant_message: msg }));
+    return relays()[0] || {};
+  };
+  check('a reply to an instruction that opens with STARTED says so', doStop('STARTED. Building the shared takeover now.').ack === 'started');
+  check('...and NOT STARTED, even in bold', doStop('**NOT STARTED**: the truck code is mid-refactor in another session.').ack === 'not-started');
+  check('...and one that says neither is flagged, whatever it says', doStop("No. The talk's camera and input control are written inside the truck's own code.").ack === 'none');
+  check('...but "started" further in does not count', doStop('I have started looking. STARTED').ack === 'none');
+  check('a reply to a question carries no flag', doStop('No, it is not built.', 'ask').ack === undefined);
+  clear();
   fs.rmSync(path.join(VOICE, 'awaiting-reply.json'), { force: true });
 }
 
@@ -1269,7 +1282,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   };
   r = run(AS, 'someone', ['overview']);
   check('overview only works in the Assistant', r.code !== 0 && /Assistant/.test(r.err), r.all);
-  r = run(AS, 'someone', ['tell', 'alpha', 'hello']);
+  r = run(AS, 'someone', ['tell', '--do', 'alpha', 'hello']);
   check('a project agent cannot tell another what to do', r.code !== 0, r.all);
 
   fs.writeFileSync(path.join(AS, 'projects.json'), JSON.stringify([
@@ -1398,20 +1411,32 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const savedAt = (/saved at (\S+)\./.exec(ask.handoff) || [])[1];
   check('...with a saved copy of the whole conversation', !!savedAt && fs.statSync(savedAt).size === 300 * 1024, ask.handoff);
 
-  r = asEnv(['tell', 'ALPHA', 'please', 'run', 'it']);
+  r = asEnv(['tell', '--do', 'ALPHA', 'please', 'run', 'it']);
   const told = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));
   check('tell leaves a message for the app to type in', r.code === 0 && told.length === 1
-    && JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', told[0]), 'utf8')).text === 'please run it', r.all);
-  r = asEnv(['tell', 'beta', 'hello']);
+    && /^\[do\] please run it\. This is an instruction: act on it now\. Open your reply with STARTED, or with NOT STARTED/.test(JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', told[0]), 'utf8')).text), r.all);
+  check('...marked as owing a reply to an instruction', JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', 'awaiting-reply.json'), 'utf8')).kind === 'do');
+  for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
+  r = asEnv(['tell', 'alpha', 'did the build pass']);
+  check('tell without --do or --ask refuses and sends nothing', r.code !== 0 && /--do/.test(r.err) && /--ask/.test(r.err)
+    && !fs.readdirSync(path.join(CH, 'tok-a')).some((x) => x.startsWith('tell-')), r.all);
+  r = asEnv(['tell', 'alpha', 'did the build pass', '--ask']);
+  const askText = fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-')).map((f) => JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', f), 'utf8')).text).join('|');
+  check('tell --ask is marked a question, asking for no work', r.code === 0 && /^\[ask\] did the build pass\. This is a question: answer it, and do not start work on it\.$/.test(askText), r.all + askText);
+  check('...and owes a reply to a question', (() => { try { return JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', 'awaiting-reply.json'), 'utf8')).kind; } catch { return null; } })() === 'ask', r.all);
+  r = asEnv(['tell', 'alpha', 'x', '--ask', '--do']);
+  check('tell takes one kind, not both', r.code !== 0 && /not both/.test(r.err), r.all);
+  for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
+  r = asEnv(['tell', '--do', 'beta', 'hello']);
   check('tell refuses a project with no session', r.code !== 0 && /no session/.test(r.err), r.all);
-  r = asEnv(['tell', 'nope', 'hello']);
+  r = asEnv(['tell', '--do', 'nope', 'hello']);
   check('tell refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err), r.all);
-  r = run(AS, 'someone', ['tell', 'alpha', 'swap now', '--relay-yes', 'yes']);
+  r = run(AS, 'someone', ['tell', '--do', 'alpha', 'swap now', '--relay-yes', 'yes']);
   check('a project session cannot relay a yes', r.code !== 0 && !fs.existsSync(path.join(CH, 'tok-a', 'relay-yes.json')), r.all);
-  r = asEnv(['tell', 'alpha', 'swap now', '--relay-yes', 'yes', '--for', 'everything']);
+  r = asEnv(['tell', '--do', 'alpha', 'swap now', '--relay-yes', 'yes', '--for', 'everything']);
   check('tell --for names a real action', r.code !== 0 && /swap, launch/.test(r.err) && !fs.existsSync(path.join(CH, 'tok-a', 'relay-yes.json')), r.all);
   for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
-  r = asEnv(['tell', 'alpha', 'Swap to the next goal', '--relay-yes', 'yeah go ahead and swap', '--for', 'swap']);
+  r = asEnv(['tell', '--do', 'alpha', 'Swap to the next goal', '--relay-yes', 'yeah go ahead and swap', '--for', 'swap']);
   const rg = JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', 'relay-yes.json'), 'utf8'));
   const rt = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));
   const rtext = rt.length === 1 ? JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', rt[0]), 'utf8')).text : '';
@@ -1480,23 +1505,23 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   // Routing by task: a project with several sessions is never guessed at.
   for (const t of ['tok-a', 'tok-s', 'tok-x']) for (const f of fs.readdirSync(path.join(CH, t)).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, t, f));
   const tells = (t) => fs.readdirSync(path.join(CH, t)).filter((f) => f.startsWith('tell-')).length;
-  r = asEnv(['tell', 'alpha', 'which one gets this']);
+  r = asEnv(['tell', '--do', 'alpha', 'which one gets this']);
   check('tell PROJECT with several sessions refuses', r.code !== 0 && tells('tok-a') + tells('tok-s') + tells('tok-x') === 0, r.all);
   check('...and lists each session by its task', /\[main\] on \S+ \(Proved but open task\)/.test(r.err) && new RegExp(`\\[${TS}\\]`).test(r.err) && /\[\+abc123\], no task recorded/.test(r.err), r.err);
-  r = asEnv(['tell', TP, 'run done']);
+  r = asEnv(['tell', '--do', TP, 'run done']);
   check('tell TASK reaches the session that owns it, not another', r.code === 0 && tells('tok-a') === 1 && tells('tok-s') === 0 && tells('tok-x') === 0, r.all);
   check('...and marks that session as owing the Assistant its reply', fs.existsSync(path.join(CH, 'tok-a', 'awaiting-reply.json')) && !fs.existsSync(path.join(CH, 'tok-x', 'awaiting-reply.json')));
   const shortTS = JSON.parse(pa('snapshot').out).tickets.find((t) => t.id === TS).short;
-  r = asEnv(['tell', shortTS, 'wrap up']);
+  r = asEnv(['tell', '--do', shortTS, 'wrap up']);
   check('...by its short name too', r.code === 0 && tells('tok-s') === 1, r.all);
-  r = asEnv(['tell', 'alpha', 'run done', '--session', shortTS]);
+  r = asEnv(['tell', '--do', 'alpha', 'run done', '--session', shortTS]);
   check('--session takes a task short name', r.code === 0 && tells('tok-s') === 2, r.all);
-  r = asEnv(['tell', TO, 'pick it up']);
+  r = asEnv(['tell', '--do', TO, 'pick it up']);
   check('tell TASK with no session working on it refuses and says how to open one', r.code !== 0 && /genlock open alpha/.test(r.err), r.all);
-  r = asEnv(['tell', 'no-such-thing', 'hi']);
+  r = asEnv(['tell', '--do', 'no-such-thing', 'hi']);
   check('tell an unknown name lists the projects', r.code !== 0 && /alpha/.test(r.err) && /beta/.test(r.err), r.all);
 
-  r = asEnv(['tell', 'alpha', 'run done', '--session', TS]);
+  r = asEnv(['tell', '--do', 'alpha', 'run done', '--session', TS]);
   check('tell can reach a spin-off by its task', r.code === 0 && fs.readdirSync(path.join(CH, 'tok-s')).some((f) => f.startsWith('tell-')), r.all);
   r = asEnv(['close', 'alpha', TS]);
   check('close needs the user\'s yes', r.code !== 0 && /user's yes/.test(r.err) && !fs.existsSync(path.join(CH, 'tok-s', 'close.json')), r.all);
@@ -1527,13 +1552,13 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   for (const t of ['tok-a', 'tok-s', 'tok-x']) for (const f of fs.readdirSync(path.join(CH, t)).filter((x) => x.startsWith('tell-') || x === 'awaiting-reply.json')) fs.rmSync(path.join(CH, t, f));
   r = subEnv(['overview', '--all']);
   check('a Subassistant\'s overview shows only its project', r.code === 0 && /alpha/.test(r.out) && !/beta/.test(r.out), r.out);
-  r = subEnv(['tell', 'beta', 'hello']);
+  r = subEnv(['tell', '--do', 'beta', 'hello']);
   check('a Subassistant cannot tell another project anything', r.code !== 0 && /only in alpha/.test(r.err), r.all);
   r = subEnv(['at', 'beta', 'list']);
   check('...nor change its records', r.code !== 0 && /only in alpha/.test(r.err), r.all);
   r = subEnv(['open', 'beta']);
   check('...nor open a session there', r.code !== 0 && /only in alpha/.test(r.err), r.all);
-  r = subEnv(['tell', TP, 'run done']);
+  r = subEnv(['tell', '--do', TP, 'run done']);
   const aw = (t) => { try { return JSON.parse(fs.readFileSync(path.join(CH, t, 'awaiting-reply.json'), 'utf8')); } catch { return null; } };
   check('a Subassistant tells its sessions directly', r.code === 0 && tells('tok-a') === 1 && tells('tok-sub') === 0, r.all);
   check('...and the reply is marked to come back to it, not Tally', aw('tok-a')?.from === SUB && fs.existsSync(path.join(SUB, 'owed-tok-a')), JSON.stringify(aw('tok-a')));
@@ -1541,12 +1566,19 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...and does not list itself as a session to sweep', r.code === 0 && !/\+assistant/.test(r.out), r.out);
   fs.rmSync(path.join(CH, 'tok-a', 'awaiting-reply.json'));
   for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
-  r = asEnv(['tell', TP, 'run done']);
+  r = asEnv(['tell', '--do', TP, 'run done']);
   const subTold = fs.readdirSync(SUB).filter((f) => f.startsWith('tell-'));
   const subText = subTold.length === 1 ? JSON.parse(fs.readFileSync(path.join(SUB, subTold[0]), 'utf8')).text : '';
   check('Tally\'s tell to a project with a Subassistant goes to the Subassistant', r.code === 0 && tells('tok-a') === 0 && /^\[from Tally\] For alpha \[main\]/.test(subText) && /run done/.test(subText), r.all + subText);
   check('...which owes Tally the reply', !!aw('tok-sub') && !aw('tok-sub').from && !fs.existsSync(path.join(CH, 'tok-a', 'awaiting-reply.json')));
-  r = asEnv(['tell', 'alpha', 'swap', '--session', TS, '--relay-yes', 'yes swap it', '--for', 'swap']);
+  check('...with Tally\'s kind on the message and on what it owes', /For alpha \[main\][^:]*: \[do\] run done\./.test(subText) && /genlock tell --do/.test(subText) && /STARTED or NOT STARTED/.test(subText) && aw('tok-sub').kind === 'do', subText);
+  r = subEnv(['tell', TP, 'run done', '--ask']);
+  check('a Subassistant cannot pass Tally\'s instruction on as a question', r.code !== 0 && /pass it on as --do/.test(r.err) && tells('tok-a') === 0, r.all);
+  r = subEnv(['tell', TP, 'run done', '--do']);
+  check('...and passes it on with the same kind', r.code === 0 && tells('tok-a') === 1 && aw('tok-a')?.kind === 'do' && aw('tok-a')?.from === SUB, r.all + JSON.stringify(aw('tok-a')));
+  for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-') || x === 'awaiting-reply.json')) fs.rmSync(path.join(CH, 'tok-a', f));
+  fs.rmSync(path.join(SUB, 'owed-tok-a'), { force: true });
+  r = asEnv(['tell', '--do', 'alpha', 'swap', '--session', TS, '--relay-yes', 'yes swap it', '--for', 'swap']);
   const relayText = fs.readdirSync(SUB).filter((f) => f.startsWith('tell-')).map((f) => JSON.parse(fs.readFileSync(path.join(SUB, f), 'utf8')).text).join('|');
   check('...with the user\'s yes as their words to relay on, not a grant to the Subassistant', r.code === 0 && /--relay-yes "yes swap it" --for swap/.test(relayText) && !fs.existsSync(path.join(SUB, 'relay-yes.json')), relayText);
   r = asEnv(['sweep']);

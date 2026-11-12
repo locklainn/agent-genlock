@@ -271,7 +271,7 @@ const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
 const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self', 'handoff', 'orphans', 'force']);
 
-function parse(argv) {
+function parse(argv, cmd) {
   const a = { _: [], r: [], c: [] };
   const put = (name, val) => {
     const key = name.replace(/-/g, '_');
@@ -284,6 +284,8 @@ function parse(argv) {
       const eq = name.indexOf('=');
       if (eq >= 0) { val = name.slice(eq + 1); name = name.slice(0, eq); }
       if (FLAGS.has(name) && val === null) { a[name.replace(/-/g, '_')] = true; continue; }
+      // `tell --do` / `tell --ask` stand alone, while `new --ask ..` takes a question.
+      if (val === null && cmd === 'tell' && (name === 'do' || name === 'ask')) { a[name] = true; continue; }
       // `due ID --clear` stands alone, while `hazard ID --clear N` takes a number.
       if (val === null && name === 'clear' && argv[i + 1] === undefined) { a.clear = true; continue; }
       if (val === null) { val = argv[++i]; if (val === undefined) die(`--${name} needs a value`); }
@@ -308,4 +310,4 @@ if (argv[0] === 'at') runAt(argv.slice(1));
 const fn = COMMANDS[argv[0]];
 if (!fn) die(`unknown command '${argv[0]}'. \`genlock help\` lists them.`);
 if (fn === cmdInstall || fn === cmdInit || fn === cmdGuide) fn();
-else fn(parse(argv.slice(1)));
+else fn(parse(argv.slice(1), argv[0]));
