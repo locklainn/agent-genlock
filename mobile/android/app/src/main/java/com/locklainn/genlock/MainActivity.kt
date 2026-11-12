@@ -85,10 +85,33 @@ class MainActivity : ComponentActivity() {
     private fun takeAudio() = AudioHold.take(this, AudioHold.REPLY)
     private fun releaseAudio() = AudioHold.drop(AudioHold.REPLY)
 
+    /**
+     * Setting only the language leaves the engine on its default voice for it, often an older,
+     * flatter one. Ask for the best installed voice instead: highest quality, then same country,
+     * then offline (no network lag mid-reply), then lowest latency.
+     */
+    private fun pickVoice(t: TextToSpeech) {
+        val want = Locale.getDefault()
+        t.language = want
+        val best = runCatching { t.voices }.getOrNull().orEmpty()
+            .filter { it.locale.language == want.language }
+            .filter { TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED !in it.features }
+            .sortedWith(compareByDescending<android.speech.tts.Voice> { it.quality }
+                .thenByDescending { it.locale.country == want.country }
+                .thenBy { it.isNetworkConnectionRequired }
+                .thenBy { it.latency })
+            .firstOrNull()
+        if (best != null && t.setVoice(best) == TextToSpeech.SUCCESS) {
+            android.util.Log.i("Genlock", "voice: ${best.name} quality=${best.quality} network=${best.isNetworkConnectionRequired}")
+        } else {
+            android.util.Log.i("Genlock", "voice: engine default for $want")
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) { tts?.language = Locale.getDefault(); tts?.setAudioAttributes(speech) } }
+        tts = TextToSpeech(this) { if (it == TextToSpeech.SUCCESS) { tts?.let { t -> pickVoice(t); t.setAudioAttributes(speech) } } }
         tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
             override fun onDone(id: String?) = finished(id)

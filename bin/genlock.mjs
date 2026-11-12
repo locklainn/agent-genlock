@@ -31,6 +31,7 @@ import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
 import { cmdClearContext, cmdClose, cmdName, cmdOpen, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdStatusLine, cmdTitle, cmdVoiceCheck } from '../lib/voice.mjs';
 import { cmdWait } from '../lib/waits.mjs';
+import { cmdVoice } from '../lib/voices.mjs';
 import { runMcp } from '../lib/mcp.mjs';
 
 const VERSION = '2.2.0';
@@ -111,6 +112,7 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
   genlock say "TEXT"                              speak a reply, in a session started with a voice channel
+  genlock voice [set|list|sample|install]         this project's Genlock voice: one per project, recorded so it never changes
   genlock title "NAME"  |  genlock title --clear   name this session in the app and on the phone, two to four words
   genlock wait "TEXT" --state testing|running|queued|waiting  |  genlock wait --clear
                                   show the app what this session is on, in your words: testing and running
@@ -246,6 +248,7 @@ const COMMANDS = {
   say: cmdSay,
   title: cmdTitle,
   'voice-check': cmdVoiceCheck,
+  voice: cmdVoice,
   'session-state': cmdSessionState,
   wait: cmdWait,
   'status-line': cmdStatusLine,
@@ -266,7 +269,7 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self', 'handoff', 'orphans']);
+const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self', 'handoff', 'orphans', 'force']);
 
 function parse(argv) {
   const a = { _: [], r: [], c: [] };
