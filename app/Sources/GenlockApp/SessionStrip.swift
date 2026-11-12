@@ -39,7 +39,7 @@ struct SessionStrip: View {
             let own = Snapshot.SessionFocus(goal: snap.goal(found.working?.goal), mine: found.mine, lastFinished: found.lastFinished)
             // One line: what it is doing first, the goal it serves after. The detail is in the tooltip.
             HStack(spacing: 8) {
-                SessionStatusRow(status: session.status(in: snap), more: max(0, own.mine.count - 1), tier: tier, compact: true)
+                SessionStatusRow(status: session.status(in: snap), more: max(0, own.mine.count - 1), tier: tier, compact: true, wait: session.wait)
                     .layoutPriority(1)
                 if let goal = own.goal {
                     HStack(spacing: 4) {
@@ -74,6 +74,8 @@ struct SessionStatusRow: View {
     let tier: Tier
     /// One line, the detail only in the tooltip: for a pane in a grid.
     var compact = false
+    /// The wait itself, when known, so the row can say how long it has run.
+    var wait: SessionWait? = nil
 
     private var symbol: (name: String, color: Color) {
         switch status.kind {
@@ -96,6 +98,12 @@ struct SessionStatusRow: View {
                     // What it is on is the news here, so it reads in its state's color and may truncate.
                     Text(status.headline).font(.system(size: 11.5, weight: .semibold)).foregroundStyle(symbol.color)
                         .lineLimit(1).truncationMode(.tail)
+                    if let wait {
+                        TimelineView(.periodic(from: .now, by: 1)) { context in
+                            Text(wait.elapsed(now: context.date)).font(.system(size: 11, weight: .semibold)).monospacedDigit()
+                                .foregroundStyle(symbol.color.opacity(0.75)).fixedSize()
+                        }
+                    }
                 } else {
                     Image(systemName: symbol.name).font(.system(size: 10.5, weight: .bold)).foregroundStyle(symbol.color)
                     Text(status.headline).font(.system(size: 11.5, weight: status.task == nil ? .semibold : .medium))
