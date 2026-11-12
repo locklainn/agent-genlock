@@ -195,8 +195,15 @@ enum Driver {
         if let size = step["windowSize"] as? [Double], size.count == 2 { window?.setContentSize(NSSize(width: size[0], height: size[1])) }
         if let path = step["snapshot"] as? String { snapshot(to: path) }
         if let path = step["report"] as? String { report(to: path) }
-        if step["quit"] != nil {
-            model.rememberSessions()
+        if let quit = step["quit"] {
+            // Sessions outlive the app by design, so a test run that only quit left its genlock-host
+            // and claude running for days. A run ends what it started; "keep" leaves them for a
+            // test of sessions surviving a relaunch, whose last run must quit plainly.
+            if quit as? String == "keep" {
+                model.rememberSessions()
+            } else {
+                for session in model.sessions.values { session.end() }
+            }
             NSApp.terminate(nil)
         }
     }

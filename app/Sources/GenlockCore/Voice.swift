@@ -558,7 +558,11 @@ public struct VoiceChannel {
 
     public static var defaultBase: URL {
         // A test run clears its own channels at launch, and must not clear those of a running app.
-        if let base = ProcessInfo.processInfo.environment["GENLOCK_APP_VOICE_BASE"] { return URL(fileURLWithPath: base) }
+        let env = ProcessInfo.processInfo.environment
+        if let base = env["GENLOCK_APP_VOICE_BASE"] { return URL(fileURLWithPath: base) }
+        // A driven test run never puts its sessions in the real app's folder, where the real app
+        // would find them: they go beside the drive script.
+        if let drive = env["GENLOCK_APP_DRIVE"] { return URL(fileURLWithPath: drive).deletingLastPathComponent().appendingPathComponent("voice") }
         return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("Genlock/voice")
     }
 
