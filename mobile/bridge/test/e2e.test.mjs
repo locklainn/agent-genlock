@@ -62,7 +62,7 @@ before(async () => {
 
   const snap = async () => ({ goals: [{ rank: 1, status: 'active', short: 'g', title: 'The goal' }],
     tickets: [{ id: 'T-1', rank: 1, short: 't', title: 'The task' }], questions_for_user: [{ text: 'Which one?' }] });
-  bridge = startBridge(pairing, { home, snap, pollMs: 100 });
+  bridge = startBridge(pairing, { home, snap, pollMs: 100, speak: null });
 });
 
 after(() => {
@@ -105,6 +105,10 @@ test('dictated text reaches the Assistant, and its reply reaches the phone', asy
 
   const reply = await waitFor(() => p.got.find((m) => m.kind === 'reply'));
   assert.equal(reply.text, 'Two things.\n\nThe goal, then the task.');
+  // The phone hears which of its messages the Assistant picked up.
+  const said = p.got.find((m) => m.kind === 'ack');
+  const started = p.got.find((m) => m.kind === 'started');
+  assert.equal(started?.of, said.of);
   assert.ok(!p.got.find((m) => m.kind === 'prompt'), 'the phone\'s own prompt is not echoed back');
   p.ws.close();
 });
@@ -121,6 +125,20 @@ test('the phone gets a status snapshot of every project with a session open', as
   assert.equal(proj.sessions[0].said, 'building the thing');
   // Sessions only: no top task or questions from the project's records.
   assert.ok(!('topTask' in proj) && !('waiting' in proj));
+  p.ws.close();
+});
+
+test('the phone asks for a sprint report and gets the document the Mac reads', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'sprint', sprint: 'previous' });
+  const s = await waitFor(() => p.got.find((m) => m.kind === 'sprint'));
+  assert.equal(s.report.range.kind, 'sprint');
+  assert.equal(s.report.range.offset, -1);
+  assert.ok(Array.isArray(s.report.projects) && s.report.sprints.length === 12);
+  p.send({ kind: 'sprint', sprint: 'whenever' });
+  const bad = await waitFor(() => p.got.find((m) => m.kind === 'error' && /not current, previous/.test(m.text)));
+  assert.ok(bad);
   p.ws.close();
 });
 
@@ -224,5 +242,61 @@ test('a walk\'s answers reach the Assistant as one message, each labelled with i
   const text = JSON.parse(fs.readFileSync(path.join(channel, tells[0]), 'utf8')).text;
   assert.match(text, /^\[phone\] Answers from the phone walk-through: \(1\) genlock \/ phone digest - asked "Ship it\?": yes \(2\) budget \/ pages: skipped/);
   assert.match(text, /\(3\) budget \/ audit: next week 1 more item is still unheard/);
+  p.ws.close();
+});
+
+test('TJ typing to the Assistant at the laptop moves the phone on: a mark live and on every hello, the reply not walked', async () => {
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  await waitFor(() => p.got.find((m) => m.kind === 'state'));
+  const at = Date.now();
+  fs.appendFileSync(transcript, [
+    { type: 'user', uuid: 'lap1', timestamp: new Date(at).toISOString(), message: { content: 'what about the budget site?' } },
+    { type: 'assistant', message: { id: 'mlap', content: [{ type: 'text', text: 'It shipped.' }], stop_reason: 'end_turn' } },
+  ].map((l) => JSON.stringify(l)).join('\n') + '\n');
+  const moved = await waitFor(() => p.got.find((m) => m.kind === 'moved'));
+  assert.equal(moved.at, at);
+  const reply = await waitFor(() => p.got.find((m) => m.kind === 'reply' && m.turn === 'mlap'));
+  assert.equal(reply.walk, false, 'read at the laptop: shown on the phone, not walked');
+  p.ws.close();
+  await p.closed;
+
+  // A phone that was away hears the mark when it comes back.
+  const later = phone();
+  await later.opened;
+  later.send({ kind: 'hello', lastSeen: Date.now() });
+  const again = await waitFor(() => later.got.find((m) => m.kind === 'moved'));
+  assert.equal(again.at, at);
+  later.ws.close();
+});
+
+test('the phone gets the Mac grid view live: pushed on each change, closed when the app is gone', async () => {
+  const file = path.join(home, 'phone', 'grid.json');
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  const row = (kind, headline, extra = {}) => ({ key: 'proj', title: 'billing page', running: true, status: { kind, headline, task: 'Billing page' }, ...extra });
+  const write = (pid, sessions) => fs.writeFileSync(file, JSON.stringify({ pid, projects: [{ id: '/p', name: 'proj', sessions }] }));
+  write(process.pid, [row('working', 'Working on')]);
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello' });
+  const first = await waitFor(() => p.got.find((m) => m.kind === 'grid' && m.mac === 'open'));
+  assert.equal(first.projects[0].sessions[0].status.kind, 'working');
+  assert.equal(first.projects[0].sessions[0].title, 'billing page');
+
+  const t0 = Date.now();
+  write(process.pid, [row('needsYou', 'Needs you', { attention: 'waiting', phase: 'waiting' })]);
+  const moved = await waitFor(() => p.got.find((m) => m.kind === 'grid' && m.projects[0]?.sessions[0]?.status.kind === 'needsYou'), 3000);
+  assert.equal(moved.projects[0].sessions[0].attention, 'waiting');
+  assert.ok(Date.now() - t0 < 3000, 'reached the phone within 3 seconds');
+  // Nothing changed: nothing more is pushed.
+  const count = p.got.filter((m) => m.kind === 'grid').length;
+  await new Promise((r) => setTimeout(r, 500));
+  assert.equal(p.got.filter((m) => m.kind === 'grid').length, count);
+
+  // The app that wrote it quit: its sessions are not shown as live.
+  write(999999, [row('working', 'Working on')]);
+  const gone = await waitFor(() => p.got.find((m) => m.kind === 'grid' && m.mac === 'closed'), 3000);
+  assert.deepEqual(gone.projects, []);
   p.ws.close();
 });

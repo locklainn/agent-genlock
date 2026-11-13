@@ -13,11 +13,40 @@ struct SessionsView: View {
             // One flat list keyed by session, so a pane keeps its identity when the rows around it
             // change. Keyed by row, a swap or a new pane rebuilt every pane in that row, and the old
             // and new wrappers fought over the same terminal view; the loser left a blank pane.
-            PaneGrid(rows: SplitLayout.rows(count: model.visible.count)) {
-                ForEach(model.visible, id: \.self) { PaneView(sessionKey: $0) }
+            if model.visible.isEmpty, let project = model.emptyProject {
+                EmptyProjectView(project: project)
+            } else {
+                PaneGrid(rows: SplitLayout.rows(count: model.visible.count)) {
+                    ForEach(model.visible, id: \.self) { PaneView(sessionKey: $0) }
+                }
+                .background(Theme.hairline)
             }
-            .background(Theme.hairline)
         }
+    }
+}
+
+/// A project with no sessions open: blank, with one way in. Nothing starts until you ask, so a
+/// project you have cleared has no idle session for a status update to report on.
+struct EmptyProjectView: View {
+    @Environment(AppModel.self) private var model
+    let project: String
+
+    var body: some View {
+        VStack(spacing: 14) {
+            Text(model.projectName(project))
+                .font(.system(size: 22, weight: .semibold)).foregroundStyle(Theme.textPrimary)
+            Text("No sessions open")
+                .font(.system(size: 13)).foregroundStyle(Theme.textSecondary)
+            Button { model.newSession(in: project) } label: {
+                Label("Start a session", systemImage: "plus").font(.system(size: 13, weight: .semibold))
+                    .padding(.horizontal, 6).padding(.vertical, 2)
+            }
+            .buttonStyle(GlassButtonStyle())
+            .keyboardShortcut(.defaultAction)
+            .help("A new session in \(model.projectName(project)) (⌘N)")
+            .accessibilityLabel("Start a session")
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 
@@ -39,6 +68,9 @@ struct SessionBar: View {
                 }
                 .buttonStyle(GlassButtonStyle())
                 .help("Dashboard")
+                Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
+                    .buttonStyle(GlassButtonStyle())
+                    .help("One session across all your projects")
 
                 Spacer(minLength: 8).layoutPriority(-2)
                 LoadMeter()
@@ -59,9 +91,6 @@ struct SessionBar: View {
                     .keyboardShortcut("g").frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
                 Button { model.showPrevious() } label: { EmptyView() }
                     .keyboardShortcut(.tab, modifiers: .control).frame(width: 0, height: 0).opacity(0).accessibilityHidden(true)
-                Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
-                    .buttonStyle(GlassButtonStyle())
-                    .help("One session across all your projects")
                 Button { showingSpeech.toggle() } label: {
                     Image(systemName: voice.speakReplies ? "speaker.wave.2.fill" : "speaker.slash.fill")
                 }
@@ -112,7 +141,7 @@ struct ProjectBar: View {
     @ViewBuilder
     private var projectControls: some View {
         let key = model.focusedProject ?? model.visible.first
-        let project = key.flatMap { model.sessions[$0]?.projectID }
+        let project = key.flatMap { model.sessions[$0]?.projectID } ?? (model.visible.isEmpty ? model.emptyProject : nil)
         let gridded = model.visible.count > 1
         if let project, project != model.assistantFolder {
             let count = model.gridKeys(project, start: false).count
@@ -649,6 +678,7 @@ struct PaneView: View {
     private var name: String { projectID == model.assistantFolder ? model.assistantName : URL(fileURLWithPath: projectID).lastPathComponent }
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
     @State private var hovering = false
+    @State private var showingPhone = false
 
     /// In a grid, only the pane you are in, or the one under the pointer, shows its buttons.
     /// The rest fade but keep their room, so names do not shift as the pointer passes.
@@ -774,6 +804,9 @@ struct PaneView: View {
                 }
                 .buttonStyle(GlassButtonStyle(compact: isSplit))
                 .help("Start \(name)'s Assistant fresh, go through every session in this project, and suggest what to close or finish")
+                SprintReportPaneButton(compact: isSplit, help: "Ask \(name)'s Assistant for this project's sprint report: the sprint that just ended if one did, then this one") {
+                    model.sessions[sessionKey]?.submit(SessionLaunch.sprintReport(all: false))
+                }
             }
             if projectID == model.assistantFolder {
                 Button { model.statusSweep() } label: {
@@ -784,6 +817,10 @@ struct PaneView: View {
                 }
                 .buttonStyle(GlassButtonStyle(compact: isSplit))
                 .help("Go through every session in every project, say where each stands, and suggest what to close or finish")
+                SprintReportPaneButton(compact: isSplit, help: "Ask \(model.assistantName) for the sprint report across every project: the sprint that just ended if one did, then this one") {
+                    model.openAssistant()
+                    model.sessions[model.assistantFolder]?.submit(SessionLaunch.sprintReport(all: true))
+                }
                 Button { model.remoteControl.toggle() } label: {
                     HStack(spacing: 6) {
                         Image(systemName: model.remoteControl ? "iphone.radiowaves.left.and.right" : "iphone")
@@ -796,6 +833,29 @@ struct PaneView: View {
                       ? "Remote Control is on: reach \(model.assistantName) from the Claude Code app or claude.ai/code. Click to turn it off."
                       : "Turn on Remote Control, to reach \(model.assistantName) from the Claude Code app on your phone or claude.ai/code. It restarts on the same conversation.")
                 .accessibilityLabel("Remote Control")
+                Button { showingPhone.toggle() } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "bubble.left.and.text.bubble.right")
+                        if !isSplit { Text("Phone").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                    }
+                }
+                .buttonStyle(GlassButtonStyle(active: showingPhone, compact: isSplit))
+                .popover(isPresented: $showingPhone, arrowEdge: .bottom) {
+                    PhoneThreadView(assistantFolder: model.assistantFolder).environment(model)
+                }
+                .help("Everything you said from the phone and how \(model.assistantName) answered, across every conversation. A status update starts a fresh one, so the terminal shows only the newest.")
+                .accessibilityLabel("Phone thread")
+            }
+            if let session = model.sessions[sessionKey], session.isRunning,
+               projectID != model.assistantFolder, !model.isSubassistant(sessionKey) {
+                Button { session.submit(SessionLaunch.sessionStatus) } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "text.bubble")
+                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                    }
+                }
+                .buttonStyle(GlassButtonStyle(compact: isSplit))
+                .help("Ask this session where its task stands: what is proved, what is left, what is blocking")
             }
             if let session = model.sessions[sessionKey], session.isRunning {
                 Button { session.submit(DoneCheck.question) } label: { Image(systemName: "questionmark.bubble") }
@@ -1013,5 +1073,23 @@ final class TerminalContainer: NSView {
     private func place() {
         guard let terminal, bounds.width > Self.inset.x * 2, bounds.height > Self.inset.y * 2 else { return }
         terminal.frame = bounds.insetBy(dx: Self.inset.x, dy: Self.inset.y)
+    }
+}
+
+/// An Assistant's Sprint report button: what got done in the sprint that just ended, or this one.
+struct SprintReportPaneButton: View {
+    let compact: Bool
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "chart.bar.doc.horizontal")
+                if !compact { Text("Sprint report").font(.system(size: 12, weight: .semibold)).fixedSize() }
+            }
+        }
+        .buttonStyle(GlassButtonStyle(compact: compact))
+        .help(help)
+        .accessibilityLabel("Sprint report")
     }
 }

@@ -1,0 +1,2 @@
+{"e":"0ae6384915d2","at":"2026-11-13T10:49:31.225Z","by":"17227923-bb6e-4166-ac39-5ce39a251d0f","op":"ask","to":"user","about":"G-8JWNP","text":"When does your Claude weekly usage reset? Give the day and time with timezone, as /usage shows it (e.g. 'Wednesday 5pm Pacific'). Sprints run from one reset to the next."}
+{"e":"dc8485b00785","at":"2026-11-13T11:12:34.720Z","by":"17227923-bb6e-4166-ac39-5ce39a251d0f","op":"answer","text":"fri 03:00 UTC (Thu 10pm Eastern), as the app's usage reading reports the weekly reset","user_said":"Yes, fri 03:00 UTC (Recommended)"}

@@ -100,12 +100,38 @@ export function deliverToAssistant(text, home = genlockHome(), { fresh = isStatu
 export const sendToAssistant = (text, home, opts) => deliverToAssistant(text, home, opts).name;
 
 /**
+ * Where a prompt in the Assistant's conversation came from: 'phone' ([phone]), 'relay' (an automatic
+ * report from the project sessions), 'laptop' (TJ typing or speaking at the laptop, or through Remote
+ * Control: anything else a person wrote), or null for system text (task notifications, command output,
+ * a compaction summary). A long message arrives wrapped in <pasted_content>; it is judged by what is inside.
+ */
+export function promptSource(raw) {
+  let t = String(raw || '').trim();
+  const wrapped = t.match(/^<pasted_content\b[^>]*>([\s\S]*?)(?:<\/pasted_content>)?$/);
+  if (wrapped) t = wrapped[1].trim();
+  if (!t) return null;
+  if (t.startsWith(PHONE_PREFIX)) return 'phone';
+  if (t.startsWith('[relay]')) return 'relay';
+  if (t.startsWith('<') || t.startsWith('This session is being continued from a previous conversation')) return null;
+  return 'laptop';
+}
+
+/** A prompt as the phone shows it: unwrapped, without the [voice] tag. */
+const shownPrompt = (raw) => String(raw || '').trim()
+  .replace(/^<pasted_content\b[^>]*>([\s\S]*?)(?:<\/pasted_content>)?$/, '$1').trim()
+  .replace(/^\[voice\]\s*/, '');
+
+/**
  * Follows a Claude Code transcript and reports each finished Assistant turn, plus prompts typed
- * at the laptop. It starts at the end of the file: history is not replayed.
+ * at the laptop. It starts at the end of the file: history is not replayed, only read for the
+ * moved-on mark.
  * Call poll() on a timer; it re-resolves the transcript, since a swap or restart changes it.
+ *
+ * The moved-on mark (`mark`, ms) is when TJ last prompted the Assistant from the laptop or Remote
+ * Control. Anything the phone holds from before it, the conversation has moved past.
  */
 export class TranscriptFollower {
-  constructor(resolve, { onReply, onPrompt, onPhone, onFiles } = {}) {
+  constructor(resolve, { onReply, onPrompt, onPhone, onFiles, onMoved } = {}) {
     this.resolve = resolve;
     this.onReply = onReply || (() => {});
     this.onPrompt = onPrompt || (() => {});
@@ -113,12 +139,19 @@ export class TranscriptFollower {
     this.onPhone = onPhone || (() => {});
     // The Assistant sent files with SendUserFile: they go to the phone too, not only to Remote Control.
     this.onFiles = onFiles || (() => {});
+    // TJ prompted the Assistant somewhere other than the phone: { at } is the new mark.
+    this.onMoved = onMoved || (() => {});
     this.file = null;
     this.offset = 0;
     this.partial = '';
     this.texts = new Map();
     /** Set when the Assistant is being started for a phone message: read its new conversation whole. */
     this.readNextFromStart = false;
+    /** When TJ last prompted from the laptop or Remote Control, in ms; 0 when never seen. */
+    this.mark = 0;
+    /** Where the latest prompt came from: the reply that follows answers it. */
+    this.lastSource = null;
+    this.quiet = false;
   }
 
   poll() {
@@ -134,9 +167,18 @@ export class TranscriptFollower {
       // Assistant it starts may have written its first turn before this poll saw the file.
       const fromStart = fresh || this.readNextFromStart;
       this.readNextFromStart = false;
-      try { this.offset = fromStart ? 0 : fs.statSync(file).size; } catch { this.offset = 0; }
-      if (!fromStart) return;
+      this.offset = 0;
+      if (!fromStart) {
+        // History is read without reporting anything, for the mark and the latest prompt's source.
+        this.quiet = true;
+        try { this.read(file); } finally { this.quiet = false; }
+        return;
+      }
     }
+    this.read(file);
+  }
+
+  read(file) {
     let size;
     try { size = fs.statSync(file).size; } catch { return; }
     if (size < this.offset) this.offset = 0;
@@ -151,39 +193,67 @@ export class TranscriptFollower {
     for (const line of lines) if (line.trim()) this.line(line);
   }
 
+  prompt(raw, e) {
+    const source = promptSource(raw);
+    if (!source) return;
+    this.lastSource = source;
+    if (source === 'laptop') {
+      const at = Date.parse(e.timestamp) || Date.now();
+      const moved = at > this.mark;
+      if (moved) this.mark = at;
+      if (this.quiet) return;
+      this.onPrompt({ text: shownPrompt(raw), turn: e.uuid, at });
+      if (moved) this.onMoved({ at });
+    } else if (source === 'phone' && !this.quiet) this.onPhone({ turn: e.uuid });
+  }
+
   line(raw) {
     let e;
     try { e = JSON.parse(raw); } catch { return; }
     if (e.isSidechain) return;
     const m = e.message;
-    if (e.type === 'user' && m && typeof m.content === 'string' && !e.isMeta) {
-      const text = m.content.trim();
-      if (text.startsWith(PHONE_PREFIX)) this.onPhone({ turn: e.uuid });
-      else if (text && !text.startsWith('<')) this.onPrompt({ text, turn: e.uuid });
-      return;
-    }
+    if (e.type === 'user' && m && typeof m.content === 'string' && !e.isMeta) return this.prompt(m.content, e);
     // A message sent while the Assistant was mid-turn is folded into that turn as a queued command,
     // not a user prompt. It has still reached the Assistant, so the phone hears it was picked up.
-    if (e.type === 'attachment' && e.attachment?.type === 'queued_command') {
-      const text = String(e.attachment.prompt || '').trim();
-      if (text.startsWith(PHONE_PREFIX)) this.onPhone({ turn: e.uuid });
-      return;
-    }
+    if (e.type === 'attachment' && e.attachment?.type === 'queued_command') return this.prompt(e.attachment.prompt, e);
     if (e.type !== 'assistant' || !m || !Array.isArray(m.content)) return;
     const id = m.id || e.uuid;
     const got = this.texts.get(id) || [];
     for (const c of m.content) {
       if (c.type === 'text' && c.text?.trim()) got.push(c.text.trim());
-      if (c.type === 'tool_use' && c.name === 'SendUserFile' && Array.isArray(c.input?.files) && c.input.files.length) {
+      if (!this.quiet && c.type === 'tool_use' && c.name === 'SendUserFile' && Array.isArray(c.input?.files) && c.input.files.length) {
         this.onFiles({ files: c.input.files.map(String), caption: c.input.caption ? String(c.input.caption) : undefined, turn: c.id });
       }
     }
     this.texts.set(id, got);
     if (m.stop_reason === 'end_turn') {
       this.texts.delete(id);
-      if (got.length) this.onReply({ text: got.join('\n\n'), turn: id });
+      // answers: where the prompt this turn answers came from.
+      if (got.length && !this.quiet) this.onReply({ text: got.join('\n\n'), turn: id, answers: this.lastSource });
     }
   }
+}
+
+/* ---- grid ------------------------------------------------------------------------- */
+
+export const gridFile = (home = genlockHome()) => path.join(home, 'phone', 'grid.json');
+
+/**
+ * The Mac grid view as the app last wrote it (app/Sources/GenlockApp/PhoneGrid.swift): the phone
+ * shows this rather than working the state out again. `mac: 'closed'` when the app that wrote it
+ * is no longer running, so the phone never shows a dead app's sessions as live.
+ */
+export function readGrid(home = genlockHome(), alive = pidAlive) {
+  let raw, mtime;
+  try { raw = fs.readFileSync(gridFile(home), 'utf8'); mtime = fs.statSync(gridFile(home)).mtimeMs; } catch { return { mac: 'closed', projects: [], sig: 'none' }; }
+  let g;
+  try { g = JSON.parse(raw); } catch { return { mac: 'closed', projects: [], sig: 'bad' }; }
+  if (!g.pid || !alive(g.pid)) return { mac: 'closed', projects: [], sig: `dead-${g.pid}` };
+  return { mac: 'open', projects: g.projects || [], at: mtime, sig: raw };
+}
+
+export function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; }
 }
 
 /* ---- status ----------------------------------------------------------------------- */
@@ -214,6 +284,25 @@ function snapshot(folder) {
     execFile(process.execPath, [CLI, 'snapshot'], { cwd: folder, env, timeout: 15000, maxBuffer: 64 * 1024 * 1024 }, (err, out) => {
       if (err) return resolve(null);
       try { resolve(JSON.parse(out)); } catch { resolve(null); }
+    });
+  });
+}
+
+/**
+ * The sprint report across every project, exactly as `genlock sprint --all --json` gives it to
+ * the Mac app, so the phone and the Mac can never disagree. OPTS picks the range: { sprint }
+ * (current, previous, -N or a date inside it) or { from, to } (YYYY-MM-DD).
+ */
+export function sprintReport(home = genlockHome(), opts = {}) {
+  const args = [CLI, 'sprint', '--all', '--json'];
+  if (opts.from) args.push('--from', String(opts.from), '--to', String(opts.to || opts.from));
+  else if (opts.sprint !== undefined && opts.sprint !== null) args.push('--sprint', String(opts.sprint));
+  const env = { ...process.env, GENLOCK_HOME: home };
+  delete env.GENLOCK_SESSION;
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, args, { env, timeout: 60000, maxBuffer: 64 * 1024 * 1024 }, (err, out, errOut) => {
+      if (err) return reject(new Error(String(errOut || err.message).trim()));
+      try { resolve(JSON.parse(out)); } catch (e) { reject(e); }
     });
   });
 }

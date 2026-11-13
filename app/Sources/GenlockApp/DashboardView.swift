@@ -66,6 +66,14 @@ struct DashboardHeader: View {
                 }
                 .buttonStyle(GlassButtonStyle())
             }
+            if !model.store.projects.isEmpty {
+                Button { model.backupAll() } label: {
+                    Label(model.backingUp ? "Backing up…" : "Back up", systemImage: "externaldrive.badge.timemachine")
+                }
+                .buttonStyle(GlassButtonStyle())
+                .disabled(model.backingUp)
+                .help("Every project's goals and tasks as one archive in ~/genlock-backups. Put back with genlock restore.")
+            }
             Button { model.chooseFolders() } label: { Label("Add project", systemImage: "plus") }
                 .buttonStyle(GlassButtonStyle())
         }

@@ -8,17 +8,22 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * Three short sounds, so you can follow a conversation with the phone in your pocket:
- *  - sent:    two notes rising (your message left the phone)
- *  - started: one soft low note (the Assistant has picked it up and is working)
+ * Four short sounds, so you can follow a conversation with the phone in your pocket:
+ *  - sent:    two notes rising (the laptop has your message)
+ *  - started: a double tap on one note (the Assistant has picked it up and is working)
  *  - done:    three notes rising to a resolve (the reply is here)
+ *  - failed:  two notes falling (your message did not reach the laptop: it waits with Retry)
+ *  - listening: one bright ding (the answer sheet's mic is on: talk)
+ *  - answered:  two quick high notes (your answer to a question went)
  * Synthesised once as sine notes with a soft attack and decay; no sound files.
  */
 object Cues {
     private const val RATE = 44100
 
     private val sent by lazy { tones(listOf(660.0 to 70, 990.0 to 110)) }
-    private val started by lazy { tones(listOf(440.0 to 160), volume = 0.22) }
+    // As loud as the others and unlike them: TJ did not notice the single soft note it used to be.
+    private val started by lazy { tones(listOf(587.33 to 90, 0.0 to 60, 587.33 to 140)) }
+    private val failed by lazy { tones(listOf(493.88 to 160, 349.23 to 300), volume = 0.35) }
     private val done by lazy { tones(listOf(523.25 to 80, 659.25 to 80, 783.99 to 180)) }
 
     /** How long [done] lasts, so speech can start after it rather than over it. */
@@ -27,6 +32,11 @@ object Cues {
     fun sent() = play(sent)
     fun started() = play(started)
     fun done() = play(done)
+    fun failed() = play(failed)
+    private val listening by lazy { tones(listOf(1046.5 to 150)) }
+    private val answered by lazy { tones(listOf(1318.5 to 60, 1568.0 to 170)) }
+    fun listening() = play(listening)
+    fun answered() = play(answered)
 
     private fun tones(notes: List<Pair<Double, Int>>, volume: Double = 0.3): ShortArray {
         val out = ArrayList<Short>()

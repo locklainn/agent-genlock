@@ -71,6 +71,12 @@ final class VoiceController: NSObject {
     @ObservationIgnored private var request: SFSpeechAudioBufferRecognitionRequest?
     @ObservationIgnored private var task: SFSpeechRecognitionTask?
     @ObservationIgnored private let synth = AVSpeechSynthesizer()
+    /// The Genlock voice: the project's own Kokoro voice from the speaker. The synthesizer above is
+    /// what reads when it is not installed or does not answer.
+    @ObservationIgnored private let genlock = GenlockSpeaker()
+    @ObservationIgnored private var genlockBusy = false
+    /// The sentence the Genlock voice is reading now.
+    private(set) var speakingSentence: String?
     @ObservationIgnored private var finishFallback: DispatchWorkItem?
     @ObservationIgnored private var didSend = false
     @ObservationIgnored private var hintedVoice = false
@@ -266,6 +272,7 @@ final class VoiceController: NSObject {
     /// Called on a timer. An agent never just starts talking, because you may not be there: its
     /// reply waits, with a ding and a notice, until you ask for it.
     func collectReplies(from sessions: [TerminalSession]) {
+        if speakReplies { GenlockSpeaker.warm(tools: AppModel.shared.tools) }
         guard speakReplies else {
             for session in sessions { _ = session.channel.takeMessages() }
             waitingReplies = 0
@@ -326,14 +333,14 @@ final class VoiceController: NSObject {
     /// the current one from the word it has reached.
     func speak(_ text: String, volume: Float = 1, from session: String? = nil) {
         isSpeaking = true
-        if !hintedVoice, let hint = VoiceOption.upgradeHint(for: chosenVoice) {
+        if !hintedVoice, !GenlockSpeaker.isInstalled, let hint = VoiceOption.upgradeHint(for: chosenVoice) {
             hintedVoice = true
             AppModel.shared.message = hint
         }
         lastSpoken = text
         queue.append((text, session))
         speechVolume = volume
-        if latestUtterance == nil { playNext() }
+        if latestUtterance == nil && !genlockBusy { playNext() }
     }
 
     fileprivate func playNext() {
@@ -352,7 +359,23 @@ final class VoiceController: NSObject {
             closedAt = nil
         }
         reached = 0
-        play(from: 0)
+        guard GenlockSpeaker.isInstalled else { play(from: 0); return }
+        // In the project's Genlock voice, a sentence at a time; the system voice if it cannot be had.
+        let root = next.from.flatMap { AppModel.shared.sessions[$0]?.projectID }
+        genlockBusy = true
+        genlock.volume = speechVolume
+        genlock.speak(text, root: root, speed: speechSpeed, tools: AppModel.shared.tools,
+                      onSentence: { [weak self] sentence in
+                          guard let self else { return }
+                          self.speakingSentence = sentence
+                          self.genlock.setSpeed(self.speechSpeed * (self.speedHeld ? SpeechSpeed.holdBoost : 1))
+                      },
+                      onEnd: { [weak self] spoke in
+                          guard let self else { return }
+                          self.genlockBusy = false
+                          self.speakingSentence = nil
+                          if spoke { self.playNext() } else { self.play(from: 0) }
+                      })
     }
 
     private func play(from offset: Int) {
@@ -368,6 +391,7 @@ final class VoiceController: NSObject {
 
     /// Restarts what is being read from the word it reached, at the current speed.
     private func applySpeed() {
+        if genlockBusy { genlock.setSpeed(speechSpeed * (speedHeld ? SpeechSpeed.holdBoost : 1)); return }
         guard latestUtterance != nil else { return }
         latestUtterance = nil
         synth.stopSpeaking(at: .immediate)
@@ -428,6 +452,9 @@ final class VoiceController: NSObject {
         latestUtterance = nil
         speedHeld = false
         synth.stopSpeaking(at: .immediate)
+        genlock.stop()
+        genlockBusy = false
+        speakingSentence = nil
         isSpeaking = false
         speakingText = nil
     }

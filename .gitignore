@@ -4,3 +4,4 @@ node_modules/
 app/.build/
 app/build/
 mobile/dist/
+mobile/android/app/libs/

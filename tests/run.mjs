@@ -8,6 +8,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
+import { GRANT_FILE } from '../lib/relay.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CLI = path.join(HERE, '..', 'bin', 'genlock.mjs');
@@ -17,7 +18,8 @@ fs.mkdirSync(CWD);
 
 let pass = 0; const fails = [];
 
-const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT };
+// The cap tests fill a project to 4 sessions; the real default (12) is checked on its own below.
+const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT, GENLOCK_SESSION_CAP: '4' };
 // Run from a session inside the app, these would reach the live app and open real spin-offs in it.
 delete baseEnv.GENLOCK_APP_CHANNEL;
 delete baseEnv.GENLOCK_SESSION;
@@ -538,6 +540,33 @@ r = deliver('asker');
 check('the answer is delivered back to the asker', /porter/.test(r.out), r.all);
 check('...and an answered question leaves the owner\'s inbox', /nothing for you/.test(fAs('worker', 'inbox').out));
 
+/* ---- quiet records: the Bash edit diff never shows .genlock files ----------------- */
+
+{
+  const recs = path.join(FRESH, '.genlock', 'records');
+  const T = path.join(recs, `${T1}.jsonl`);
+  const firstLine = fs.readFileSync(T, 'utf8').split('\n')[0];
+  const startLine = JSON.stringify({ e: 'q1', at: '2030-01-01T00:00:00.000Z', by: 'x', op: 'start' });
+  const diffOf = (files) => ({
+    hook_event_name: 'PostToolUse', tool_name: 'Bash', session_id: 'nobody-quiet',
+    tool_response: { stdout: 'ok', stderr: '', interrupted: false, bashEditDiff: { files, moreFiles: 0, changedFiles: files.map((f) => f.filePath) } },
+  });
+  const code = { filePath: path.join(FRESH, 'src', 'a.js'), hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [' x', '+y'] }] };
+  const created = { filePath: T, created: true, hunks: [{ oldStart: 0, oldLines: 0, newStart: 1, newLines: 1, lines: [`+${firstLine}`] }] };
+  const started = { filePath: T, hunks: [{ oldStart: 1, oldLines: 1, newStart: 1, newLines: 2, lines: [` ${firstLine}`, `+${startLine}`] }] };
+  const hook = (input) => { const o = run(FRESH, null, ['deliver'], JSON.stringify(input)).out; try { return JSON.parse(o); } catch { return null; } };
+
+  let h = hook(diffOf([created]));
+  check('quiet records: a record file drops out of the Bash edit diff', h && h.hookSpecificOutput.updatedToolOutput && !('bashEditDiff' in h.hookSpecificOutput.updatedToolOutput), JSON.stringify(h));
+  check('...the command\'s own output is kept', h?.hookSpecificOutput.updatedToolOutput.stdout === 'ok');
+  check('...and a new task is said in one plain line', /^Added task "[^"]+"$/.test(h?.systemMessage || ''), h?.systemMessage);
+  h = hook(diffOf([started, code]));
+  check('...a status change reads "Changed status of NAME to started"', /^Changed status of \S.* to started$/.test(h?.systemMessage || ''), h?.systemMessage);
+  const left = h?.hookSpecificOutput.updatedToolOutput.bashEditDiff;
+  check('...and real code changes in the same command keep their diff', left?.files.length === 1 && left.files[0].filePath === code.filePath && left.changedFiles.length === 1, JSON.stringify(left));
+  check('a diff with no .genlock files is left alone (no rewrite, no message)', hook(diffOf([code])) === null);
+}
+
 /* ---- spin-offs ---------------------------------------------------------------- */
 
 const SP = path.join(ROOT, 'sp');
@@ -643,7 +672,7 @@ check('...with the handoff prompt', spawnReq.prompt.includes(`genlock continue $
 const noYes = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S2, '--worktree'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: APPCH } });
 check('...and still needs the user\'s yes', noYes.status === 1 && /--user-said/.test(noYes.stderr), noYes.stderr);
 const S4 = idOf({ out: prop(['--path', 'src/relayside']).out });
-const grantAt = (dir, action, at = Date.now()) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'relay-yes.json'), JSON.stringify({ user_said: 'yes, launch it', for: action, at })); };
+const grantAt = (dir, action, at = Date.now()) => { fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, 'yes-relayed.json'), JSON.stringify({ user_said: 'yes, launch it', for: action, at })); };
 const relayLaunch = (...extra) => spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S4, ...extra], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: APPCH } });
 let rl = relayLaunch('--relayed');
 check('launch --relayed with no yes relayed is refused', rl.status !== 0 && /no yes has been relayed/.test(rl.stderr) && !fs.existsSync(path.join(APPCH, `spawn-${S4}.json`)), rl.stderr);
@@ -656,7 +685,37 @@ const s4log = [path.join(SP, '.genlock', 'records', `${S4}.jsonl`), path.join(SP
 const s4events = s4log ? fs.readFileSync(s4log, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)) : [];
 check('launch --relayed with a yes relayed for it opens the pane', rl.status === 0 && fs.existsSync(path.join(APPCH, `spawn-${S4}.json`)), rl.stdout + rl.stderr);
 check('...records the user\'s words and that the Assistant relayed them', s4events.some((e) => e.op === 'spinoff' && e.fields?.state === 'launched' && e.fields.user_said === 'yes, launch it' && e.fields.relayed_by === 'assistant'), JSON.stringify(s4events.slice(-3)));
-check('...and uses the yes up', !fs.existsSync(path.join(APPCH, 'relay-yes.json')));
+// TJ's "Yes, launch them" covered four spin-offs; the first launch must not use it up for the rest.
+const S4b = idOf({ out: prop(['--path', 'src/relayside2']).out });
+rl = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S4b, '--relayed'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: APPCH } });
+check('...and the same launch yes covers a second launch minutes later', rl.status === 0 && fs.existsSync(path.join(APPCH, `spawn-${S4b}.json`)), rl.stdout + rl.stderr);
+fs.rmSync(path.join(APPCH, 'yes-relayed.json'), { force: true });
+// The app reads every relay-*.json in a session's channel as a report for the Assistant and deletes
+// what does not parse: a grant by that name vanished before the session could use it (T-6REKG).
+{
+  const { GENLOCK_SESSION_CAP: _unset, ...noCap } = process.env;
+  const d = spawnSync(process.execPath, ['--input-type=module', '-e', `import { SESSION_CAP } from ${JSON.stringify(path.join(path.dirname(CLI), '..', 'lib', 'cap.mjs'))}; console.log(SESSION_CAP)`], { encoding: 'utf8', env: noCap });
+  check('a project may have 12 sessions open by default (TJ, 12 Nov 2026)', d.stdout.trim() === '12', d.stdout + d.stderr);
+}
+check('the relayed-yes file is not named like a session report', !/^relay-.*\.json$/.test(GRANT_FILE), GRANT_FILE);
+{
+  // A spin-off is one more session in the project, so at the cap it is refused before anything is recorded.
+  const FULL = path.join(ROOT, 'full-channels');
+  for (const n of ['me', 'b', 'c', 'd']) { fs.mkdirSync(path.join(FULL, n), { recursive: true }); fs.writeFileSync(path.join(FULL, n, 'session.json'), JSON.stringify({ project: SP })); }
+  const S5 = idOf({ out: prop(['--path', 'src/capside']).out });
+  const capped = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S5, '--user-said', 'yes'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: path.join(FULL, 'me') } });
+  const s5shown = s('show', S5).out;
+  check('spinoff launch in the app is refused at the per-project cap', capped.status !== 0 && /cap is 4/.test(capped.stderr) && !fs.existsSync(path.join(FULL, 'me', `spawn-${S5}.json`)), capped.stderr);
+  check('...before recording a launch or taking a claim', !/launched/.test(s5shown) && !JSON.parse(s('claims', '--json').out).some((c) => c.key === S5), s5shown);
+  check('...saying how the user lifts it', /--over-cap/.test(capped.stderr), capped.stderr);
+  const S6 = idOf({ out: prop(['--path', 'src/overside']).out });
+  const over = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S6, '--user-said', 'yes', '--over-cap', 'go past it'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: path.join(FULL, 'me') } });
+  const s6req = (() => { try { return JSON.parse(fs.readFileSync(path.join(FULL, 'me', `spawn-${S6}.json`), 'utf8')); } catch { return {}; } })();
+  check('...and with --over-cap and the user\'s words, it launches past the cap, carrying them to the app', over.status === 0 && s6req.over_cap === 'go past it', over.stdout + over.stderr);
+  fs.rmSync(path.join(FULL, 'd'), { recursive: true });
+  const room = spawnSync(process.execPath, [CLI, 'spinoff', 'launch', S5, '--user-said', 'yes'], { cwd: SP, encoding: 'utf8', env: { ...baseEnv, GENLOCK_SESSION: 'parent', GENLOCK_APP_CHANNEL: path.join(FULL, 'me') } });
+  check('...and launches once there is room', room.status === 0 && fs.existsSync(path.join(FULL, 'me', `spawn-${S5}.json`)), room.stdout + room.stderr);
+}
 
 /* ---- MCP ---------------------------------------------------------------------- */
 
@@ -1012,7 +1071,7 @@ check('with no app listening it does nothing', r.code === 0, r.all);
 
 const quiet = { GENLOCK_SESSION: '', CLAUDE_CODE_SESSION_ID: '', GENLOCK_APP_PROJECTS: '' };
 const hook = (event, extra = {}, env = {}) => voiceRun(['session-state'], JSON.stringify({ hook_event_name: event, session_id: 'nudge-1', ...extra }), { ...quiet, ...env });
-const nudged = (res) => { try { return /no task recorded/.test(JSON.parse(res.out).hookSpecificOutput.additionalContext); } catch { return false; } };
+const nudged = (res) => { try { return /no started task/.test(JSON.parse(res.out).hookSpecificOutput.additionalContext); } catch { return false; } };
 hook('UserPromptSubmit');
 r = hook('PostToolUse', { tool_name: 'Read', tool_input: { file_path: 'seed' } });
 check('reads are not nudged', r.code === 0 && r.out === '', r.out);
@@ -1028,10 +1087,19 @@ check('once per turn: a second change in the same turn is silent', r.out === '',
 hook('UserPromptSubmit');
 r = hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: 'make' } });
 check('once per turn: the next prompt re-arms it', nudged(r), r.out);
+const untracked = () => { try { return JSON.parse(fs.readFileSync(path.join(VOICE, 'untracked.json'), 'utf8')); } catch { return null; } };
+check('an untracked file edit leaves a mark for the sweep', untracked()?.edits === 1 && untracked()?.file === 'seed', JSON.stringify(untracked()));
+check('...that a Bash change does not add to', untracked()?.edits === 1, JSON.stringify(untracked()));
 const NT = idOf(run(RV, 'nudge-1', ['new', 'The nudge stays quiet for a session on a task', '--loose']));
 hook('UserPromptSubmit');
+r = hook('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: 'other' } });
+check('a task opened but not started still gets the nudge', nudged(r) && untracked()?.edits === 2 && untracked()?.file === 'other', r.out);
+run(RV, 'nudge-1', ['start', NT]);
+hook('UserPromptSubmit');
+r = hook('PostToolUse', { tool_name: 'Bash', tool_input: { command: `genlock start ${NT}` } });
+check('starting a task clears the mark', untracked() === null && r.out === '', r.out);
 r = hook('PostToolUse', { tool_name: 'Edit', tool_input: { file_path: 'seed' } });
-check('a session with a task is not nudged', NT && r.out === '', `${NT} ${r.out}`);
+check('a session on a started task with no goal is not nudged', NT && r.out === '' && untracked() === null, `${NT} ${r.out}`);
 r = voiceRun(['session-state'], JSON.stringify({ hook_event_name: 'PostToolUse', tool_name: 'Edit' }), { ...quiet });
 check('...nor one with no session id at all', r.out === '', r.out);
 run(RV, 'nudge-1', ['abandon', NT, '--because', 'test done']);
@@ -1432,12 +1500,12 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   r = asEnv(['tell', '--do', 'nope', 'hello']);
   check('tell refuses an unknown project and names the real ones', r.code !== 0 && /alpha/.test(r.err), r.all);
   r = run(AS, 'someone', ['tell', '--do', 'alpha', 'swap now', '--relay-yes', 'yes']);
-  check('a project session cannot relay a yes', r.code !== 0 && !fs.existsSync(path.join(CH, 'tok-a', 'relay-yes.json')), r.all);
+  check('a project session cannot relay a yes', r.code !== 0 && !fs.existsSync(path.join(CH, 'tok-a', 'yes-relayed.json')), r.all);
   r = asEnv(['tell', '--do', 'alpha', 'swap now', '--relay-yes', 'yes', '--for', 'everything']);
-  check('tell --for names a real action', r.code !== 0 && /swap, launch/.test(r.err) && !fs.existsSync(path.join(CH, 'tok-a', 'relay-yes.json')), r.all);
+  check('tell --for names a real action', r.code !== 0 && /swap, launch/.test(r.err) && !fs.existsSync(path.join(CH, 'tok-a', 'yes-relayed.json')), r.all);
   for (const f of fs.readdirSync(path.join(CH, 'tok-a')).filter((x) => x.startsWith('tell-'))) fs.rmSync(path.join(CH, 'tok-a', f));
   r = asEnv(['tell', '--do', 'alpha', 'Swap to the next goal', '--relay-yes', 'yeah go ahead and swap', '--for', 'swap']);
-  const rg = JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', 'relay-yes.json'), 'utf8'));
+  const rg = JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', 'yes-relayed.json'), 'utf8'));
   const rt = fs.readdirSync(path.join(CH, 'tok-a')).filter((f) => f.startsWith('tell-'));
   const rtext = rt.length === 1 ? JSON.parse(fs.readFileSync(path.join(CH, 'tok-a', rt[0]), 'utf8')).text : '';
   check('the Assistant relays a yes: a grant in that session\'s channel, in the user\'s words', r.code === 0 && rg.user_said === 'yeah go ahead and swap' && rg.for === 'swap', r.all + JSON.stringify(rg));
@@ -1475,6 +1543,13 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...suggests closing a session idle for hours with no task', /SUGGEST: idle 20h with no task: close it/.test(r.out), r.out);
   check('...leaves out work in progress whose session is gone', !/Left behind|no open session owns it/.test(r.out), r.out);
   check('...counts what it found and changes nothing', /3 sessions open, \d+ suggestions\. Nothing has been changed/.test(r.out), r.out);
+  fs.writeFileSync(path.join(CH, 'tok-x', 'untracked.json'), JSON.stringify({ since: Date.now() - 600000, at: Date.now() - 120000, edits: 3, file: '/x/src/page.mjs' }));
+  fs.writeFileSync(path.join(CH, 'tok-a', 'untracked.json'), JSON.stringify({ at: Date.now(), edits: 1, file: '/x/stale.mjs' }));
+  r = asEnv(['sweep']);
+  check('sweep marks a session that edited files with no started task', /\[\+abc123\] session:[\s\S]*NO TASK: edited files with no started task \(3 edits, last page\.mjs, 2m ago\)/.test(r.out)
+    && /SUGGEST: it is editing files with no started task: tell it to open or start one/.test(r.out), r.out);
+  check('...but not one whose task is started now', !/stale\.mjs/.test(r.out) && (r.out.match(/NO TASK:/g) || []).length === 1, r.out);
+  fs.rmSync(path.join(CH, 'tok-x', 'untracked.json')); fs.rmSync(path.join(CH, 'tok-a', 'untracked.json'));
   r = asEnv(['sweep', '--orphans']);
   check('sweep --orphans flags work in progress whose session is gone', /SUGGEST: \S+ \(Left behind.*no open session owns it/.test(r.out), r.out);
 
@@ -1557,7 +1632,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   r = subEnv(['at', 'beta', 'list']);
   check('...nor change its records', r.code !== 0 && /only in alpha/.test(r.err), r.all);
   r = subEnv(['open', 'beta']);
-  check('...nor open a session there', r.code !== 0 && /only in alpha/.test(r.err), r.all);
+  check('...but it can open a session there: opening is never fenced', r.code === 0 && /Opening a fresh session on beta/.test(r.out), r.all);
   r = subEnv(['tell', '--do', TP, 'run done']);
   const aw = (t) => { try { return JSON.parse(fs.readFileSync(path.join(CH, t, 'awaiting-reply.json'), 'utf8')); } catch { return null; } };
   check('a Subassistant tells its sessions directly', r.code === 0 && tells('tok-a') === 1 && tells('tok-sub') === 0, r.all);
@@ -1580,7 +1655,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   fs.rmSync(path.join(SUB, 'owed-tok-a'), { force: true });
   r = asEnv(['tell', '--do', 'alpha', 'swap', '--session', TS, '--relay-yes', 'yes swap it', '--for', 'swap']);
   const relayText = fs.readdirSync(SUB).filter((f) => f.startsWith('tell-')).map((f) => JSON.parse(fs.readFileSync(path.join(SUB, f), 'utf8')).text).join('|');
-  check('...with the user\'s yes as their words to relay on, not a grant to the Subassistant', r.code === 0 && /--relay-yes "yes swap it" --for swap/.test(relayText) && !fs.existsSync(path.join(SUB, 'relay-yes.json')), relayText);
+  check('...with the user\'s yes as their words to relay on, not a grant to the Subassistant', r.code === 0 && /--relay-yes "yes swap it" --for swap/.test(relayText) && !fs.existsSync(path.join(SUB, 'yes-relayed.json')), relayText);
   r = asEnv(['sweep']);
   check('Tally\'s sweep does not list Subassistants as sessions', r.code === 0 && !/\+assistant/.test(r.out), r.out);
   fs.writeFileSync(sessionsFile, savedSessions);
@@ -1696,9 +1771,10 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   };
   const asked = () => fs.existsSync(path.join(CHAN, 'swap.json'));
   r = inApp(['swap', 'refunds']);
-  check('a swap needs no yes: it saves tokens, so it goes straight to the checkpoint check', r.code === 3 && !/user's yes/.test(r.err) && !asked(), r.all);
-  r = inApp(['swap', 'refunds', '--user-said', 'yes, swap']);
-  check('a swap refuses while a fresh session would be missing something', r.code === 3 && r.err.includes(`${T} has no latest`) && !asked(), r.all);
+  check('a swap needs no yes, and is never refused for gaps: it goes through and lists them to fill this turn', r.code === 0 && !/user's yes/.test(r.all) && asked()
+    && r.out.includes(`${T} has no latest`) && /fill these before your turn ends/.test(r.out), r.all);
+  fs.rmSync(path.join(CHAN, 'swap.json'));
+  me('start', T, '--take-over', '--user-said', 'take it back');
   me('update', T, 'Button wired, not yet proved');
   me('goal', 'next', G, 'Prove the refund button');
   r = inApp(['swap', 'nothing-like-this', '--user-said', 'yes']);
@@ -1723,7 +1799,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
 
   // A yes the Assistant relayed, for when the user is on the phone and cannot type in this pane.
   fs.rmSync(path.join(CHAN, 'swap.json'));
-  const grant = (action, at = Date.now()) => fs.writeFileSync(path.join(CHAN, 'relay-yes.json'), JSON.stringify({ user_said: 'yes swap it', for: action, at }));
+  const grant = (action, at = Date.now()) => fs.writeFileSync(path.join(CHAN, 'yes-relayed.json'), JSON.stringify({ user_said: 'yes swap it', for: action, at }));
   r = inApp(['swap', 'refunds', '--relayed', '--uncommitted', 'none of mine']);
   check('swap --relayed with no yes relayed is refused', r.code !== 0 && /no yes has been relayed/.test(r.err) && !asked(), r.all);
   grant('launch');
@@ -1742,7 +1818,7 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('swap --relayed with a yes relayed for it swaps', r.code === 0 && rsw.user_said === 'yes swap it' && rsw.relayed_by === 'assistant', r.all + JSON.stringify(rsw));
   const relog = fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l));
   check('...records the user\'s words and that the Assistant relayed them', relog.some((e) => e.op === 'swap' && e.user_said === 'yes swap it' && e.relayed_by === 'assistant'));
-  check('...and uses the yes up', !fs.existsSync(path.join(CHAN, 'relay-yes.json')));
+  check('...and uses the yes up', !fs.existsSync(path.join(CHAN, 'yes-relayed.json')));
   r = me('swap', 'refunds', '--relayed', '--uncommitted', 'none of mine');
   check('outside the app --relayed is refused', r.code !== 0 && /Genlock app/.test(r.err), r.all);
   me('update', T, 'Still the same');
@@ -1782,8 +1858,14 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   const reqs = () => fs.readdirSync(SELF).filter((f) => f.startsWith('open-') && f.endsWith('.json')).map((f) => {
     const o = JSON.parse(fs.readFileSync(path.join(SELF, f), 'utf8')); fs.rmSync(path.join(SELF, f)); return o;
   });
-  r = proj(['open', 'some-other-project', '--prompt', 'do it']);
-  check('a project session cannot open a session in another project', r.code !== 0 && /only in its own project/.test(r.err) && !reqs().length, r.all);
+  const OTHER = path.join(ROOT, 'other-project'); fs.mkdirSync(OTHER, { recursive: true });
+  // The app keeps its project list beside its channel folders; a project session finds it there.
+  fs.writeFileSync(path.join(path.dirname(BASE), 'projects.json'), JSON.stringify([{ path: repo }, { path: OTHER }]));
+  r = proj(['open', 'no-such-project', '--prompt', 'do it']);
+  check('a project session asking for an unknown project is told so', r.code !== 0 && /no project called/.test(r.err) && !reqs().length, r.all);
+  r = proj(['open', 'other-project', '--prompt', 'do it']);
+  let reqO = reqs();
+  check('a project session opens a session in another project, with no yes', r.code === 0 && reqO.length === 1 && reqO[0].project === OTHER && reqO[0].prompt === 'do it' && !reqO[0].handoff, r.all + JSON.stringify(reqO));
   r = proj(['open']);
   check('...and an open with no prompt and no handoff is refused', r.code !== 0 && /--prompt/.test(r.err) && !reqs().length, r.all);
   r = proj(['open', '--prompt', 'Start ticket T-X: the opening cutscene']);
@@ -1793,11 +1875,33 @@ check('orient warns of a task due soon', /Deadlines:[\s\S]*Gamma page loads/.tes
   check('...counting its own project\'s sessions, not a Subassistant or another project\'s', /\(2 of at most 4\)/.test(r.out), r.out);
   seat('two', { project: repo }); seat('three', { project: repo }); seat('four', { project: repo });
   r = proj(['open', '--prompt', 'more work']);
-  check('...and is refused at the cap, pointing at a handoff instead', r.code !== 0 && /cap is 4/.test(r.err) && /--handoff/.test(r.err) && !reqs().length, r.all);
+  check('...and is refused at the cap, saying how the user lifts it', r.code !== 0 && /cap is 4/.test(r.err) && /--over-cap/.test(r.err) && !reqs().length, r.all);
+  r = proj(['open', '--prompt', 'more work', '--over-cap', 'yes, open a fifth']);
+  req2 = reqs();
+  check('...and with --over-cap and the user\'s words it opens past the cap, carrying them to the app', r.code === 0 && req2.length === 1 && req2[0].over_cap === 'yes, open a fifth' && /past the cap/.test(r.out), r.all + JSON.stringify(req2));
+  check('...with the user\'s words on record', fs.readFileSync(projectLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l)).some((e) => e.op === 'over-cap' && e.user_said === 'yes, open a fifth'));
+  // A project session messages its own project's Assistant mid-turn.
+  const relays = () => fs.readdirSync(SELF).filter((f) => f.startsWith('relay-') && f.endsWith('.json')).map((f) => {
+    const o = JSON.parse(fs.readFileSync(path.join(SELF, f), 'utf8')); fs.rmSync(path.join(SELF, f)); return o;
+  });
+  relays();
+  r = proj(['ask', 'assistant', 'The rig export is blocked on a licence; tell TJ']);
+  let rel = relays();
+  check('ask assistant leaves one message for this project\'s own Assistant', r.code === 0 && rel.length === 1 && rel[0].kind === 'message'
+    && rel[0].project_assistant === true && rel[0].text === 'The rig export is blocked on a licence; tell TJ' && !rel[0].to, r.all + JSON.stringify(rel));
+  r = proj(['ask', 'assistant', 'up to Tally'], { GENLOCK_APP_SCOPE: repo });
+  rel = relays();
+  check('...from a project Assistant it goes up to Tally', r.code === 0 && rel.length === 1 && rel[0].kind === 'message' && !rel[0].project_assistant, r.all + JSON.stringify(rel));
+  r = proj(['ask', 'assistant', 'hello?'], { GENLOCK_APP_CHANNEL: '' });
+  check('...and outside the app it is refused, saying why', r.code !== 0 && /only in a session the Genlock app opened/.test(r.err), r.all);
   me('start', T, '--take-over', '--user-said', 'take it back');
   check('(this session owns the task again before handing off)', /owner: swapper/.test(me('show', T).out), me('show', T).out);
   r = proj(['open', '--handoff']);
-  check('a handoff refuses while a fresh session would be missing something', r.code === 3 && !reqs().length && !fs.existsSync(path.join(SELF, 'close.json')), r.all);
+  req2 = reqs();
+  check('a handoff with gaps still opens the fresh session, listing the gaps to fill this turn', r.code === 0 && req2.length === 1 && req2[0].handoff === true
+    && /fill these before your turn ends/.test(r.out) && /uncommitted/.test(r.out) && fs.existsSync(path.join(SELF, 'close.json')), r.all + JSON.stringify(req2));
+  fs.rmSync(path.join(SELF, 'close.json'), { force: true });
+  me('start', T, '--take-over', '--user-said', 'take it back');
   me('update', T, 'Handing off: refund button next');
   me('goal', 'next', G, '--still-right');
   r = proj(['open', '--handoff', '--uncommitted', 'stray.txt is scratch']);

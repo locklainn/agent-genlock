@@ -1,0 +1,88 @@
+{
+  "model": "kokoro-multi-lang-v1_0",
+  "base": "https://pub-9940b8a7001844d88ff982b0fc52632e.r2.dev/voice/kokoro-multi-lang-v1_0/",
+  "files": [
+    {
+      "name": "model.onnx",
+      "sha256": "b40f62b166ac8164b0627ef48a0b358eda0985e272fb03ef5252e7206305da11",
+      "parts": [
+        {
+          "path": "model.onnx.part-a",
+          "size": 100663296,
+          "sha256": "a21a03eceda31c4ca6ebd0cf538bcba7db3c15e47261be8a9cec4ed3d3d9a8f7"
+        },
+        {
+          "path": "model.onnx.part-b",
+          "size": 100663296,
+          "sha256": "9d67c05cac57535a58b89ae717b342170f6b85afb5e12f87bbcc34b06109f00c"
+        },
+        {
+          "path": "model.onnx.part-c",
+          "size": 100663296,
+          "sha256": "4090e205c0f64c44cf2b1008014390f3461f6ce44afb75f44cf85bb67464b53e"
+        },
+        {
+          "path": "model.onnx.part-d",
+          "size": 23570668,
+          "sha256": "f616f022646e01db2b4ecafdc3a428d9cf0522cbb6c6e28b0509550ffb771cae"
+        }
+      ]
+    },
+    {
+      "name": "voices.bin",
+      "sha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29",
+      "parts": [
+        {
+          "path": "voices.bin",
+          "size": 28200960,
+          "sha256": "1c5a5b983d3d50d8586d437a51f3faa2da7919ce76a013c081e65671a3447c29"
+        }
+      ]
+    },
+    {
+      "name": "tokens.txt",
+      "sha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425",
+      "parts": [
+        {
+          "path": "tokens.txt",
+          "size": 687,
+          "sha256": "6ebb6bb288f20f3ae8d004d3c2ca27697da27c037d75e81a60e2a6a663f95425"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-us-en.txt",
+      "sha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14",
+      "parts": [
+        {
+          "path": "lexicon-us-en.txt",
+          "size": 5956885,
+          "sha256": "7daaab53a181be9885b853a8582bf1838186317e5dadacbcef9c426d6fa0da14"
+        }
+      ]
+    },
+    {
+      "name": "lexicon-gb-en.txt",
+      "sha256": "c4cbb37316f62210dff52718a7afcaae24f50c032cc75ab47ae67b831d1049e7",
+      "parts": [
+        {
+          "path": "lexicon-gb-en.txt",
+          "size": 6366635,
+          "sha256": "c4cbb37316f62210dff52718a7afcaae24f50c032cc75ab47ae67b831d1049e7"
+        }
+      ]
+    },
+    {
+      "name": "espeak-ng-data",
+      "unzip": true,
+      "sha256": "53146d6589ae5d51697256cba1a3cbc6e0ac0cf52ad8ad692accc9927b803482",
+      "parts": [
+        {
+          "path": "espeak-ng-data.zip",
+          "size": 18037505,
+          "sha256": "53146d6589ae5d51697256cba1a3cbc6e0ac0cf52ad8ad692accc9927b803482"
+        }
+      ]
+    }
+  ]
+}

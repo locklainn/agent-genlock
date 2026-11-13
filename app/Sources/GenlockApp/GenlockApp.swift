@@ -27,6 +27,7 @@ struct GenlockApp: App {
                 Button("Focus on SOON") { model.focusDashboard(.soon) }.keyboardShortcut("2")
                 Button("Focus on LATER") { model.focusDashboard(.later) }.keyboardShortcut("3")
                 Button("Show All Tiers") { model.focusDashboard(.all) }.keyboardShortcut("4")
+                SprintReportButton()
                 Divider()
                 Button(model.paneMode == .cli ? "Show Tasks" : "Show Terminals") {
                     model.paneMode = model.paneMode == .cli ? .tasks : .cli
@@ -44,6 +45,11 @@ struct GenlockApp: App {
                 Button("Stop Speaking") { model.voice.stopSpeaking() }.keyboardShortcut(".", modifiers: [.command, .shift])
             }
         }
+
+        Window("Sprint Report", id: "sprint") {
+            SprintReportView().environment(model)
+        }
+        .defaultSize(width: 640, height: 760)
 
         MenuBarExtra {
             MenuBarMenu().environment(model)
@@ -420,5 +426,13 @@ enum Status {
         case "in_progress": return "In progress"
         default: return status.prefix(1).uppercased() + status.dropFirst()
         }
+    }
+}
+
+/// Opens the sprint report window: what got done this sprint, and past ones.
+struct SprintReportButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Sprint Report") { openWindow(id: "sprint") }.keyboardShortcut("r", modifiers: [.command, .shift])
     }
 }

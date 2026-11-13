@@ -34,6 +34,11 @@ import { cmdLoad } from '../lib/load.mjs';
 import { cmdWait } from '../lib/waits.mjs';
 import { cmdVoice } from '../lib/voices.mjs';
 import { runMcp } from '../lib/mcp.mjs';
+import { cmdSprint } from '../lib/sprint.mjs';
+import { cmdBackup, cmdRestore } from '../lib/backup.mjs';
+import { cmdAttach, cmdFiles, cmdPurge } from '../lib/attach.mjs';
+import { cmdFiled, cmdMeta, cmdTag, cmdTagged, cmdUnfiled } from '../lib/tags.mjs';
+import { cmdBug, cmdCause, cmdClasses, cmdRetro } from '../lib/retro.mjs';
 
 const VERSION = '2.2.0';
 
@@ -47,7 +52,7 @@ START HERE
 
 TICKETS   requirements first; done is proved, not asserted
   genlock new "TITLE" [--short "NAME"] -r "REQ" -c "CHECK" [-r .. -c ..] [--goal G] [--due YYYY-MM-DD] [--ask ..] [--draft]
-  genlock list [--open] [--status S] [--goal G]  |  genlock show ID [--json]  |  genlock status ID
+  genlock list [--open] [--status S] [--goal G] [--bug [--class C] [--system S]]  |  genlock show ID [--json]  |  genlock status ID
   genlock start ID  |  genlock req ID -r ".." -c ".."  |  genlock assign ID SESSION  |  genlock link ID GOAL
   genlock update ID "THE LATEST"   (600 characters at most; findings go in files)
   genlock hazard ID "WHAT WAS LEFT BEHIND" --verify "HOW TO CHECK"  |  genlock hazard ID --clear N --evidence ".."
@@ -62,14 +67,29 @@ ON A TICKET OR A GOAL
   genlock rank ID --to N  |  genlock rank ID --before OTHER
   genlock due ID YYYY-MM-DD  |  genlock due ID --clear
   genlock decide ID "WHAT" [--user-said ..] [--supersedes N]
+  genlock tag ID [TAG ..] [--remove TAG,..]  |  genlock tagged TAG    labels that outlive the session
+  genlock meta ID [KEY [VALUE]] [--clear]       key-value facts about a goal or task
+  genlock filed ID [ID ..] --event EVENT_ID [--to nextlevel]   finished work was logged elsewhere: tag it
+  genlock unfiled [--to nextlevel] [--since YYYY-MM-DD]        finished work not logged yet
   genlock forbid ID "WHAT MUST NOT BE DONE" --lifted-by ".."  |  genlock unforbid ID N --user-said ".."
   genlock ref ID PATH --why "WHAT THE READER FINDS THERE, AND WHEN THEY NEED IT"
+  genlock attach ID FILE [FILE ..] --why ".."   keep a copy of a screenshot or file the user sent, on ID
+  genlock files [ID]  |  genlock purge ID [N ..] | --done | --before YYYY-MM-DD --user-said ".."
   genlock met ID N --evidence "WHAT YOU OBSERVED"  |  genlock fail ID N --evidence ".."  |  genlock waive ID N --reason ".."
   genlock assume ID "WHAT" --breaks "WHAT IF WRONG"
   genlock grill ID [--observed .. --cause .. --absence .. --assumption .. --falsify ..]
   genlock done ID                                 REFUSES unless every requirement is proved
   genlock block ID "WHY"  |  genlock abandon ID "WHY"  |  genlock note ID "WHAT"
   genlock lint -r ".." -c ".."  |  genlock lint ID
+
+BUGS      a defect closes only once its cause is on record; retros group causes so systemic ones surface
+  genlock new "TITLE" --bug [--found-by "playtest 2026-11-13"|TICKET] -r .. -c ..  |  genlock bug ID [--found-by ..]
+  genlock cause ID --symptom .. --root-cause .. [--why .. ×N] [--contributing ..] --scope one-off|systemic
+                   --system .. --class .. --corrective .. --preventive ".."|"none: WHY" --gate "WHERE IT RUNS" [--related T-..]
+  genlock cause ID                              which cause fields are set  |  genlock cause ID --waive FIELD --reason ".."
+  genlock classes [--counts] [--goal G]  |  genlock classes add NAME "MEANING"   the cause-class vocabulary
+  genlock retro GOAL [--since YYYY-MM-DD] [--out PATH]   report: clusters, one-offs that look systemic, preventive gaps,
+                                                         unclassified bugs, and draft systemic tickets for the user to accept
 
 GOALS     what the work is for; only the user sets or closes one
   genlock goal list [--all]  |  genlock goal show G  |  genlock goal status G
@@ -88,7 +108,7 @@ CONTINUITY  stop and pick back up, with nothing lost
   genlock swap GOAL                               conversation grown long: checkpoint, then this same work carried on
                                                   in a fresh session in this tab (no yes needed: it saves tokens)
   genlock open --handoff [--prompt ".."]          the same from anywhere: a fresh session takes this one's tasks, this one closes
-  genlock open --prompt ".."                      a fresh session beside this one, in this project (capped per project)
+  genlock open [PROJECT] --prompt ".."            a fresh session, here or in another project (12 per project; --over-cap ".." past that)
   genlock close --self --user-said ".."           when the user says you can close: checkpoint, then this session closes
 
 REVIEWS   files the user should look at, kept findable
@@ -97,6 +117,7 @@ REVIEWS   files the user should look at, kept findable
 QUESTIONS between sessions; nobody waits for an answer
   genlock ask TICKET|any "QUESTION"  |  genlock answer Q "ANSWER"  |  genlock inbox
   genlock ask user "QUESTION" [--about GOAL|TICKET]  |  genlock answer Q "ANSWER" --user-said ".."
+  genlock ask assistant "MESSAGE"                  in the app: message this project's Assistant, mid-turn
   genlock deliver                                 the Claude Code PostToolUse hook
 
 CLAIMS    who is working on what, right now
@@ -112,6 +133,10 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
 
   genlock mcp                                     run as an MCP server, over stdio
   genlock snapshot                                everything above as JSON, for tools that display it
+  genlock sprint [current|previous|-N|YYYY-MM-DD] [--from YYYY-MM-DD --to YYYY-MM-DD] [--all] [--json]
+                                  what got done in a sprint (one week, from one Claude weekly reset to the next)
+                                  or a date range; --all covers every project in the app
+  genlock sprint --set-reset "thu 17:00 America/Los_Angeles"   when the weekly usage resets: sprints follow it
   genlock say "TEXT"                              speak a reply, in a session started with a voice channel
   genlock voice [set|list|sample|install]         this project's Genlock voice: one per project, recorded so it never changes
   genlock title "NAME"  |  genlock title --clear   name this session in the app and on the phone, two to four words
@@ -119,6 +144,10 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock load [--json]  |  genlock load snooze|test cpu|memory|battery|session|weekly   how pressured the Mac is; quiet or test its load alerts
                                   show the app what this session is on, in your words: testing and running
                                   are work happening; queued and waiting are nothing happening until something moves
+  genlock backup [--all] [--out DIR]              one archive of goals and tasks (--all: every project in the app),
+                                  in ~/genlock-backups unless --out says
+  genlock restore ARCHIVE [--project NAME] [--into DIR] [--force]  |  genlock restore ARCHIVE --list
+                                  put records back; refuses over existing records unless --force, which saves them first
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
   genlock where
   genlock install [--only a,b] [--hooks] [--mcp] [--skill] [--private] [--global] [--full] [--check]
@@ -219,6 +248,9 @@ const COMMANDS = {
   goal: cmdGoal,
   update: cmdUpdate,
   ref: cmdRef,
+  attach: cmdAttach,
+  files: cmdFiles,
+  purge: cmdPurge,
   forbid: cmdForbid,
   unforbid: cmdUnforbid,
   hazard: cmdHazard,
@@ -235,6 +267,18 @@ const COMMANDS = {
   mcp: runMcp,
   review: cmdReview,
   snapshot: cmdSnapshot,
+  sprint: cmdSprint,
+  backup: cmdBackup,
+  tag: cmdTag,
+  tagged: cmdTagged,
+  meta: cmdMeta,
+  filed: cmdFiled,
+  unfiled: cmdUnfiled,
+  restore: cmdRestore,
+  bug: cmdBug,
+  cause: cmdCause,
+  classes: cmdClasses,
+  retro: cmdRetro,
   overview: cmdOverview,
   tell: cmdTell,
   sweep: cmdSweep,
@@ -272,13 +316,15 @@ const COMMANDS = {
 
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
-const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'relayed', 'self', 'handoff', 'orphans', 'force']);
+// Repeatable on `cause` only: elsewhere --why is a single reason.
+const CAUSE_MULTI = new Set(['why', 'contributing', 'related']);
+const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'records', 'relayed', 'self', 'handoff', 'orphans', 'force', 'hub', 'list', 'bug', 'counts']);
 
 function parse(argv, cmd) {
   const a = { _: [], r: [], c: [] };
   const put = (name, val) => {
     const key = name.replace(/-/g, '_');
-    if (MULTI.has(name)) (a[key] ||= []).push(val); else a[key] = val;
+    if (MULTI.has(name) || (cmd === 'cause' && CAUSE_MULTI.has(name))) (a[key] ||= []).push(val); else a[key] = val;
   };
   for (let i = 0; i < argv.length; i++) {
     const tok = argv[i];

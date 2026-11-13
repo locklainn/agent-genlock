@@ -153,6 +153,24 @@ enum Driver {
                 try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[1]))
             }
         }
+        // The phone thread drawn off screen: [Assistant folder, png path].
+        if let args = step["renderPhoneThread"] as? [String], args.count == 2 {
+            let host = NSHostingView(rootView: PhoneThreadView(assistantFolder: args[0]).environment(model)
+                .background(Color(white: 0.12)).preferredColorScheme(.dark))
+            host.frame = NSRect(x: 0, y: 0, width: 480, height: 620)
+            // Placed far off screen, so it draws like a real window without showing or taking focus.
+            let w = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: 480, height: 620), styleMask: [.borderless], backing: .buffered, defer: false)
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.contentView = host
+            w.orderFrontRegardless()
+            try? await Task.sleep(nanoseconds: 6_000_000_000)
+            host.layoutSubtreeIfNeeded()
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: args[1]))
+            }
+            w.orderOut(nil)
+        }
         // The real `genlock swap`, run as the session's agent would: in its folder, through its channel.
         if let args = step["swap"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id], let cli = model.tools?.genlockArgv {
             let p = Process()
@@ -266,6 +284,7 @@ enum Driver {
             "route": model.route == .dashboard ? "dashboard" : "sessions",
             "iconRevision": IconFiles.shared.revision,
             "visible": model.visible.map { URL(fileURLWithPath: $0).lastPathComponent },
+            "emptyProject": model.emptyProject.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "",
             "running": model.sessions.filter(\.value.isRunning).keys.map { URL(fileURLWithPath: $0).lastPathComponent }.sorted(),
             "marked": model.markedCount,
             "terminalFrames": Dictionary(uniqueKeysWithValues: model.sessions.values.map { s in
@@ -300,6 +319,7 @@ enum Driver {
             "voiceHeld": model.voice.speedHeld,
             "voiceSpeed": model.voice.speechSpeed,
             "voiceSpeakingText": model.voice.speakingText ?? "",
+            "voiceSentence": model.voice.speakingSentence ?? "",
             "askingName": model.askingAssistantName,
             "voiceWaiting": model.voice.waitingReplies,
             "voiceWaitingFrom": model.voice.waitingFrom,

@@ -60,6 +60,39 @@ final class CoreTests: XCTestCase {
 
     func snap(_ dir: String? = nil) throws -> Snapshot { try GenlockCLI.snapshot(of: dir ?? repo, tools: tools).get() }
 
+    // MARK: Sprint report
+
+    /// The Mac's report and the phone bridge's are one document: the same tasks for the same sprint.
+    func testSprintReportIsTheSameOnTheMacAndThePhone() throws {
+        let home = root.appendingPathComponent("home").path
+        try FileManager.default.createDirectory(atPath: home, withIntermediateDirectories: true)
+        let env = ["GENLOCK_SESSION": "test", "GENLOCK_HOME": home, "GENLOCK_AGENT_PID": "0", "GENLOCK_TERMINAL": "print"]
+        func run(_ args: String...) throws { let o = try GenlockCLI.run(args, in: repo, tools: tools, extraEnv: env); XCTAssertEqual(o.status, 0, o.stderr) }
+        try run("init", "--private")
+        try run("new", "Ship the widget", "--short", "widget", "-r", "The widget renders on the page", "-c", "manual: open the page and see it", "--quiet")
+        try run("start", "widget")
+        try run("met", "widget", "1", "--evidence", "opened localhost:3000, widget visible")
+        try run("grill", "widget", "--observed", "seen", "--cause", "new", "--absence", "mobile unchecked", "--assumption", "one page", "--falsify", "reload shows none")
+        try run("done", "widget")
+        try JSONSerialization.data(withJSONObject: [["path": repo!]]).write(to: URL(fileURLWithPath: home + "/projects.json"))
+        try Data(#"{"weekly_reset":"mon 00:00 UTC"}"#.utf8).write(to: URL(fileURLWithPath: home + "/sprint.json"))
+
+        let mac = try GenlockCLI.sprint(.sprint(0), in: repo, tools: tools, extraEnv: env).get()
+        XCTAssertTrue(mac.reset.confirmed)
+        XCTAssertEqual(mac.totals.tasks, 1)
+        XCTAssertEqual(mac.projects.first?.tasks.map(\.name), ["Widget"])
+
+        let lib = URL(fileURLWithPath: cli).deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("mobile/bridge/lib.mjs").path
+        let script = "import('\(lib)').then(m => m.sprintReport(process.env.GENLOCK_HOME, { sprint: 'current' })).then(r => process.stdout.write(JSON.stringify(r)))"
+        let phoneJSON = try shell("GENLOCK_HOME='\(home)' GENLOCK_AGENT_PID=0 node -e \"\(script)\"")
+        let phone = try SprintReport.decode(Data(phoneJSON.utf8))
+        XCTAssertEqual(phone, mac, "the phone bridge and the Mac read the same report")
+
+        let last = try GenlockCLI.sprint(.sprint(-1), in: repo, tools: tools, extraEnv: env).get()
+        XCTAssertEqual(last.totals.tasks, 0)
+        XCTAssertEqual(last.range.offset, -1)
+    }
+
     // MARK: Contract with the CLI
 
     func testAFolderWithNoGenlockStillWorks() throws { // P1
@@ -607,6 +640,17 @@ final class CoreTests: XCTestCase {
         XCTAssertEqual(namer.saved, "Juno", "a blank does not wipe it")
         let args = SessionLaunch.arguments(resume: false, voice: false, genlockCommand: "genlock", assistant: true, assistantName: "Juno")
         XCTAssertTrue(args[args.firstIndex(of: "--append-system-prompt")! + 1].contains("Your name is Juno"))
+    }
+
+    func testRelayPickupLeavesARelayedYesAlone() throws { // T-6REKG
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("relayed-yes-\(UUID().uuidString)")
+        let folder = base.appendingPathComponent("s")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let grant = folder.appendingPathComponent("relay-yes.json")
+        try #"{"user_said":"Yes, launch them","for":"launch","at":1}"#.write(to: grant, atomically: true, encoding: .utf8)
+        XCTAssertTrue(VoiceChannel(session: "s", base: base).peekRelays().isEmpty)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: grant.path), "a yes the Assistant relayed is not a broken report to delete")
     }
 
     func testRelaysWaitForAnIdleAssistantAndEveryReply() {

@@ -10,6 +10,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -19,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -28,8 +30,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-private val INK = Color(0xFF0F0F12)
-private val QUESTION = Color(0xFFF2B84B)
+internal val INK = Color(0xFF0F0F12)
+internal val QUESTION = Color(0xFFF2B84B)
 private val DONE = Color(0xFF7BD88F)
 private val BLOCKED = Color(0xFFFF6B6B)
 
@@ -57,6 +59,7 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
     val hearing by walker.hearing.collectAsStateWithLifecycle()
     val spoken by walker.spoken.collectAsStateWithLifecycle()
     val spokenTo by walker.spokenTo.collectAsStateWithLifecycle()
+    val sentence by walker.sentence.collectAsStateWithLifecycle()
     val waiting by link.waiting.collectAsStateWithLifecycle()
     val name by link.assistantName.collectAsStateWithLifecycle()
     val lines by link.lines.collectAsStateWithLifecycle()
@@ -71,7 +74,10 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
             .padding(horizontal = 22.dp, vertical = 14.dp),
     ) {
         CompositionLocalProvider(LocalContentColor provides Color.White) {
-            if (now == null) { CaughtUp(name, waiting, answered, walked.size) { walker.flush() }; return@CompositionLocalProvider }
+            // Your latest message, until its reply is here: where it is, so you never wonder whether it arrived.
+            val mine = lines.indexOfLast { it.who == Who.ME }
+            val outgoing = lines.getOrNull(mine)?.takeIf { l -> lines.drop(mine + 1).none { it.who == Who.ASSISTANT } && (waiting || l.failed) }
+            if (now == null) { CaughtUp(name, outgoing?.stage, answered, walked.size, { walker.flush() }, { outgoing?.let { link.retry(it) } }); return@CompositionLocalProvider }
 
             Segments(walked, pending, active)
             Spacer(Modifier.height(10.dp))
@@ -109,8 +115,15 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
                 }
                 Spacer(Modifier.height(10.dp))
                 KindTag(now)
+                // Links to open: in the item's own words, or in the written reply where its paragraph names this task.
+                val reply = lines.lastOrNull { it.who == Who.ASSISTANT && now.id.startsWith(it.id + "-") }
+                val links = remember(now.id, reply?.text) {
+                    val siblings = reply?.let { r -> (walked + pending).filter { it.id.startsWith(r.id + "-") } } ?: listOf(now)
+                    WalkPlan.linksFor(now, reply?.text, siblings)
+                }
+                if (links.isNotEmpty()) { Spacer(Modifier.height(14.dp)); Links(links) }
                 if (now.late) Text("Came in while we talked", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
-                if (now.isQuestion) { Spacer(Modifier.height(16.dp)); Question(now, enabled = active) { walker.answer(it) } }
+                // The question itself is not here: it opens in the answer sheet once the item has been read.
                 // One quiet line, so nothing competes with the headline: the next title, or just a count.
                 val next = pending.drop(1)
                 if (next.isNotEmpty()) {
@@ -119,13 +132,16 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
                 }
             }
 
+            CountdownBar(walker, Color.White, Color.White.copy(alpha = 0.2f), Modifier.fillMaxWidth().padding(bottom = 6.dp))
             Transport(active, onPlay = { if (active) walker.pause() else walker.start() }, onRepeat = { if (active) walker.repeat() else walker.start() }, onNext = { walker.next() })
             Spacer(Modifier.height(10.dp))
             // The caption carries the body only; the headline is already up top in big type.
             val body = now.say.replace(Regex("[*`#_]"), "")
             val read = spoken.ifBlank { now.spoken() }
             val at = read.indexOf(body).takeIf { it >= 0 && body.isNotEmpty() }
-            Caption(active, phase, body, at?.let { spokenTo - it } ?: 0, hearing)
+            // In the Genlock voice the caption is the sentence playing, whole; in the built-in voice it follows word by word.
+            if (sentence.isNotBlank()) Caption(active, phase, sentence, sentence.length, hearing)
+            else Caption(active, phase, body, at?.let { spokenTo - it } ?: 0, hearing)
         }
     }
 }
@@ -159,23 +175,21 @@ private fun KindTag(i: Item) {
         style = MaterialTheme.typography.labelSmall, letterSpacing = 1.4.sp, fontWeight = FontWeight.Bold, color = color)
 }
 
-/** The open question, set apart with an amber rule, and its suggested answers as big pills. */
+/** Each link as a pill to tap: it opens in the browser, and the walk keeps its place. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun Question(i: Item, enabled: Boolean, answer: (String) -> Unit) {
-    Row(Modifier.height(IntrinsicSize.Min)) {
-        Box(Modifier.width(4.dp).fillMaxHeight().clip(CircleShape).background(QUESTION))
-        Spacer(Modifier.width(14.dp))
-        Column {
-            Text(i.ask ?: i.say, fontSize = 24.sp, lineHeight = 30.sp, fontWeight = FontWeight.SemiBold)
-            if (i.options.isNotEmpty()) {
-                Spacer(Modifier.height(12.dp))
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    i.options.forEach { o ->
-                        Button(onClick = { answer(o) }, enabled = enabled, modifier = Modifier.heightIn(min = 44.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = INK)) { Text(o, fontWeight = FontWeight.SemiBold) }
-                    }
-                }
+private fun Links(links: List<WebLink>) {
+    val open = LocalUriHandler.current
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        links.forEach { l ->
+            Row(Modifier.clip(RoundedCornerShape(22.dp)).background(Color.White.copy(alpha = 0.16f))
+                .clickable { runCatching { open.openUri(l.url) } }.heightIn(min = 44.dp).padding(horizontal = 14.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Link, null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(l.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.width(6.dp))
+                Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open", Modifier.size(14.dp), tint = Color.White.copy(alpha = 0.7f))
             }
         }
     }
@@ -241,18 +255,34 @@ private fun Caption(active: Boolean, phase: Walker.Phase, text: String, to: Int,
     }
 }
 
-/** Nothing left to walk. */
+/** Nothing left to walk. [stage]: where your latest message is, while its reply has not come. */
 @Composable
-private fun ColumnScope.CaughtUp(name: String, waiting: Boolean, answered: Int, heard: Int, send: () -> Unit) {
+private fun ColumnScope.CaughtUp(name: String, stage: Stage?, answered: Int, heard: Int, send: () -> Unit, retry: () -> Unit) {
     Spacer(Modifier.weight(1f))
-    Text(if (waiting) "$name is working…" else "All caught up", fontSize = 38.sp, lineHeight = 42.sp, fontWeight = FontWeight.ExtraBold)
+    Text(when (stage) {
+        Stage.SENDING -> "Sending…"
+        Stage.DELIVERED -> "Delivered"
+        Stage.PICKED -> "$name is working…"
+        Stage.FAILED -> "Not delivered"
+        null -> "All caught up"
+    }, fontSize = 38.sp, lineHeight = 42.sp, fontWeight = FontWeight.ExtraBold)
     Spacer(Modifier.height(8.dp))
     Text(when {
-        waiting -> "The reply plays here when it is ready."
+        stage == Stage.SENDING -> "Sending your message…"
+        stage == Stage.DELIVERED -> "Delivered. $name has not started on it yet."
+        stage == Stage.PICKED -> "$name has your message. The reply plays here when it is ready."
+        stage == Stage.FAILED -> "Your message did not get through. It is kept: tap Retry to send it again."
         heard > 0 -> "You heard $heard item${if (heard == 1) "" else "s"}. Say or type anything to start something new."
         else -> "Say or type anything. Replies play here, one item at a time."
     }, style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.75f))
-    if (waiting) { Spacer(Modifier.height(16.dp)); LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color.White, trackColor = Color.White.copy(alpha = 0.2f)) }
+    if (stage == Stage.SENDING || stage == Stage.DELIVERED || stage == Stage.PICKED) {
+        Spacer(Modifier.height(16.dp))
+        LinearProgressIndicator(Modifier.fillMaxWidth(), color = Color.White, trackColor = Color.White.copy(alpha = 0.2f))
+    }
+    if (stage == Stage.FAILED) {
+        Spacer(Modifier.height(18.dp))
+        Button(onClick = retry, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = INK)) { Text("Retry") }
+    }
     if (answered > 0) {
         Spacer(Modifier.height(18.dp))
         Button(onClick = send, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = INK)) { Text("Send $answered answer${if (answered == 1) "" else "s"}") }

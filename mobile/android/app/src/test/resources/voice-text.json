@@ -1,0 +1,113 @@
+[
+  {
+    "text": "genlock, phone app. 422 pages -> 474. FY2025's budget pages now classify.",
+    "speakable": "genlock, phone app. four hundred twenty-two pages to four hundred seventy-four. FY two thousand twenty-five's budget pages now classify.",
+    "sentences": [
+      "genlock, phone app. four hundred twenty-two pages to four hundred seventy-four.",
+      "FY two thousand twenty-five's budget pages now classify."
+    ]
+  },
+  {
+    "text": "Version 1.13.8 is pinned; 2.x ignores espeak-ng-data. That is 12.5% faster, at 1,234,567 rows.",
+    "speakable": "Version one point thirteen point eight is pinned; two.x ignores espeak-ng-data. That is twelve point five percent faster, at one million two hundred thirty-four thousand five hundred sixty-seven rows.",
+    "sentences": [
+      "Version one point thirteen point eight is pinned; two.x ignores espeak-ng-data.",
+      "That is twelve point five percent faster, at one million two hundred thirty-four thousand five hundred sixty-seven rows."
+    ]
+  },
+  {
+    "text": "Done! Next: the **bridge** sends `item.voice` → the phone. \"Quoted start.\" (Aside.) [Bracket.] ok",
+    "speakable": "Done! Next: the bridge sends item.voice to the phone. \"Quoted start.\" (Aside.) [Bracket.] ok",
+    "sentences": [
+      "Done!",
+      "Next: the bridge sends item.voice to the phone.",
+      "\"Quoted start.",
+      "(Aside.",
+      "[Bracket.] ok"
+    ]
+  },
+  {
+    "text": "First line.\n\n- a bullet item\n- another one\n1. numbered\n2) also numbered\n\nLast para.",
+    "speakable": "First line. - a bullet item - another one one. numbered two) also numbered Last para.",
+    "sentences": [
+      "First line.",
+      "a bullet item",
+      "another one",
+      "numbered",
+      "also numbered",
+      "Last para."
+    ]
+  },
+  {
+    "text": "Code:\n```js\nconst x = 1;\n```\nafter the fence.",
+    "speakable": "Code: after the fence.",
+    "sentences": [
+      "Code:",
+      "after the fence."
+    ]
+  },
+  {
+    "text": "A tracking number 1234567890123456 and a time of 3:45 and a ratio 0.53-0.65 of playback.",
+    "speakable": "A tracking number one two three four five six seven eight nine zero one two three four five six and a time of three:forty-five and a ratio zero point five three-zero point six five of playback.",
+    "sentences": [
+      "A tracking number one two three four five six seven eight nine zero one two three four five six and a time of three:forty-five and a ratio zero point five three-zero point six five of playback."
+    ]
+  },
+  {
+    "text": "This sentence is deliberately very long, with many clauses, so that it goes past the limit of two hundred and twenty characters; it keeps going, and going, with commas everywhere, until the splitter has to cut it at a comma or semicolon, which is exactly what we want to check here, yes.",
+    "speakable": "This sentence is deliberately very long, with many clauses, so that it goes past the limit of two hundred and twenty characters; it keeps going, and going, with commas everywhere, until the splitter has to cut it at a comma or semicolon, which is exactly what we want to check here, yes.",
+    "sentences": [
+      "This sentence is deliberately very long, with many clauses, so that it goes past the limit of two hundred and twenty characters; it keeps going, and going, with commas everywhere,",
+      "until the splitter has to cut it at a comma or semicolon, which is exactly what we want to check here, yes."
+    ]
+  },
+  {
+    "text": "Wait…  Really?  Yes. Non-breaking space here.",
+    "speakable": "Wait… Really? Yes. Non-breaking space here.",
+    "sentences": [
+      "Wait…",
+      "Really?",
+      "Yes.",
+      "Non-breaking space here."
+    ]
+  },
+  {
+    "text": "what about a lower case start. it stays one sentence! OK then.",
+    "speakable": "what about a lower case start. it stays one sentence! OK then.",
+    "sentences": [
+      "what about a lower case start. it stays one sentence!",
+      "OK then."
+    ]
+  },
+  {
+    "text": "| table | cells | # heading > quote _under_ ok",
+    "speakable": "table cells heading quote under ok",
+    "sentences": [
+      "table cells heading quote under ok"
+    ]
+  },
+  {
+    "text": "v2 build, T-K34H3 and G-SVGX8, 6 threads at 0.52x.",
+    "speakable": "v two build, T-K thirty-fourH three and G-SVGX eight, six threads at zero point five twox.",
+    "sentences": [
+      "v two build, T-K thirty-fourH three and G-SVGX eight, six threads at zero point five twox."
+    ]
+  },
+  {
+    "text": "",
+    "speakable": "",
+    "sentences": []
+  },
+  {
+    "text": "   ",
+    "speakable": "",
+    "sentences": []
+  },
+  {
+    "text": "100 200 1000 1001 19 20 21 99 101 110 999 1000000 2000000000",
+    "speakable": "one hundred two hundred one thousand one thousand one nineteen twenty twenty-one ninety-nine one hundred one one hundred ten nine hundred ninety-nine one million two billion",
+    "sentences": [
+      "one hundred two hundred one thousand one thousand one nineteen twenty twenty-one ninety-nine one hundred one one hundred ten nine hundred ninety-nine one million two billion"
+    ]
+  }
+]

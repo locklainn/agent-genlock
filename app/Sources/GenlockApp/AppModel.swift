@@ -33,6 +33,8 @@ final class AppModel {
     @ObservationIgnored private var memoryFile: URL { SessionMemory.file(beside: store.file) }
     var route: Route = .dashboard
     var visible: [String] = []
+    /// The project whose blank page shows while no session of it is on screen (its last one closed).
+    var emptyProject: String?
     /// The plan's usage bars, from the server (UsagePoller), or an older session's status line.
     var usage: UsageReading? = UsageReading.load()
     @ObservationIgnored let usagePoller = UsagePoller()
@@ -144,6 +146,7 @@ final class AppModel {
                 model.refreshAssistantName()
                 model.voice.expireReply()
                 model.updateAttention()
+                model.writePhoneGrid()
                 model.rememberSessions()
             }
         }
@@ -347,6 +350,8 @@ final class AppModel {
     // MARK: Who needs you
 
     @ObservationIgnored var openMainWindow: (() -> Void)?
+    /// The grid as last written for the phone (PhoneGrid.swift), so an unchanged one is not rewritten.
+    @ObservationIgnored var lastPhoneGrid: Data?
 
     /// What the Dock and menu bar count: sessions that need you, and replies waiting to be heard.
     var alertCount: Int { needingAttention.count + voice.waitingReplies }
@@ -488,6 +493,7 @@ final class AppModel {
         for id in ids { ensureSession(id) }
         if let first = ids.first { activeProject = sessions[first]?.projectID ?? first }
         visible = ids
+        emptyProject = nil
         route = .sessions
         focus(ids.first)
     }
@@ -651,8 +657,10 @@ final class AppModel {
             message = "Ignored spin-off \(request.ticket), which came from \(request.project), not this project."
             return
         }
+        let project = sessions[parent]?.projectID ?? request.project
+        guard roomForAgentSession(in: project, handoff: false, overCap: request.overCap, asker: tabLabel(parent)) else { return }
         // The parent's id, not the path git reports: they can spell one folder differently (/tmp, /private/tmp).
-        let session = TerminalSession(projectID: sessions[parent]?.projectID ?? request.project, spawn: request)
+        let session = TerminalSession(projectID: project, spawn: request)
         sessions[session.key] = session
         launch(session, tools: tools)
         var next = visible
@@ -673,6 +681,7 @@ final class AppModel {
         if let now = visible.first, now != key { previousSession = now }
         if let project = sessions[key]?.projectID { activeProject = project; lastShown[project] = key }
         visible = [key]
+        emptyProject = nil
         route = .sessions
         focus(key)
     }
@@ -709,13 +718,14 @@ final class AppModel {
 
     /// The project in front of you: the one picked last, else the first on screen.
     var currentProject: String? {
+        if visible.isEmpty, let emptyProject { return emptyProject }
         if let activeProject, sessions.values.contains(where: { $0.projectID == activeProject }) { return activeProject }
         return visible.first.flatMap { sessions[$0]?.projectID }
     }
 
     /// Projects with a session that has a tab, alphabetically by name.
     var projectsWithTabs: [String] {
-        Array(Set(sessions.values.map(\.projectID))).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
+        Array(Set(sessions.values.map(\.projectID) + [emptyProject].compactMap { $0 })).sorted { projectName($0).localizedCaseInsensitiveCompare(projectName($1)) == .orderedAscending }
     }
 
     /// A project's sessions with tabs, its main session first. Not its Assistant, which has its own pinned tab.
@@ -764,8 +774,9 @@ final class AppModel {
     /// already opened it; a click never starts one.
     func openProjectHub(_ project: String) {
         let keys = gridKeys(project, start: false)
-        // A project with no sessions yet starts its main one, rather than showing no panes at all.
-        openSessions(keys.isEmpty ? [project] : Array(keys.prefix(SplitLayout.maxPanes)))
+        // A project with no sessions shows its blank page: a session starts only when asked for.
+        if keys.isEmpty { return showEmptyProject(project) }
+        openSessions(Array(keys.prefix(SplitLayout.maxPanes)))
     }
 
     /// Out of the hub: one session alone, with its terminal.
@@ -868,25 +879,42 @@ final class AppModel {
         return true
     }
 
+    /// Every session an agent opens passes here, so a project never holds more than the cap. A
+    /// handoff replaces its asker; ⌘N is yours and does not come this way.
+    private func roomForAgentSession(in project: String, handoff: Bool, overCap: String? = nil, asker: String) -> Bool {
+        let open = sessionKeys(in: project).count
+        let limit = SessionCap.limit()
+        if SessionCap.allows(open: open, limit: limit, handoff: handoff, overCap: overCap) { return true }
+        message = "\(asker) asked for another session in \(projectName(project)), which already has \(open) open (the cap is \(limit)). Say yes in its chat to go past it, or close one that is done."
+        return false
+    }
+
     /// The Assistant opened a session on a project, for you, often while you are on the phone.
     /// It starts in the background: whatever you are looking at stays in front.
     func openSessionsIfAsked() {
         guard tools != nil else { return }
         let assistants = sessions.values.filter { $0.projectID == assistantFolder || $0.slot == Self.subSlot }
-        // A project session asks for its own project only: to hand its work over (it then closes
-        // itself) or to run agreed work beside it, which genlock caps per project.
+        // A project session opens sessions in any of your projects: its own to hand its work over
+        // (it then closes itself) or to run work beside it, another to start work there. Only the
+        // per-project cap stops it, and your yes (--over-cap) lifts that (TJ, 12 Nov 2026).
         for asker in sessions.values where !assistants.contains(where: { $0 === asker }) {
             for request in asker.channel.takeOpens() {
-                guard resolvedPath(request.project) == resolvedPath(asker.projectID) else {
-                    message = "Ignored a request from \(tabLabel(asker.key)) to open a session in \(request.project), which is not its project."
+                let own = resolvedPath(request.project) == resolvedPath(asker.projectID)
+                let target: String
+                if own { target = asker.projectID }
+                else if let project = store.projects.first(where: { resolvedPath($0.id) == resolvedPath(request.project) }), project.exists { target = project.id }
+                else {
+                    message = "\(tabLabel(asker.key)) asked to open a session in \(request.project), which is not one of your projects on disk."
                     continue
                 }
-                let key = startSession(in: asker.projectID, opening: request.prompt)
+                let handoff = own && request.handoff == true
+                guard roomForAgentSession(in: target, handoff: handoff, overCap: request.overCap, asker: tabLabel(asker.key)) else { continue }
+                let key = startSession(in: target, opening: request.prompt)
                 // A handoff's asker closes at the end of its turn, and its pane falls to this one.
                 joinGridIfShowing(key)
-                message = request.handoff == true
-                    ? "\(tabLabel(asker.key)) handed its work to a fresh session in \(projectName(asker.projectID)) to save tokens."
-                    : "\(tabLabel(asker.key)) opened \(tabLabel(key)) in \(projectName(asker.projectID)), beside it."
+                message = handoff
+                    ? "\(tabLabel(asker.key)) handed its work to a fresh session in \(projectName(target)) to save tokens."
+                    : "\(tabLabel(asker.key)) opened \(tabLabel(key)) in \(projectName(target))\(own ? ", beside it" : "")."
             }
         }
         for asker in assistants {
@@ -896,8 +924,7 @@ final class AppModel {
                     message = "\(who) asked to open \(request.project), which is not one of your projects."
                     continue
                 }
-                // A project's Assistant opens sessions in its own project only.
-                if asker.slot == Self.subSlot && project.id != asker.projectID { continue }
+                guard roomForAgentSession(in: project.id, handoff: false, overCap: request.overCap, asker: who) else { continue }
                 let key = startSession(in: project.id, opening: request.prompt)
                 message = joinGridIfShowing(key)
                     ? "\(who) opened \(tabLabel(key)) in \(project.name), beside its other sessions."
@@ -935,11 +962,14 @@ final class AppModel {
         sessions[key] = nil
         visible.removeAll { $0 == key }
         if visible.isEmpty {
-            // Where you were: the same project's last-shown or other session, else the session
-            // before this one, else the dashboard. Never whichever key sorts first (it was the Assistant).
+            // Where you were: the same project's last-shown or other session, else its blank page
+            // (it was the last), else the session before this one, else the dashboard. Never
+            // whichever key sorts first (it was the Assistant).
             let same = project.map { p in lastShown[p].flatMap { sessions[$0] != nil ? $0 : nil } ?? sessionKeys(in: p).first } ?? nil
             let back = previousSession.flatMap { sessions[$0] != nil ? $0 : nil }
-            if let next = same ?? back { show(next) } else { route = .dashboard }
+            if let same { show(same) }
+            else if route == .sessions, let project, project != assistantFolder { showEmptyProject(project) }
+            else if let back { show(back) } else { route = .dashboard }
         }
     }
 
@@ -1166,28 +1196,33 @@ final class AppModel {
         let waiting = reporters.flatMap { session in session.channel.peekRelays().map { (session: session, file: $0.file, report: $0.report) } }
             .sorted { ($0.report.at ?? 0) < ($1.report.at ?? 0) }
         guard !waiting.isEmpty else { return }
-        // A reply a project's Assistant asked for goes back to it. Everything else, and anything for
-        // a project Assistant that has since closed, goes to the main one.
+        // A reply a project's Assistant asked for goes back to it, and so does a message a session
+        // sent its own project's Assistant (which starts if closed). Everything else goes to Tally.
         let subs = Dictionary(sessions.values.filter { $0.slot == Self.subSlot }.map { ($0.channel.folder.path, $0) },
                               uniquingKeysWith: { a, _ in a })
-        let target = { (report: RelayReport) -> TerminalSession? in
-            RelayRouting.recipient(of: report, among: Array(subs.keys)).flatMap { subs[$0] }
-        }
-        let forTally = waiting.filter { target($0.report) == nil }
+        let subList = subs.map { (folder: $0.key, project: $0.value.projectID) }
+        let routed = waiting.map { (item: $0, route: RelayRouting.route(of: $0.report, fromProject: $0.session.projectID, subs: subList)) }
+        let forTally = routed.filter { $0.route == .tally }.map(\.item)
         if !forTally.isEmpty {
             let stillOwing = reporters.filter { $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
             deliverRelays(forTally, to: sessions[assistantFolder], stillOwing: stillOwing)
         }
-        for sub in Set(waiting.compactMap { target($0.report)?.key }).compactMap({ sessions[$0] }) {
-            let mine = waiting.filter { target($0.report) === sub }
+        for folder in Set(routed.compactMap { if case .sub(let f) = $0.route { return f } else { return nil } }) {
+            guard let sub = subs[folder] else { continue }
+            let mine = routed.filter { $0.route == .sub(folder) }.map(\.item)
             let stillOwing = reporters.filter { $0.projectID == sub.projectID && $0 !== sub && $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
             deliverRelays(mine, to: sub, stillOwing: stillOwing)
+        }
+        for project in Set(routed.compactMap { if case .startSub(let p) = $0.route { return p } else { return nil } }) {
+            let mine = routed.filter { $0.route == .startSub(project) }.map(\.item)
+            deliverRelays(mine, to: nil, startingSubFor: project, stillOwing: 0)
         }
     }
 
     /// Hands reports to one assistant together, once it is idle. `to` nil or a closed main
     /// Assistant starts the main one; a project's Assistant is always open when it is the target.
-    private func deliverRelays(_ waiting: [(session: TerminalSession, file: URL, report: RelayReport)], to assistant: TerminalSession?, stillOwing: Int) {
+    private func deliverRelays(_ waiting: [(session: TerminalSession, file: URL, report: RelayReport)], to assistant: TerminalSession?,
+                               startingSubFor project: String? = nil, stillOwing: Int) {
         guard let tools else { return }
         let oldest = waiting.first?.report.at.map { Date().timeIntervalSince1970 - $0 / 1000 } ?? 0
         guard RelayRouting.ready(reports: waiting.count, assistantPhase: assistant?.phase, assistantRunning: assistant?.isRunning == true,
@@ -1201,8 +1236,8 @@ final class AppModel {
         for item in waiting { try? FileManager.default.removeItem(at: item.file) }
         if let assistant, assistant.isRunning {
             assistant.submit(briefing)
-        } else if let assistant, assistant.slot == Self.subSlot {
-            startSubassistant(assistant.projectID, quietly: briefing)
+        } else if let sub = assistant?.slot == Self.subSlot ? assistant?.projectID : project {
+            startSubassistant(sub, quietly: briefing)
         } else {
             try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
             let fresh = TerminalSession(projectID: assistantFolder)
@@ -1388,6 +1423,26 @@ final class AppModel {
 
     func setDue(_ item: String, to day: String?, in project: String) {
         runCLI(["due", item] + (day.map { [$0] } ?? ["--clear"]), in: project, failure: "Could not change the due date")
+    }
+
+    /// The dashboard's Back up button: every project's goals and tasks as one archive in
+    /// ~/genlock-backups (`genlock backup --all`), shown in Finder. Put back with `genlock restore`.
+    var backingUp = false
+    func backupAll() {
+        guard let tools, !backingUp else { return }
+        backingUp = true
+        Task.detached {
+            let out = try? GenlockCLI.run(["backup", "--all", "--json"], in: NSHomeDirectory(), tools: tools, timeout: 120)
+            struct Result: Decodable { let file: String; let projects: [P]; struct P: Decodable { let records: Int } }
+            let r = (out?.status == 0) ? out.flatMap { try? JSONDecoder().decode(Result.self, from: $0.stdout) } : nil
+            await MainActor.run {
+                self.backingUp = false
+                guard let r else { self.message = "Backup failed: \(out?.stderr ?? "genlock did not run")"; return }
+                let n = r.projects.reduce(0) { $0 + $1.records }
+                self.message = "Backed up \(n) records from \(r.projects.count) projects"
+                NSWorkspace.shared.selectFile(r.file, inFileViewerRootedAtPath: "")
+            }
+        }
     }
 
     private func runCLI(_ args: [String], in project: String, failure: String) {

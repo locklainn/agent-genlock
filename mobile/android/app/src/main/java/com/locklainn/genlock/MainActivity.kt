@@ -17,6 +17,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.graphics.graphicsLayer
@@ -25,6 +26,8 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import kotlinx.coroutines.launch
@@ -48,6 +51,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.combine
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -68,11 +72,12 @@ class MainActivity : ComponentActivity() {
     private var nextId = 0
 
     private lateinit var walker: Walker
-    /** A reply came while you were dictating: the walk starts once the mic is off. */
-    private var walkWhenFree = false
+    /** Writing a message, by voice or keyboard: a reply that comes now is held until it is sent. */
+    private fun busy() = Walker.dictating.value || Walker.composing.value
 
     private fun finished(id: String?) {
         if (id?.startsWith("walk-") == true) { walker.utteranceDone(id); return }
+        if (id?.startsWith("arrive-") == true) { walker.arrivalDone(); return }
         queued.remove(id)
         speaking.value = queued.isNotEmpty()
         if (queued.isEmpty()) releaseAudio()
@@ -123,18 +128,21 @@ class MainActivity : ComponentActivity() {
             }
         })
         walker = Walker(this, link) { tts }
+        // A rebuilt screen (rotation, theme) lost the arrival screen's timer: announce it afresh.
+        if (link.arriving.value != null) { link.arriving.value = null; walker.arrive() }
         // A reply's items are merged into the queue by Link. Nothing is read over a walk already on,
         // or over you while you dictate: the walk picks new items up in their place.
         link.onReply = {
             Cues.done()
             if (prefs().getBoolean("speak", true)) {
-                if (Walker.dictating.value) walkWhenFree = true
-                else window.decorView.postDelayed({ if (!Walker.dictating.value) walker.start() }, Cues.DONE_MS)
+                // Typing or talking: never take the screen. The reply waits behind a small notice until he sends.
+                if (busy()) Walker.held.value += 1
+                else window.decorView.postDelayed({ if (busy()) Walker.held.value += 1 else walker.arrive() }, Cues.DONE_MS)
             }
         }
         lifecycleScope.launch {
-            Walker.dictating.collect { on ->
-                if (!on && walkWhenFree) { walkWhenFree = false; window.decorView.postDelayed({ walker.start() }, 600) }
+            combine(Walker.dictating, Walker.composing) { d, c -> d || c }.collect { on ->
+                if (!on && Walker.held.value > 0) { Walker.held.value = 0; window.decorView.postDelayed({ walker.arrive() }, 600) }
             }
         }
         handleLink(intent)
@@ -208,6 +216,9 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: St
         snackbar.showSnackbar(message, duration = SnackbarDuration.Short)
         link.flash.value = null
     }
+    // A question opens full screen once its item has been read, over whichever tab is showing.
+    AnswerSheet(walker)
+    ArrivalScreen(link, walker)
     Scaffold(
         snackbarHost = { SnackbarHost(snackbar) },
         topBar = { TopBar(link, prefs, hush, focus) { focus = it; auto = false; prefs().edit().putBoolean("focus", it).apply(); if (it) tab = 0 } },
@@ -220,13 +231,18 @@ fun App(link: Link, prefs: () -> android.content.SharedPreferences, speaking: St
                 if (reading) ReadingBar(hush)
                 NavigationBar {
                     NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Default.Mic, null) }, label = { Text("Talk") })
-                    NavigationBarItem(selected = tab == 1, onClick = { tab = 1; link.askStatus() }, icon = { Icon(Icons.Default.Dashboard, null) }, label = { Text("Status") })
+                    NavigationBarItem(selected = tab == 1, onClick = { tab = 1; link.askStatus() }, icon = { Icon(Icons.Default.Bolt, null) }, label = { Text("Live") })
+                    NavigationBarItem(selected = tab == 2, onClick = { tab = 2 }, icon = { Icon(Icons.Default.Dashboard, null) }, label = { Text("Status") })
                 }
             }
         },
     ) { pad ->
         Box(Modifier.padding(pad).consumeWindowInsets(pad).imePadding()) {
-            if (tab == 0) TalkScreen(link, walker, focus) else StatusScreen(link) { tab = 0; link.say(it) }
+            when (tab) {
+                0 -> TalkScreen(link, walker, focus)
+                1 -> LiveScreen(link) { tab = 0; link.say(it) }
+                else -> SprintScreen(link)
+            }
         }
     }
 }
@@ -252,12 +268,13 @@ fun WalkBar(link: Link, walker: Walker) {
             if (now != null) {
                 Text(listOf(now.label.ifBlank { "Reply" }, "${pending.size} to go").joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
-                Text((now.ask ?: now.say), style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+                Text(now.say, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
                 Text(when (phase) {
                     Walker.Phase.SPEAKING -> "Reading…"
                     Walker.Phase.LISTENING -> hearing.ifBlank { "Listening… answer, or say next, repeat or send" }
                     Walker.Phase.IDLE -> ""
                 }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2)
+                CountdownBar(walker, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.surfaceVariant, Modifier.fillMaxWidth().padding(top = 4.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { walker.pause() }) { Icon(Icons.Default.Pause, "Pause the walk") }
                     TextButton(onClick = { walker.repeat() }) { Text("Repeat") }
@@ -312,10 +329,20 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
     val name by link.assistantName.collectAsStateWithLifecycle()
     var speak by remember { mutableStateOf(prefs().getBoolean("speak", true)) }
     var menu by remember { mutableStateOf(false) }
+    // The Back up item's outcome, said in the snackbar: where the archive went, or why it did not.
+    val backingUp by link.backup.state.collectAsStateWithLifecycle()
+    LaunchedEffect(backingUp) {
+        when (val s = backingUp) {
+            is Backup.State.Working -> link.flash.value = "Backing up goals and tasks…"
+            is Backup.State.Saved -> link.flash.value = "Backup saved: ${s.where}${s.caption?.let { " ($it)" } ?: ""}"
+            is Backup.State.Failed -> link.flash.value = s.why
+            else -> {}
+        }
+    }
     val (label, color) = when {
         conn == Conn.UNPAIRED -> "Not paired" to MaterialTheme.colorScheme.error
         conn != Conn.CONNECTED -> "Connecting…" to Color(0xFFE0AF68)
-        laptop == "offline" -> "Laptop offline" to MaterialTheme.colorScheme.error
+        laptop == "offline" -> "Offline" to MaterialTheme.colorScheme.error
         assistant == "closed" -> "$name is not open" to Color(0xFFE0AF68)
         assistant == "busy" -> "$name is working…" to Color(0xFF7AA2F7)
         assistant == "starting" -> "$name is starting…" to Color(0xFF7AA2F7)
@@ -372,6 +399,11 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
                 val ctx = LocalContext.current
                 DropdownMenuItem(text = { Text(buildLabel(ctx), style = MaterialTheme.typography.labelMedium) }, onClick = {}, enabled = false)
                 HorizontalDivider()
+                DropdownMenuItem(
+                    text = { Text(if (backingUp is Backup.State.Working) "Backing up…" else "Back up goals and tasks") },
+                    enabled = backingUp !is Backup.State.Working,
+                    onClick = { menu = false; link.askBackup() },
+                )
                 DropdownMenuItem(text = { Text("Unpair this phone") }, onClick = { menu = false; link.unpair() })
             }
         },
@@ -416,11 +448,27 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
         }
     }
     var dictated by remember { mutableStateOf(false) }
+    // Composing means actively writing: a draft in the box with the keyboard in it, or a keystroke in
+    // the last few seconds. A box that is merely selected, or an old draft he has left, holds nothing.
+    var fieldFocused by remember { mutableStateOf(false) }
+    var lastKey by remember { mutableLongStateOf(0L) }
+    val focusManager = LocalFocusManager.current
+    LaunchedEffect(draft.isNotBlank(), fieldFocused, lastKey) {
+        val recent = { System.currentTimeMillis() - lastKey < Walker.TYPING_MS }
+        Walker.composing.value = (draft.isNotBlank() && fieldFocused) || recent()
+        // Keystrokes stop counting once he pauses: look again when that runs out.
+        if (recent()) { kotlinx.coroutines.delay(Walker.TYPING_MS - (System.currentTimeMillis() - lastKey) + 50); Walker.composing.value = (draft.isNotBlank() && fieldFocused) || recent() }
+    }
+    DisposableEffect(Unit) { onDispose { Walker.composing.value = false } }
+    val held by Walker.held.collectAsStateWithLifecycle()
     LaunchedEffect(waiting) { if (!waiting) AudioHold.drop(AudioHold.WAITING) }
     // A message you spoke holds the music paused through to the reply; a cancelled one lets it back.
     fun sent(ok: Boolean) {
         if (ok && dictated) AudioHold.take(ctx, AudioHold.WAITING)
         if (ok) dictated = false
+        // Sent: replies held while he wrote open now, full screen (leaving the box ends composing).
+        if (ok) lastKey = 0L
+        if (ok && Walker.held.value > 0) focusManager.clearFocus()
     }
     val dictation = remember {
         Dictation(ctx,
@@ -478,6 +526,19 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
                 }
             }
         }
+        // A reply came while he was writing: say so quietly, never over the box. It opens once he sends, or on a tap.
+        AnimatedVisibility(held > 0) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp).clip(RoundedCornerShape(20.dp))
+                .background(MaterialTheme.colorScheme.secondaryContainer).padding(start = 14.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.MarkChatUnread, null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                Spacer(Modifier.width(8.dp))
+                Text(if (held == 1) "$name replied · opens when you send" else "$held replies from $name · open when you send",
+                    Modifier.weight(1f), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                TextButton(onClick = { Walker.held.value = 0; focusManager.clearFocus(); walker.arrive() }) { Text("Open") }
+            }
+        }
         problem?.let { Text(it, Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium) }
         // The photo going with the next message, with a way to take it back off.
         if (attachment != null || preparing) {
@@ -509,7 +570,7 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
                 }
             }
             OutlinedTextField(
-                value = draft, onValueChange = { draft = it }, modifier = Modifier.weight(1f),
+                value = draft, onValueChange = { draft = it; lastKey = System.currentTimeMillis() }, modifier = Modifier.weight(1f).onFocusChanged { fieldFocused = it.isFocused },
                 placeholder = { Text(if (listening) "Listening…" else "Say or type…") },
                 maxLines = 6, shape = RoundedCornerShape(24.dp),
                 trailingIcon = if (!listening && draft.isNotBlank()) {
@@ -539,7 +600,9 @@ fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}, onOpen: () -> Uni
     }
     Column(Modifier.fillMaxWidth(), horizontalAlignment = if (mine) Alignment.End else Alignment.Start) {
         Text(
-            when (line.who) { Who.ME -> if (line.failed) "You · not sent" else if (line.pending) "You · sending…" else "You"; Who.LAPTOP_PROMPT -> "You, at the laptop"; else -> name },
+            when (line.who) { Who.ME -> when (line.stage) {
+                Stage.SENDING -> "You · sending…"; Stage.DELIVERED -> "You · delivered"; Stage.PICKED -> "You · $name has it"; Stage.FAILED -> "You · not delivered"
+            }; Who.LAPTOP_PROMPT -> "You, at your desk"; else -> name },
             style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         Surface(
@@ -576,32 +639,34 @@ fun Bubble(line: Line, name: String, onRetry: () -> Unit = {}, onOpen: () -> Uni
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The Live tab: work in progress from both sides at once. Each project as the Mac grid shows it
+ * (its sessions and what each is doing), then the goals those sessions are moving and their
+ * tasks, from the records. Replaces the old Status > Sessions and Status > Tasks views.
+ */
 @Composable
-fun StatusScreen(link: Link, ask: (String) -> Unit) {
+fun LiveScreen(link: Link, ask: (String) -> Unit) {
     val projects by link.projects.collectAsStateWithLifecycle()
-    val at by link.statusAt.collectAsStateWithLifecycle()
+    val statusAt by link.statusAt.collectAsStateWithLifecycle()
+    val grid by link.grid.collectAsStateWithLifecycle()
     val conn by link.conn.collectAsStateWithLifecycle()
     val ctx = LocalContext.current
-    val ui = remember { ctx.getSharedPreferences("genlock-ui", Context.MODE_PRIVATE) }
-    // Sessions: what each session is doing. Tasks: only goals and tasks, none of the agents' words.
-    var tasksMode by remember { mutableStateOf(ui.getBoolean("statusTasks", false)) }
+    // Records come by asking; the grid is pushed. Ask again every 30s while the tab is open.
+    LaunchedEffect(conn) { while (conn == Conn.CONNECTED) { link.askStatus(); kotlinx.coroutines.delay(30_000) } }
+    val g = grid?.takeIf { it.mac == "open" }
+    val byName = (projects ?: emptyList()).associateBy { it.name }
+    val key = { gp: GridProject -> java.io.File(gp.id).name }
+    val gridNames = g?.projects?.map(key)?.toSet() ?: emptySet()
+    val recordsOnly = (projects ?: emptyList()).filter { it.name !in gridNames }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                listOf("Sessions", "Tasks").forEachIndexed { i, label ->
-                    SegmentedButton(
-                        selected = tasksMode == (i == 1),
-                        onClick = { tasksMode = i == 1; ui.edit().putBoolean("statusTasks", tasksMode).apply() },
-                        shape = SegmentedButtonDefaults.itemShape(i, 2),
-                    ) { Text(label) }
-                }
-            }
-        }
         item {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    if (at == 0L) "Not loaded yet" else "As of " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(at),
+                    when {
+                        g != null && conn == Conn.CONNECTED -> "Live from the Mac"
+                        statusAt == 0L -> "Not loaded yet"
+                        else -> "As of " + java.text.DateFormat.getTimeInstance(java.text.DateFormat.SHORT).format(statusAt)
+                    },
                     Modifier.weight(1f), style = MaterialTheme.typography.labelMedium,
                 )
                 TextButton(onClick = { link.askStatus() }, enabled = conn == Conn.CONNECTED) {
@@ -609,18 +674,278 @@ fun StatusScreen(link: Link, ask: (String) -> Unit) {
                 }
             }
         }
-        val ps = projects
-        if (ps == null) item { Text(if (conn == Conn.CONNECTED) "Asking the laptop…" else "Waiting for a connection.") }
-        else if (ps.isEmpty()) item { Text("No sessions open on the laptop.") }
-        else if (tasksMode) {
-            // Every project, every time: one with nothing current says so rather than vanishing.
-            items(ps, key = { "t-" + it.name }) { ProjectTasks(it) }
+        if (grid == null && projects == null) item { Text(if (conn == Conn.CONNECTED) "Fetching data…" else "Waiting for a connection.") }
+        else {
+            if (grid != null && g == null) item { Text("The Genlock app is not running on the Mac.", style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant) }
+            if (g != null) {
+                val needs = g.projects.sumOf { p -> p.sessions.count { it.attention == "waiting" || it.kind == "needsYou" } }
+                if (needs > 0) item(key = "needs") {
+                    Text(if (needs == 1) "1 session needs you" else "$needs sessions need you",
+                        style = MaterialTheme.typography.titleSmall, color = MAC_RED, fontWeight = FontWeight.SemiBold)
+                }
+                items(g.projects, key = { "l-" + it.id }) { gp -> LiveProjectCard(gp.name, gp.hub, gp.sessions, byName[key(gp)]?.goals ?: emptyList(), ask) }
+            }
+            items(recordsOnly, key = { "r-" + it.name }) { p -> LiveProjectCard(p.name, false, emptyList(), p.goals, ask, p.sessions) }
+            if (g?.projects.isNullOrEmpty() && recordsOnly.isEmpty()) item { Text("Nothing in progress.") }
         }
-        else items(ps, key = { it.name }) { ProjectCard(it, ask) }
         item(key = "build") {
             Text("Genlock " + buildLabel(ctx), Modifier.fillMaxWidth().padding(top = 8.dp), style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
         }
+    }
+}
+
+/** One project on the Live tab: its sessions first (grid rows, else the records' view of them), then its goals in flight. */
+@Composable
+fun LiveProjectCard(name: String, hub: Boolean, rows: List<GridSession>, goals: List<GoalTasks>, ask: (String) -> Unit, sessions: List<Session> = emptyList()) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                val n = if (rows.isNotEmpty()) rows.size else sessions.size
+                if (n > 0) Text(if (n == 1) "1 session" else "$n sessions",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!hub) TextButton(onClick = { ask("What's happening in $name?") }) { Text("Ask") }
+            }
+            for (s in rows) GridSessionRow(s)
+            if (rows.isEmpty()) for (s in sessions) SessionLine(s)
+            if (goals.isNotEmpty()) Column(Modifier.padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("In progress", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                for (gt in goals) GoalCard(gt)
+            }
+        }
+    }
+}
+
+/**
+ * The Status tab: the sprint report. What got finished this sprint (one week, from one Claude
+ * weekly reset to the next), with a picker for past sprints and for any range of days.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SprintScreen(link: Link) {
+    val report by link.sprint.collectAsStateWithLifecycle()
+    val error by link.sprintError.collectAsStateWithLifecycle()
+    val loading by link.sprintLoading.collectAsStateWithLifecycle()
+    val conn by link.conn.collectAsStateWithLifecycle()
+    val ctx = LocalContext.current
+    // What is picked: a sprint offset ("0", "-1", ..), or a day range.
+    var sel by rememberSaveable { mutableStateOf("0") }
+    var range by rememberSaveable { mutableStateOf<String?>(null) }
+    var menu by remember { mutableStateOf(false) }
+    var picking by remember { mutableStateOf(false) }
+    LaunchedEffect(conn, sel, range) {
+        if (conn != Conn.CONNECTED) return@LaunchedEffect
+        val r = range
+        if (r != null) { val parts = r.split(".."); val a = parts[0]; val b = parts.getOrElse(1) { a }; link.askSprint(from = a, to = b) }
+        else link.askSprint(sel)
+    }
+    LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        item(key = "picker") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.weight(1f)) {
+                    OutlinedButton(onClick = { menu = true }, enabled = report != null) {
+                        val r = report
+                        Text(when {
+                            r == null -> "This sprint"
+                            r.kind == "dates" -> r.label
+                            r.current -> "This sprint · ${r.label}"
+                            else -> "Sprint · ${r.label}"
+                        }, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        Icon(Icons.Default.ArrowDropDown, null)
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        for (sp in report?.sprints ?: emptyList()) DropdownMenuItem(
+                            text = { Text((if (sp.offset == 0) "This sprint · " else "") + sp.label + "  ·  ${sp.done} done") },
+                            onClick = { menu = false; range = null; sel = sp.offset.toString() },
+                        )
+                        HorizontalDivider()
+                        DropdownMenuItem(text = { Text("Date range…") }, leadingIcon = { Icon(Icons.Default.DateRange, null) },
+                            onClick = { menu = false; picking = true })
+                    }
+                }
+                if (loading) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            }
+        }
+        val r = report
+        when {
+            error != null -> item { Text(error!!, color = MaterialTheme.colorScheme.error) }
+            r == null -> item { Text(if (conn == Conn.CONNECTED) "Fetching data…" else "Waiting for a connection.") }
+            else -> {
+                item(key = "total") {
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            (if (r.tasks == 1) "1 task done" else "${r.tasks} tasks done") +
+                                (if (r.goals > 0) " · " + (if (r.goals == 1) "1 goal closed" else "${r.goals} goals closed") else ""),
+                            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                        )
+                        if (!r.confirmed) Text("Sprint days are provisional until the weekly reset time is set on the Mac.",
+                            style = MaterialTheme.typography.labelSmall, color = MAC_AMBER)
+                    }
+                }
+                if (r.projects.isEmpty()) item { Text("Nothing finished in this range.", color = MaterialTheme.colorScheme.onSurfaceVariant) }
+                items(r.projects, key = { "s-" + it.name }) { SprintProjectCard(it) }
+            }
+        }
+        item(key = "build") {
+            Text("Genlock " + buildLabel(ctx), Modifier.fillMaxWidth().padding(top = 8.dp), style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+        }
+    }
+    if (picking) {
+        val state = rememberDateRangePickerState()
+        val day = { ms: Long -> java.time.Instant.ofEpochMilli(ms).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString() }
+        DatePickerDialog(
+            onDismissRequest = { picking = false },
+            confirmButton = {
+                TextButton(enabled = state.selectedStartDateMillis != null, onClick = {
+                    val a = state.selectedStartDateMillis ?: return@TextButton
+                    val b = state.selectedEndDateMillis ?: a
+                    range = "${day(a)}..${day(b)}"
+                    picking = false
+                }) { Text("Show") }
+            },
+            dismissButton = { TextButton(onClick = { picking = false }) { Text("Cancel") } },
+        ) { DateRangePicker(state, Modifier.weight(1f)) }
+    }
+}
+
+/** One project's finished work: goals it closed, then its done tasks under their goals, newest first. */
+@Composable
+fun SprintProjectCard(p: SprintProject) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(p.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text("${p.tasks.size} done", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+            for (g in p.goalsDone) Row(verticalAlignment = Alignment.CenterVertically) {
+                Pill("goal done", DONE_GREEN); Spacer(Modifier.width(8.dp))
+                Text(g.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            for ((goal, ts) in p.tasks.groupBy { it.goal ?: "No goal" }) {
+                Surface(Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceContainer) {
+                    Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(goal, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        for (t in ts) Row(verticalAlignment = Alignment.Top) {
+                            Text(shortDay(t.closed), Modifier.width(52.dp), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Column(Modifier.weight(1f)) {
+                                Text(t.name, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                if (t.title != t.name) Text(t.title, style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** "Thu 12", in the phone's zone, from an ISO time. */
+fun shortDay(iso: String): String = runCatching {
+    java.time.Instant.parse(iso).atZone(java.time.ZoneId.systemDefault()).format(java.time.format.DateTimeFormatter.ofPattern("EEE d"))
+}.getOrDefault("")
+
+val MAC_RED = Color(0xFFFF5C7A)
+val MAC_AMBER = Color(0xFFFFB84D)
+val MAC_GREEN = Color(0xFF34E5A0)
+val MAC_BLUE = Color(0xFF5B9BFF)
+val MAC_VIOLET = Color(0xFFB18CFF)
+
+/** A wait's color, as the Mac colors it: work happening colored, nothing happening muted. */
+@Composable
+fun waitColor(state: String?): Color = when (state) {
+    "testing" -> MAC_GREEN
+    "queued" -> MAC_VIOLET.copy(alpha = 0.8f)
+    "waiting" -> MaterialTheme.colorScheme.onSurfaceVariant
+    else -> MAC_BLUE
+}
+
+/** The status row's color, the same as a grid pane's status row on the Mac. */
+@Composable
+fun kindColor(s: GridSession): Color = when (s.kind) {
+    "working" -> WORKING_BLUE
+    "workingUnrecorded", "untracked" -> MAC_AMBER
+    "needsYou" -> MAC_RED
+    "waitingOn" -> waitColor(s.waitState)
+    "paused" -> MaterialTheme.colorScheme.onSurfaceVariant
+    else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+}
+
+/** "4m 12s" since a wait began, ticking. */
+@Composable
+fun elapsed(since: Long): String {
+    var now by remember { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(since) { while (true) { now = System.currentTimeMillis(); kotlinx.coroutines.delay(1000) } }
+    val s = ((now - since) / 1000).coerceAtLeast(0)
+    return when { s < 60 -> "${s}s"; s < 3600 -> "${s / 60}m ${s % 60}s"; else -> "${s / 3600}h ${(s % 3600) / 60}m" }
+}
+
+/** One project as its Mac grid shows it: its Assistant first, then each session. */
+@Composable
+fun GridProjectCard(p: GridProject, ask: (String) -> Unit) {
+    ElevatedCard(Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(start = 16.dp, end = 8.dp, top = 10.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(p.name, Modifier.weight(1f), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                Text(if (p.sessions.size == 1) "1 session" else "${p.sessions.size} sessions",
+                    style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (!p.hub) TextButton(onClick = { ask("What's happening in ${p.name}?") }) { Text("Ask") }
+            }
+            for (s in p.sessions) GridSessionRow(s)
+        }
+    }
+}
+
+/** A pane: its tab's dot and title, then its status row (what it is doing), the detail, its goal. */
+@Composable
+fun GridSessionRow(s: GridSession) {
+    val color = kindColor(s)
+    // The tab dot: needs you red, finished amber, else the wait's color, else running green.
+    val dot = when {
+        s.attention == "waiting" -> MAC_RED
+        s.attention == "done" -> MAC_AMBER
+        s.wait != null -> waitColor(s.wait.state)
+        s.running -> MAC_GREEN
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Column(Modifier.fillMaxWidth().padding(end = 8.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(8.dp).background(dot, androidx.compose.foundation.shape.CircleShape))
+            Spacer(Modifier.width(8.dp))
+            Text(s.title, Modifier.weight(1f), style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            when (s.attention) {
+                "waiting" -> Pill("needs you", MAC_RED)
+                "done" -> Pill("finished", MAC_AMBER)
+            }
+        }
+        Row(Modifier.padding(start = 16.dp), verticalAlignment = Alignment.CenterVertically) {
+            val line = buildString {
+                append(s.headline)
+                if (s.task != null) append(" ").append(s.task)
+            }
+            Text(line, Modifier.weight(1f, fill = false), style = MaterialTheme.typography.bodyMedium, color = color,
+                fontWeight = if (s.kind == "working" || s.kind == "needsYou" || s.kind == "waitingOn") FontWeight.Medium else FontWeight.Normal,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (s.kind == "waitingOn" && s.wait != null) {
+                Spacer(Modifier.width(6.dp))
+                Text(elapsed(s.wait.since), style = MaterialTheme.typography.labelMedium, color = color.copy(alpha = 0.75f))
+            }
+            if (s.more > 0) { Spacer(Modifier.width(6.dp)); Text("+${s.more}", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        }
+        s.detail?.let {
+            Text(it, Modifier.padding(start = 16.dp), style = MaterialTheme.typography.bodySmall, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        val meta = listOfNotNull(
+            s.goal?.let { g -> "Goal: ${g.title}" + if (g.total > 0) " · ${g.done}/${g.total}" else "" },
+            s.questions.takeIf { it > 0 }?.let { if (it == 1) "1 question" else "$it questions" },
+        )
+        if (meta.isNotEmpty()) Text(meta.joinToString("  ·  "), Modifier.padding(start = 16.dp), style = MaterialTheme.typography.labelMedium,
+            color = if (s.questions > 0) MAC_VIOLET else MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
 
@@ -752,8 +1077,8 @@ fun PairScreen(link: Link) {
     var pasted by rememberSaveable { mutableStateOf("") }
     var error by remember { mutableStateOf<String?>(null) }
     Column(Modifier.fillMaxSize().systemBarsPadding().padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-        Text("Pair with your laptop", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-        Text("On the laptop, run:\nnode mobile/bridge/pair.mjs\nthen scan the QR code it shows.", style = MaterialTheme.typography.bodyMedium)
+        Text("Pair this phone", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+        Text("On your Mac, run:\nnode mobile/bridge/pair.mjs\nthen scan the QR code it shows.", style = MaterialTheme.typography.bodyMedium)
         Button(onClick = {
             val scanner = GmsBarcodeScanning.getClient(ctx, GmsBarcodeScannerOptions.Builder().setBarcodeFormats(Barcode.FORMAT_QR_CODE).build())
             scanner.startScan()

@@ -53,4 +53,49 @@ class WalkPlanTest {
             Item("i", "genlock", "phone digest", "question", "Built.", "Ship it?").spoken())
         assertEquals("Came in while we talked. budget. Done.", Item("j", "budget", "", "update", "Done.", late = true).spoken())
     }
+
+    @Test fun itemsFromBeforeTheMovedOnMarkAreDroppedButNotTheOneBeingHeard() {
+        val q = listOf(item("a", "genlock", "x").copy(at = 100), item("b", "budget", "y").copy(at = 200), item("c", "ghost", "z").copy(at = 300))
+        assertEquals(listOf("c"), ids(WalkPlan.current(q, mark = 250, keepHead = false)))
+        assertEquals(listOf("a", "c"), ids(WalkPlan.current(q, mark = 250, keepHead = true)))
+        assertEquals(listOf("a", "b", "c"), ids(WalkPlan.current(q, mark = 0, keepHead = false)))
+        assertEquals(listOf("b", "c"), ids(WalkPlan.current(q, mark = 200, keepHead = false)))
+    }
+
+    @Test fun sayingSendAtTheEndSendsTheAnswerWithoutIt() {
+        assertEquals("Yes ship it", WalkPlan.spokenSend("Yes ship it send"))
+        assertEquals("Use the blue one", WalkPlan.spokenSend("Use the blue one, send."))
+        assertEquals("Go ahead", WalkPlan.spokenSend("Go ahead send it"))
+        assertEquals("", WalkPlan.spokenSend("Send"))
+        assertEquals(null, WalkPlan.spokenSend("send it to Mia first"))
+        assertEquals(null, WalkPlan.spokenSend("I want the godsend"))
+    }
+
+    @Test fun theArrivalReadoutCountsUpdatesAndQuestions() {
+        assertEquals("Three updates, one question.", WalkPlan.arrivalLine(4, 1))
+        assertEquals("One update.", WalkPlan.arrivalLine(1, 0))
+        assertEquals("Two questions.", WalkPlan.arrivalLine(2, 2))
+        assertEquals("25 updates.", WalkPlan.arrivalLine(25, 0))
+    }
+
+    @Test fun linksInTheReplyGoToTheItemWhoseTaskTheirParagraphNames() {
+        val a = item("t-0", "genlock", "phone digest"); val b = item("t-1", "budget", "minutes")
+        val reply = "The phone digest is ready to review: [review page](https://claude.ai/code/artifact/abc).\n\nMinutes are filed, see https://example.com/m."
+        assertEquals(listOf(WebLink("review page", "https://claude.ai/code/artifact/abc")), WalkPlan.linksFor(a, reply, listOf(a, b)))
+        assertEquals(listOf(WebLink("example.com", "https://example.com/m")), WalkPlan.linksFor(b, reply, listOf(a, b)))
+    }
+
+    @Test fun aLinkWhoseParagraphNamesNoItemShowsOnEveryItem() {
+        val a = item("t-0", "genlock", "x"); val b = item("t-1", "budget", "y")
+        val reply = "Here is everything: https://claude.ai/code/artifact/z"
+        assertEquals(1, WalkPlan.linksFor(a, reply, listOf(a, b)).size)
+        assertEquals(1, WalkPlan.linksFor(b, reply, listOf(a, b)).size)
+    }
+
+    @Test fun aLinkInTheItemsOwnWordsShowsAndIsNotReadAloud() {
+        val i = Item("t-0", "genlock", "review", "update", "The plan is up at https://claude.ai/code/artifact/q.")
+        assertEquals(listOf(WebLink("claude.ai", "https://claude.ai/code/artifact/q")), WalkPlan.linksFor(i, null, listOf(i)))
+        assertEquals("genlock, review. The plan is up at.", i.spoken())
+        assertEquals("Open the review page now.", WalkPlan.unlinked("Open the [review page](https://x.dev/a) now."))
+    }
 }

@@ -7,3 +7,4 @@
 {"e":"4cb0d3d3d6b3","at":"2026-11-07T17:31:13.702Z","by":"0e1f7131-7b08-4055-8724-bf200aa2ee03","op":"next_done","nid":"25a627"}
 {"e":"bc14c21d0d44","at":"2026-11-09T04:14:42.398Z","by":"b6f6aaee-68b6-4cc0-8cda-618899fff5f2","op":"next_keep"}
 {"e":"9540dfe9dd33","at":"2026-11-10T11:35:37.561Z","by":"4cb5e5fb-9a30-4571-9b1b-91607841517d","op":"next_add","nid":"48642b","text":"Drive genlock open --prompt and --handoff from a project pane in the relaunched app: a new pane appears, a handoff closes the old one","due":null}
+{"e":"7fdabef44729","at":"2026-11-13T03:11:16.664Z","by":"1ff1c0cb-bdda-4388-bf92-42c888ce931d","op":"next_add","nid":"d7f408","text":"TJ relaunches and eyes the blank project page: close a project's last session, click Start a session (empty-project)","due":null}

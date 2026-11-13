@@ -1,0 +1,1 @@
+{"e":"680d4c16157f","at":"2026-11-13T11:46:50.896Z","by":"3c74638d-9346-4331-8e59-542f932324e3","op":"request","path":"lib/quiet.mjs","why":"After the next app rebuild/relaunch, run any genlock command in an auto-mode session: do record changes now show as one line (e.g. Added task \"NAME\") with no .genlock/records diff? Is the wording right?","about":"T-YV7MX"}

@@ -11,26 +11,31 @@ extension AppModel {
     }
 
     /// The confirmed close, and the driver's. Ends the session into Recently ended. Closing the
-    /// one you were looking at, alone on screen, keeps you in its project: its other session, or a
-    /// fresh one when it was the last (never the Assistant, which nobody chose to go to).
-    func closeTab(_ key: String, replace: Bool = true) {
-        let project = sessions[key]?.projectID
-        let alone = visible == [key] && route == .sessions
+    /// one you were looking at keeps you in its project: its other session, or its blank page with
+    /// Start a session when it was the last. Nothing starts on its own, so a project you cleared
+    /// has no empty session for a status update to report on.
+    func closeTab(_ key: String) {
         endNoted(key)
-        guard replace, alone, let project, project != assistantFolder else { return }
-        if sessionKeys(in: project).isEmpty { newSession(in: project) }
     }
 
     func confirmClose() {
         let keys = closing ?? []
         closing = nil
-        // Close All means the project is being cleared, so nothing replaces its sessions.
-        keys.forEach { closeTab($0, replace: keys.count == 1) }
+        keys.forEach { closeTab($0) }
     }
 
-    /// Shows a project from the bar's plus menu: where you were in it, else a new session.
+    /// Shows a project from the bar's plus menu: where you were in it, else its blank page.
     func openProject(_ project: String) {
         if let onScreen = visible.first(where: { sessions[$0]?.projectID == project }) { return focus(onScreen) }
-        if sessionKeys(in: project).isEmpty { newSession(in: project) } else { openProjectHub(project) }
+        openProjectHub(project)
+    }
+
+    /// A project with no sessions open: its page, blank but for Start a session.
+    func showEmptyProject(_ project: String) {
+        if let now = visible.first { previousSession = now }
+        visible = []
+        activeProject = project
+        emptyProject = project
+        route = .sessions
     }
 }

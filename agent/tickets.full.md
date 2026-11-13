@@ -183,3 +183,13 @@ The user should never open a ticket, and mostly should not know one exists.
   handed back.
 - **Records live in `.genlock/` and merge cleanly.** Each is an append-only file with a random
   id, so tickets never conflict across branches. Commit them with the work, or with `genlock sync`.
+
+## 8. Bugs: the cause goes on record
+
+A bug is something built that does not behave as intended. Open it with `genlock new --bug`
+(or convert with `genlock bug ID`), and before `done` record its cause with `genlock cause`:
+symptom, root cause (five whys, `--why` once per step), scope (one-off or systemic), system,
+class (`genlock classes`), corrective, preventive and the `--gate` the preventive runs in.
+`done` refuses a bug ticket without them. `genlock retro GOAL` groups the causes across a
+goal's bugs, flags clusters and one-offs that look systemic, and drafts systemic tickets for
+the user to accept. Offer one when ten bugs have closed since the last retro.

@@ -226,3 +226,21 @@ public enum SessionSwap {
         return SessionMemory.Open(project: project, slot: keptSlot, conversation: conversation)
     }
 }
+
+/// How many sessions an agent may have open in one project. genlock refuses an open at the cap
+/// before asking; the app checks again when it opens one, so nothing that slipped past piles up.
+/// A handoff replaces the session that asked, so it is always allowed, and the user's words
+/// (genlock's --over-cap) lift the cap for one open. Your own ⌘N is not capped. The cap is the
+/// only thing that stops an agent opening a session (TJ, 12 Nov 2026).
+public enum SessionCap {
+    public static let fallback = 12
+
+    /// GENLOCK_SESSION_CAP, as genlock reads it, else 12 (TJ, 12 Nov 2026).
+    public static func limit(_ environment: [String: String] = ProcessInfo.processInfo.environment) -> Int {
+        Int(environment["GENLOCK_SESSION_CAP"] ?? "").flatMap { $0 > 0 ? $0 : nil } ?? fallback
+    }
+
+    public static func allows(open: Int, limit: Int, handoff: Bool, overCap: String? = nil) -> Bool {
+        handoff || open < limit || !(overCap ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
