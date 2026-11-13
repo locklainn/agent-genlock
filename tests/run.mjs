@@ -540,6 +540,46 @@ r = deliver('asker');
 check('the answer is delivered back to the asker', /porter/.test(r.out), r.all);
 check('...and an answered question leaves the owner\'s inbox', /nothing for you/.test(fAs('worker', 'inbox').out));
 
+/* ---- pre-approval: genlock's own commands never reach the auto-mode classifier ---- */
+
+{
+  const decide = (args, command) => {
+    const o = run(FRESH, null, args, JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'Bash', session_id: 'nobody-allow', tool_input: { command } }), { GENLOCK_APP_CHANNEL: args[0] === 'session-state' ? path.join(ROOT, 'allow-channel') : '' }).out;
+    try { return JSON.parse(o).hookSpecificOutput.permissionDecision; } catch { return null; }
+  };
+  const yes = [
+    'genlock swap G-3FPGE',
+    'genlock swap fast-follow 2>&1 | head -12',
+    'genlock followups 2>&1 | tail -15; genlock release T-VZ556 2>&1 | tail -1; genlock swap G-3FPGE 2>&1 | tail -20',
+    'cd /Users/tj/nightmaremode && genlock open --handoff',
+    'genlock swap fast-follow --uncommitted "docs/runlogs/** are logs; the rest | are > waves"',
+    "genlock close --self --user-said 'great, you can close' >/dev/null 2>&1",
+    'genlock spinoff launch S-1 --user-said "yes"\ngenlock update T-1 "launched"',
+    '/Applications/Genlock.app/Contents/Resources/genlock/run/genlock open --prompt "do x"',
+    'genlock wait "testing" --state testing; genlock update T-1 "x"',
+  ];
+  const no = [
+    'genlock swap G-1; rm -rf ~',
+    'genlock swap G-1 && git push',
+    'genlock update T-1 "$(cat ~/.ssh/id_rsa)"',
+    'genlock update T-1 `whoami`',
+    'genlock swap G-1 > notes.txt',
+    'PATH=/tmp/evil:$PATH genlock swap G-1',
+    'genlock swap G-1 &',
+    'genlock swap G-1 | sh',
+    'bash -c "genlock swap G-1"',
+    'cd /tmp && tail -5 x',
+    'genlock update T-1 "unterminated',
+    'genlock swap G-1 <<EOF\nx\nEOF',
+    '(genlock swap G-1)',
+  ];
+  for (const hookArgs of [['guard'], ['session-state']]) {
+    const name = hookArgs[0];
+    check(`${name}: every genlock-only command is pre-approved`, yes.every((c) => decide(hookArgs, c) === 'allow'), yes.filter((c) => decide(hookArgs, c) !== 'allow').join(' || '));
+    check(`${name}: anything that mixes in another program gets no approval`, no.every((c) => decide(hookArgs, c) === null), no.filter((c) => decide(hookArgs, c) !== null).join(' || '));
+  }
+}
+
 /* ---- quiet records: the Bash edit diff never shows .genlock files ----------------- */
 
 {
