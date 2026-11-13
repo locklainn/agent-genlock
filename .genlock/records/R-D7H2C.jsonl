@@ -1,0 +1,2 @@
+{"e":"8394aa165a68","at":"2026-11-13T10:56:55.964Z","by":"3cb97ea3-baca-4cce-9fb0-b985f80dd14c","op":"request","path":"docs/standalone-phone.md","why":"Pick how the phone starts sessions (section 4): A cloud sessions on Max, B Managed Agents on an API bill, or A+C (recommended). And is a small API-key bill OK?","about":"T-2FJBG"}
+{"e":"1e38f39b73ad","at":"2026-11-13T11:06:44.046Z","by":"3cb97ea3-baca-4cce-9fb0-b985f80dd14c","op":"reviewed","note":"TJ: design is great, put on hold"}
