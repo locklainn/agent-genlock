@@ -38,7 +38,7 @@ import { cmdSprint } from '../lib/sprint.mjs';
 import { cmdBackup, cmdRestore } from '../lib/backup.mjs';
 import { cmdAttach, cmdFiles, cmdPurge } from '../lib/attach.mjs';
 import { cmdFiled, cmdMeta, cmdTag, cmdTagged, cmdUnfiled } from '../lib/tags.mjs';
-import { cmdBug, cmdCause, cmdClasses, cmdRetro } from '../lib/retro.mjs';
+import { cmdAccept, cmdBug, cmdCause, cmdClasses, cmdReject, cmdRetro } from '../lib/retro.mjs';
 
 const VERSION = '2.2.0';
 
@@ -86,10 +86,11 @@ BUGS      a defect closes only once its cause is on record; retros group causes 
   genlock new "TITLE" --bug [--found-by "playtest 2026-11-13"|TICKET] -r .. -c ..  |  genlock bug ID [--found-by ..]
   genlock cause ID --symptom .. --root-cause .. [--why .. ×N] [--contributing ..] --scope one-off|systemic
                    --system .. --class .. --corrective .. --preventive ".."|"none: WHY" --gate "WHERE IT RUNS" [--related T-..]
-  genlock cause ID                              which cause fields are set  |  genlock cause ID --waive FIELD --reason ".."
+  genlock cause ID                              which cause fields are set  |  genlock cause ID --waive FIELD --reason ".."  |  --clear FIELD
   genlock classes [--counts] [--goal G]  |  genlock classes add NAME "MEANING"   the cause-class vocabulary
   genlock retro GOAL [--since YYYY-MM-DD] [--out PATH]   report: clusters, one-offs that look systemic, preventive gaps,
                                                          unclassified bugs, and draft systemic tickets for the user to accept
+  genlock accept T-ID --user-said ".."  |  genlock reject T-ID --user-said ".."   the user's call on a proposed (draft) ticket
 
 GOALS     what the work is for; only the user sets or closes one
   genlock goal list [--all]  |  genlock goal show G  |  genlock goal status G
@@ -279,6 +280,8 @@ const COMMANDS = {
   cause: cmdCause,
   classes: cmdClasses,
   retro: cmdRetro,
+  accept: cmdAccept,
+  reject: cmdReject,
   overview: cmdOverview,
   tell: cmdTell,
   sweep: cmdSweep,
@@ -317,7 +320,7 @@ const COMMANDS = {
 const SHORT = new Set(['r', 'c', 'm']);
 const MULTI = new Set(['r', 'c', 'path', 'resource', 'read', 'decisions']);
 // Repeatable on `cause` only: elsewhere --why is a single reason.
-const CAUSE_MULTI = new Set(['why', 'contributing', 'related']);
+const CAUSE_MULTI = new Set(['why', 'contributing', 'related', 'clear']);
 const FLAGS = new Set(['take-over', 'queued', 'open', 'all', 'json', 'quiet', 'loose', 'draft', 'replace', 'worktree', 'parent-idle', 'still-right', 'records', 'relayed', 'self', 'handoff', 'orphans', 'force', 'hub', 'list', 'bug', 'counts']);
 
 function parse(argv, cmd) {

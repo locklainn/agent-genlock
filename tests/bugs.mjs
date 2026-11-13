@@ -226,3 +226,60 @@ test('the MCP server offers the bug tools and they run', () => {
   const listed = out.find((m) => m.id === 3).result.content[0].text;
   assert.match(listed, new RegExp(D)); assert.doesNotMatch(listed, new RegExp(A));
 });
+
+test('a "none:" gate is no gate, and --clear takes a field back', () => {
+  const id = bug('none-gate', 'Score flickers on round start');
+  cause(id, { symptom: 'flicker', 'root-cause': 'two writers', scope: 'systemic', system: 'hud', class: 'split-ownership',
+    corrective: 'one writer', preventive: 'rule: one writer per widget', gate: 'none: run by hand' });
+  prove(id);
+  assert.match(g('done', id).err, /--gate is not set/, 'a gate of "none: ..." does not count');
+  ok('cause', id, '--clear', 'gate');
+  assert.match(ok('show', id), /gate:\s+\[ \] not set|requirements/);
+  assert.doesNotMatch(ok('show', id), /none: run by hand/);
+  cause(id, { gate: 'pre-commit lint' });
+  ok('done', id);
+});
+
+test('--related takes a space- or comma-separated list', () => {
+  const id = bug('related-list', 'Menu sound plays twice');
+  ok('cause', id, '--related', `${A} ${B}`, '--related', `${C},${D}`);
+  const rel = JSON.parse(ok('show', id, '--json')).bug.related;
+  assert.deepEqual(rel, [A, B, C, D]);
+});
+
+test('retro drafts skip subset and claimed clusters, stay off the goal, and the user accepts or rejects them', () => {
+  ok('goal', 'add', 'Build the houses', '--short', 'houses', '--user-said', 'houses');
+  const mk = (n, cls, sys) => {
+    const id = idOf(ok('new', `House defect number ${n}`, '--bug', '--goal', 'houses', '-r', `house defect ${n} gone`, '-c', 'manual: look'));
+    ok('cause', id, '--symptom', 's', '--root-cause', 'r', '--scope', 'one-off', '--system', sys, '--class', cls, '--corrective', 'c', '--preventive', 'none: rare');
+    return id;
+  };
+  // generator: 3 bugs; walls (a system) holds 2 of them, a subset. models: 2 bugs, claimed by an existing ticket.
+  mk(1, 'missing-generator-rule', 'walls'); mk(2, 'missing-generator-rule', 'walls'); mk(3, 'missing-generator-rule', 'roofs');
+  mk(4, 'data-model-mismatch', 'models'); mk(5, 'data-model-mismatch', 'models-b');
+  const fix = idOf(ok('new', 'One house model shared by editor and game', '--goal', 'houses', '-r', 'editor and game load one model file', '-c', 'node t.mjs'));
+  ok('meta', fix, 'retro.cluster', 'class:data-model-mismatch');
+  const before = JSON.parse(ok('snapshot')).goals.find((x) => x.short === 'houses').progress.total;
+  const out = ok('retro', 'houses', '--out', 'houses.md');
+  const drafts = [...out.matchAll(/proposed: (T-[0-9A-Z]{5}) (.*)/g)];
+  assert.equal(drafts.length, 1, out);
+  assert.match(drafts[0][2], /missing-generator-rule/);
+  assert.match(fs.readFileSync(path.join(ROOT, 'houses.md'), 'utf8'), new RegExp(`- ${fix} One house model`), 'the claiming ticket is listed');
+  assert.equal(JSON.parse(ok('snapshot')).goals.find((x) => x.short === 'houses').progress.total, before, 'drafts do not join the goal');
+  const draft = drafts[0][1];
+  assert.equal(g('reject', draft).code, 1, 'reject needs the user\'s words');
+  assert.equal(g('reject', fix, '--user-said', 'no').code, 1, 'only a draft can be rejected');
+  ok('accept', draft, '--user-said', 'yes do the generator one');
+  const t = JSON.parse(ok('show', draft, '--json'));
+  assert.equal(t.status, 'draft');
+  assert.match(t.goal, /^G-/);
+  // A second proposal, rejected: abandoned with the user's words and never drafted again.
+  mk(6, 'race-condition', 'doors'); mk(7, 'race-condition', 'doors');
+  const out2 = ok('retro', 'houses', '--out', 'houses2.md');
+  const race = /proposed: (T-[0-9A-Z]{5}) .*race-condition/.exec(out2)[1];
+  ok('reject', race, '--user-said', 'not worth it');
+  assert.equal(JSON.parse(ok('show', race, '--json')).status, 'abandoned');
+  ok('retro', 'houses', '--out', 'houses3.md');
+  const gid = JSON.parse(ok('snapshot')).goals.find((x) => x.short === 'houses').id.toLowerCase();
+  assert.equal(ok('tagged', `retro:${gid}`).trim().split('\n').length, 2, 'a rejected draft is not drafted again');
+});
