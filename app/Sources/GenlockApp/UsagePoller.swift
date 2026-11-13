@@ -12,10 +12,13 @@ import GenlockCore
 @MainActor
 final class UsagePoller {
     static let every: TimeInterval = 150
-    static let backoff: TimeInterval = 600
+    nonisolated static let backoff: TimeInterval = 600
 
     private var timer: Timer?
-    private var quietUntil = Date.distantPast
+    /// Kept across relaunches: a restart used to poll at once and walk straight back into the limit.
+    private var quietUntil = Date(timeIntervalSince1970: UserDefaults.standard.double(forKey: "usageQuietUntil")) {
+        didSet { UserDefaults.standard.set(quietUntil.timeIntervalSince1970, forKey: "usageQuietUntil") }
+    }
     private var inFlight = false
 
     func start() {
@@ -37,8 +40,9 @@ final class UsagePoller {
                 case .reading(let r):
                     try? r.save()
                     if r != AppModel.shared.usage { AppModel.shared.usage = r }
-                case .refused:
-                    poller.quietUntil = Date().addingTimeInterval(Self.backoff)
+                case .refused(let retryAfter):
+                    // The server's own Retry-After when it gives one; never sooner than our backoff.
+                    poller.quietUntil = Date().addingTimeInterval(max(Self.backoff, retryAfter ?? 0))
                 case .failed:
                     break
                 }
@@ -46,18 +50,35 @@ final class UsagePoller {
         }
     }
 
-    private enum Result { case reading(UsageReading), refused, failed }
+    private enum Result { case reading(UsageReading), refused(retryAfter: TimeInterval?), failed }
+
+    /// The last attempt's outcome, never the token: Genlock/usage-poll.txt. Without it a failing
+    /// poll is silent, and the meter just vanishes.
+    private nonisolated static func note(_ what: String) {
+        let url = UsageReading.file().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("usage-poll.txt")
+        try? "\(ISO8601DateFormatter().string(from: Date())) \(what)\n".write(to: url, atomically: true, encoding: .utf8)
+    }
 
     private nonisolated static func fetch() async -> Result {
-        guard let token = keychainToken() else { return .failed }
+        guard let token = keychainToken() else { note("no token from the keychain"); return .failed }
         var req = URLRequest(url: URL(string: "https://api.anthropic.com/api/oauth/usage")!, timeoutInterval: 15)
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         req.setValue("oauth-2025-04-20", forHTTPHeaderField: "anthropic-beta")
         req.setValue("claude-cli", forHTTPHeaderField: "User-Agent")
-        guard let (data, response) = try? await URLSession.shared.data(for: req) else { return .failed }
+        guard let (data, response) = try? await URLSession.shared.data(for: req) else { note("no answer from the server"); return .failed }
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-        if status == 429 { return .refused }
-        guard status == 200, let reading = UsageReading.fromServer(data) else { return .failed }
+        if status == 429 {
+            let http = response as? HTTPURLResponse
+            let retry = (http?.value(forHTTPHeaderField: "Retry-After")).flatMap(TimeInterval.init)
+            let body = String(decoding: data.prefix(300), as: UTF8.self)
+            note("HTTP 429, Retry-After \(retry.map { "\(Int($0))s" } ?? "none"); quiet for \(Int(max(Self.backoff, retry ?? 0) / 60)) min. Body: \(body)")
+            return .refused(retryAfter: retry)
+        }
+        guard status == 200, let reading = UsageReading.fromServer(data) else {
+            note("HTTP \(status)" + (status == 200 ? ", reply not understood" : ""))
+            return .failed
+        }
+        note("HTTP 200, reading saved")
         return .reading(reading)
     }
 

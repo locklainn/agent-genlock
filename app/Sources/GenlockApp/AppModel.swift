@@ -36,6 +36,8 @@ final class AppModel {
     /// The plan's usage bars, from the server (UsagePoller), or an older session's status line.
     var usage: UsageReading? = UsageReading.load()
     @ObservationIgnored let usagePoller = UsagePoller()
+    /// CPU, memory and battery for the load panel; samples only while it is switched on.
+    let load = LoadMonitor()
     /// The project whose sessions the bar's second row lists.
     var activeProject: String?
     /// The pane whose terminal last took the keyboard. Observable, unlike the first responder,
@@ -112,12 +114,16 @@ final class AppModel {
             }
         }
         usagePoller.start()
+        load.start()
         watchStore()
         claudeTicker = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { _ in
             MainActor.assumeIsolated {
                 AppModel.shared.lookForClaude()
-                let usage = UsageReading.load()
-                if usage != AppModel.shared.usage { AppModel.shared.usage = usage }
+                // A missing file is not a reading: keep what is shown until a newer one arrives.
+                if let usage = UsageReading.load(), usage != AppModel.shared.usage {
+                    AppModel.shared.usage = usage
+                    AppModel.shared.load.observe(usage)
+                }
             }
         }
         voiceTicker = Timer.scheduledTimer(withTimeInterval: 0.4, repeats: true) { _ in
@@ -590,6 +596,9 @@ final class AppModel {
         let base = VoiceChannel.defaultBase
         for name in (try? FileManager.default.contentsOfDirectory(atPath: base.path)) ?? [] where !keep.contains(name) {
             let folder = base.appendingPathComponent(name)
+            // Only session folders: usage.json lives here too, and deleting it blanked the usage meter on every launch.
+            var isFolder: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folder.path, isDirectory: &isFolder), isFolder.boolValue else { continue }
             // Cleaning up never ends anything. Only you do, by ending the session.
             if !SessionHost.isAlive(socket: SessionHost.socket(in: folder)) { try? FileManager.default.removeItem(at: folder) }
         }
@@ -1202,6 +1211,31 @@ final class AppModel {
             sessions[assistantFolder] = fresh
             launch(fresh, tools: tools)
         }
+    }
+
+    enum Told { case delivered, busy, notRunning }
+
+    /// One message for Tally from the app itself (load alerts). Waits out a turn in progress and
+    /// dictation; starts Tally quietly only when `mayStart`, never in front of you.
+    func tellAssistant(_ text: String, mayStart: Bool) -> Told {
+        let assistant = sessions[assistantFolder]
+        switch LoadDelivery.decide(running: assistant?.isRunning == true, working: assistant?.phase == "working",
+                                   dictating: voice.machine.state != .idle, mayStart: mayStart) {
+        case .wait: return .busy
+        case .notify: return .notRunning
+        case .submit:
+            assistant?.submit(text)
+            return .delivered
+        case .start: break
+        }
+        guard let tools else { return .busy }
+        try? FileManager.default.createDirectory(atPath: assistantFolder, withIntermediateDirectories: true)
+        let fresh = TerminalSession(projectID: assistantFolder)
+        fresh.startsQuietly = true
+        fresh.openingMessage = text
+        sessions[assistantFolder] = fresh
+        launch(fresh, tools: tools)
+        return .delivered
     }
 
     private func tierOrder(_ project: String) -> Int {

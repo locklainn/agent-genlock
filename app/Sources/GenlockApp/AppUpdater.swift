@@ -135,6 +135,13 @@ struct UsageMeter: View {
         TimelineView(.periodic(from: .now, by: 60)) { context in
             if let usage = model.usage {
                 content(usage, now: context.date)
+            } else {
+                // Never vanish silently: say the limits are unknown, and why, from the poller's note.
+                Text("limits –").font(.system(size: 10.5)).foregroundStyle(Theme.textTertiary)
+                    .padding(.horizontal, 9).padding(.vertical, 3)
+                    .background(Color.white.opacity(0.05), in: Capsule())
+                    .overlay(Capsule().strokeBorder(Theme.hairline, lineWidth: 1))
+                    .help("No usage reading yet. Last attempt: " + ((try? String(contentsOf: UsageReading.file().deletingLastPathComponent().deletingLastPathComponent().appendingPathComponent("usage-poll.txt"), encoding: .utf8)) ?? "none"))
             }
         }
     }

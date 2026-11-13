@@ -40,7 +40,8 @@ struct SessionBar: View {
                 .buttonStyle(GlassButtonStyle())
                 .help("Dashboard")
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 8).layoutPriority(-2)
+                LoadMeter()
                 UsageMeter()
                 UpdatePill()
                 PaneModeToggle()

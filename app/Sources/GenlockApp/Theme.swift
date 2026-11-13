@@ -390,6 +390,8 @@ struct GlassButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 12.5, weight: .medium))
+            // A button keeps its one line: a crowded header drops the load chips, never wraps a label.
+            .lineLimit(1).fixedSize()
             .foregroundStyle(active ? Theme.textPrimary : Theme.textSecondary)
             .padding(.horizontal, compact ? 8 : 12).padding(.vertical, compact ? 5 : 7)
             .background(active ? Color.white.opacity(0.16) : (hovering ? Theme.surfaceRaised : Theme.surface), in: Capsule())

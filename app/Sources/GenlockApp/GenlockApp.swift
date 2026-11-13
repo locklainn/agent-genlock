@@ -38,6 +38,9 @@ struct GenlockApp: App {
                 Button(model.voice.speakReplies ? "Turn Spoken Replies Off" : "Turn Spoken Replies On") {
                     model.voice.speakReplies.toggle()
                 }
+                Button(model.load.enabled ? "Hide System Load" : "Show System Load") { model.load.enabled.toggle() }
+                Button(model.load.alertsEnabled ? "Turn Load Alerts Off" : "Turn Load Alerts On") { model.load.alertsEnabled.toggle() }
+                    .disabled(!model.load.enabled)
                 Button("Stop Speaking") { model.voice.stopSpeaking() }.keyboardShortcut(".", modifiers: [.command, .shift])
             }
         }

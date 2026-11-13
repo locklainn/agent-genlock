@@ -30,6 +30,7 @@ import { cmdSnapshot } from '../lib/snapshot.mjs';
 import { cmdDue, cmdRank, cmdShort } from '../lib/rank.mjs';
 import { cmdClearContext, cmdClose, cmdName, cmdOpen, cmdOverview, cmdRemember, cmdRemembered, cmdSweep, cmdTell, runAt } from '../lib/overview.mjs';
 import { cmdSay, cmdSessionState, cmdStatusLine, cmdTitle, cmdVoiceCheck } from '../lib/voice.mjs';
+import { cmdLoad } from '../lib/load.mjs';
 import { cmdWait } from '../lib/waits.mjs';
 import { cmdVoice } from '../lib/voices.mjs';
 import { runMcp } from '../lib/mcp.mjs';
@@ -115,6 +116,7 @@ SPIN-OFFS move a tangent into its own session, once the user says yes
   genlock voice [set|list|sample|install]         this project's Genlock voice: one per project, recorded so it never changes
   genlock title "NAME"  |  genlock title --clear   name this session in the app and on the phone, two to four words
   genlock wait "TEXT" --state testing|running|queued|waiting  |  genlock wait --clear
+  genlock load [--json]  |  genlock load snooze|test cpu|memory|battery|session|weekly   how pressured the Mac is; quiet or test its load alerts
                                   show the app what this session is on, in your words: testing and running
                                   are work happening; queued and waiting are nothing happening until something moves
   genlock sync [-m MSG]                           commit only .genlock/ (never pushes)
@@ -252,6 +254,7 @@ const COMMANDS = {
   'session-state': cmdSessionState,
   wait: cmdWait,
   'status-line': cmdStatusLine,
+  load: cmdLoad,
   claim: cmdClaim,
   release: cmdRelease,
   claims: cmdClaims,

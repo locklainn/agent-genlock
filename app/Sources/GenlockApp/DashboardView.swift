@@ -47,7 +47,9 @@ struct DashboardHeader: View {
                 Pill(text: "\(model.markedCount) selected · release Shift to open", symbol: "rectangle.split.3x1.fill", color: Theme.cyan)
                     .transition(.scale.combined(with: .opacity))
             }
-            Spacer()
+            // Lowest priority, so the load chips are offered the room before the gap takes it.
+            Spacer().layoutPriority(-2)
+            LoadMeter()
             UsageMeter()
             UpdatePill()
             if model.completedGoalCount > 0 {

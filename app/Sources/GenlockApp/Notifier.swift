@@ -30,6 +30,17 @@ enum Notifier {
         }
     }
 
+    /// A load alert with no Assistant to tell: Claude-limit alerts never start one.
+    @MainActor static func postLoad(_ text: String) {
+        guard Bundle.main.bundleIdentifier != nil else { return }
+        let lines = text.split(separator: "\n").map(String.init)
+        let content = UNMutableNotificationContent()
+        content.title = lines.first?.replacingOccurrences(of: "[Load alert] ", with: "") ?? "Load alert"
+        content.body = lines.dropFirst().filter { $0.hasPrefix("- ") }.map { String($0.dropFirst(2)) }.joined(separator: "\n")
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: "load-alert", content: content, trigger: nil))
+    }
+
     static func clear(_ key: String) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [key])
