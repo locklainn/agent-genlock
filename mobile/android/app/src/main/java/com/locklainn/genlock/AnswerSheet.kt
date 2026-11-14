@@ -87,6 +87,9 @@ fun AnswerSheet(walker: Walker) {
                 if (armed?.finish == true && WalkPlan.spokenFinish(all) == armed?.text) return@Dictation
                 // Armed, and the recognizer only settled the same words: leave the box as it is (no "send").
                 if (armed != null && WalkPlan.spokenSend(all) == armed?.text) return@Dictation
+                // Armed, and the recognizer settled the same words minus the "send": that is not more words.
+                val bare = { x: String -> x.lowercase().replace(Regex("[^a-z0-9' ]"), " ").replace(Regex("\\s+"), " ").trim() }
+                if (armed != null && WalkPlan.spokenSend(all) == null && bare(all) == bare(armed?.text ?: "")) return@Dictation
                 typed = all
                 spokenSend.heard(all, System.currentTimeMillis())
                 if (armed != null) { android.util.Log.i("GenlockSend", "disarmed: more words"); armed = null }
@@ -114,13 +117,13 @@ fun AnswerSheet(walker: Walker) {
                 // A review before its last image: keeping a comment and turning the page loses
                 // nothing, so it happens at once, with no countdown bar appearing to move the layout.
                 if (images.isNotEmpty() && page < images.size - 1) {
-                    walker.diag("spoken send: comment kept, next image")
+                    walker.diag("spoken send: comment kept, next image${if (spokenSend.dropped) " (recognizer dropped the send; kept)" else ""}")
                     typed = answer; spokenSend.reset(); turnTo(page + 1)
                     if (!dictation.listening && granted()) dictation.start(typed)
                     return@let
                 }
                 android.util.Log.i("GenlockSend", "armed: \"$answer\"")
-                walker.diag("spoken send armed${if (answer.isBlank()) " (send alone)" else ""} after: \"${spokenSend.lastHeard.takeLast(60)}\"")
+                walker.diag("spoken send armed${if (answer.isBlank()) " (send alone)" else ""}${if (spokenSend.dropped) " (recognizer dropped the send; kept)" else ""} after: \"${spokenSend.lastHeard.takeLast(60)}\"")
                 typed = answer
                 armed = Armed(answer)
             }

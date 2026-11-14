@@ -44,4 +44,16 @@ class SpokenSendTest {
         s.reset(); s.heard("Sand.", 0)
         assertEquals("", s.ready(1200))
     }
+
+    @Test fun aSendTheRecognizerDropsWhenItSettlesStillCounts() {
+        // Measured: the live partial shows "Yes send", then the settled phrase is just "Yes".
+        val s = SpokenSend(quietMs = 1200)
+        s.heard("Yes", 0)
+        s.heard("Yes send", 300)
+        s.heard("Yes.", 600)                         // settled, the send dropped
+        assertEquals("Yes", s.ready(1500))
+        assertEquals(true, s.dropped)
+        s.heard("Yes. And one more thing", 2000)     // real new words still start over
+        assertNull(s.ready(9000))
+    }
 }
