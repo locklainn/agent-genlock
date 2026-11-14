@@ -472,9 +472,17 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
         if (ok) lastKey = 0L
         if (ok && Walker.held.value > 0) focusManager.clearFocus()
     }
+    // Spoken "send": the same rule as the answer sheet. Only the word or the button sends; a pause never does.
+    val spokenSend = remember { SpokenSend() }
+    var armed by remember { mutableStateOf<Armed?>(null) }
     val dictation = remember {
         Dictation(ctx,
-            onText = { settled, partial -> draft = listOf(settled, partial).filter { it.isNotBlank() }.joinToString(" ") },
+            onText = { settled, partial ->
+                draft = listOf(settled, partial).filter { it.isNotBlank() }.joinToString(" ")
+                // Saying "send" sends, as in the answer sheet; more words after it take it back.
+                if (armed != null && WalkPlan.spokenSend(draft) == null) armed = null
+                spokenSend.heard(draft, System.currentTimeMillis())
+            },
             onListening = {
                 listening = it
                 // Music pauses while you talk. A dictated message keeps it paused until its reply is read.
@@ -503,14 +511,42 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
     // sentence is not cut off. The draft clears only once the text has gone.
     fun send() {
         if (dictation.finishing) return
-        val dictating = dictation.stop { text ->
+        armed = null; spokenSend.reset()
+        val dictating = dictation.stop { heard ->
             finishing = false
+            val text = if (dictated) WalkPlan.spokenSend(heard) ?: heard else heard
             val ok = link.say(text, attachment)
             sent(ok)
             if (ok) { draft = ""; attachment = null } else draft = text
         }
         finishing = dictation.finishing   // read after: the callback may already have run
         if (!dictating) { val ok = link.say(draft, attachment); sent(ok); if (ok) { draft = ""; attachment = null } }
+    }
+
+    // Dictating, "send" stood as the last word for SpokenSend.QUIET_MS: arm the countdown.
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(200)
+            if (armed != null || !dictated) continue
+            spokenSend.ready(System.currentTimeMillis())?.let { text ->
+                if (text.isBlank() && attachment == null) { spokenSend.reset(); draft = ""; return@let }
+                link.diag("chat: spoken send armed after: \"${spokenSend.lastHeard.takeLast(60)}\"")
+                draft = text
+                armed = Armed(text)
+            }
+        }
+    }
+    LaunchedEffect(armed) {
+        val a = armed ?: return@LaunchedEffect
+        kotlinx.coroutines.delay(SEND_CONFIRM_MS)
+        if (armed !== a) return@LaunchedEffect
+        armed = null
+        spokenSend.reset()
+        dictation.destroy()
+        Cues.answered()
+        val ok = link.say(a.text, attachment)
+        sent(ok)
+        if (ok) { draft = ""; attachment = null } else draft = a.text
     }
 
     Column(Modifier.fillMaxSize()) {
@@ -554,6 +590,13 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
                     }
                 }
                 if (attachment != null) IconButton(onClick = { attachment = null }) { Icon(Icons.Default.Close, "Remove photo") }
+            }
+        }
+        armed?.let { a ->
+            SendingBar(a, Modifier.padding(horizontal = 12.dp)) {
+                armed = null; spokenSend.reset(); dictation.destroy()
+                if (androidx.core.content.ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) ==
+                    android.content.pm.PackageManager.PERMISSION_GRANTED) dictation.start(draft)
             }
         }
         // Stop and Send do opposite things, so they sit at opposite ends of the row, never side by side.

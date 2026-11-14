@@ -107,6 +107,17 @@ public enum DeskWalk {
     /// 2. about something already heard in this walk: to the very end, marked late;
     /// 3. same project as items still ahead: joins that group (questions before updates);
     /// 4. otherwise: at the end, ahead of any late items.
+    /// Go back to step `to` of the walk (0 is the first): it and every step heard after it return to
+    /// the front of the queue, in order, ahead of what was still to come. The phone's WalkPlan.rewind.
+    /// TJ, 2026-11-14: "if I click a step it should go back, but I should have a way to restart the
+    /// update from the beginning".
+    public static func rewind(walked: [DeskItem], pending: [DeskItem], to: Int) -> (walked: [DeskItem], pending: [DeskItem]) {
+        let k = min(max(to, 0), walked.count)
+        let back = Array(walked[k...])
+        let ids = Set(back.map(\.id))
+        return (Array(walked[..<k]), back + pending.filter { !ids.contains($0.id) })
+    }
+
     public static func merge(_ ahead: [DeskItem], _ incoming: [DeskItem], heard: Set<String>) -> [DeskItem] {
         var q = ahead
         for var i in order(incoming) {

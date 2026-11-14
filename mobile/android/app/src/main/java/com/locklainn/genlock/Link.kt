@@ -265,10 +265,12 @@ class Link(app: Application) : AndroidViewModel(app) {
      * screen: a rotation or theme change rebuilds the activity, and the sheet must still be there after.
      */
     val asking = MutableStateFlow<Item?>(null)
+    /** Words TJ already said for an item before the answer sheet opened on it: (item id, words). */
+    val askSeed = MutableStateFlow<Pair<String, String>?>(null)
     /** A reply just came and a walk is about to start: the arrival screen shows it. */
     val arriving = MutableStateFlow<Arrival?>(null)
-    /** Items heard in the latest walk, in order, for the Focus screen's agenda. Cleared when a walk starts. */
-    val walked = MutableStateFlow<List<Item>>(emptyList())
+    /** Items heard in the latest walk, in order: the steps on the Focus screen's bar, which can be replayed. Cleared when a new update arrives after the last was walked through. */
+    val walked = MutableStateFlow(loadItems("walked"))
 
     /**
      * When TJ last talked to the Assistant away from the phone (the laptop or Remote Control), on the
@@ -289,6 +291,8 @@ class Link(app: Application) : AndroidViewModel(app) {
     }
 
     fun mergeItems(items: List<Item>) {
+        // A new update after the last one was walked through: its steps start a fresh bar.
+        if (!walking && pending.value.isEmpty() && asking.value == null) walked.value = emptyList()
         val head = if (walking) pending.value.take(1) else emptyList()
         val keys = if (walking) heardKeys + head.map { it.key } else emptySet()
         pending.value = head + WalkPlan.merge(pending.value.drop(head.size), items, keys)
@@ -335,7 +339,16 @@ class Link(app: Application) : AndroidViewModel(app) {
         prefs.edit().putLong("heardAt", System.currentTimeMillis()).apply()
         walked.value = walked.value.filterNot { it.id == item.id } + item
         pending.value = pending.value.filterNot { it.id == item.id }
-        answer?.let { held.value = held.value + it }
+        // Heard again after a rewind: a new answer replaces the old one rather than going twice.
+        answer?.let { held.value = held.value.filterNot { h -> h.item.id == item.id } + it }
+        saveItems()
+    }
+
+    /** Back to step [to] of the walk: see [WalkPlan.rewind]. */
+    fun rewind(to: Int) {
+        val (w, p) = WalkPlan.rewind(walked.value, pending.value, to)
+        walked.value = w
+        pending.value = p
         saveItems()
     }
 
@@ -385,6 +398,7 @@ class Link(app: Application) : AndroidViewModel(app) {
     private fun saveItems() {
         val held = JSONArray().apply { this@Link.held.value.forEach { a -> put(JSONObject().put("item", itemJson(a.item)).put("skipped", a.skipped).apply { a.answer?.let { put("answer", it) } }) } }
         prefs.edit().putString("pending", JSONArray().apply { pending.value.forEach { put(itemJson(it)) } }.toString())
+            .putString("walked", JSONArray().apply { walked.value.forEach { put(itemJson(it)) } }.toString())
             .putString("held", held.toString()).apply()
     }
 

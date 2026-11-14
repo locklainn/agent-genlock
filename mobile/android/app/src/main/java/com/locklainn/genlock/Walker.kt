@@ -23,7 +23,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
  * Walks TJ through the pending items one at a time, the way a person would: it reads one, listens
  * for his response, and only then moves on. "next" skips, "repeat" reads it again, "send" (or
  * "that's it", or "stop") sends the answers so far as one batch and ends the walk; anything else is
- * his answer. Silence after an update moves on; silence after a question asks it once more, then
+ * his answer once it ends in "send"; words without it open in the answer sheet to finish, so a pause
+ * never sends. Silence after an update moves on; silence after a question asks it once more, then
  * pauses the walk with the question still first in line. Nothing that arrives meanwhile interrupts:
  * Link merges it into the queue.
  */
@@ -164,16 +165,31 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
     /** The arrival readout finished (or was stopped). */
     fun arrivalDone() = main.post { arrivalSaid?.invoke(); arrivalSaid = null }.let { }
 
-    fun start() {
+    fun start() = begin(fresh = true)
+
+    /** [fresh]: a new walk, so the steps heard last time are cleared; false carries on from a rewind. */
+    private fun begin(fresh: Boolean) {
         link.arriving.value = null
         if (active.value || link.pending.value.isEmpty()) return
         active.value = true
         link.walking = true
-        link.heardKeys.clear()
-        link.walked.value = emptyList()
+        // The steps heard stay on the bar (Play after Pause must not wipe them); a new update clears them as it arrives (Link.mergeItems).
+        if (fresh) link.heardKeys.clear()
         AudioHold.take(ctx, AudioHold.REPLY)
         repeats = 0
         speakCurrent()
+    }
+
+    /**
+     * Go back to step [to] (0: start the whole walk over) and play on from there, whether the walk
+     * is playing, paused or finished.
+     */
+    fun rewind(to: Int) {
+        stopAll()
+        asking.value = null
+        link.rewind(to)
+        diag("rewind to step ${to + 1}")
+        if (active.value) { repeats = 0; speakCurrent() } else begin(fresh = false)
     }
 
     /** Hear this one next: moves it to the front and starts there. */
@@ -210,6 +226,13 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
 
     /** A line for the bridge log, so a phone test can be read from the laptop. */
     fun diag(text: String) = link.diag(text)
+
+    /** The words said for [id] before its answer sheet opened, once; "" when none. */
+    fun takeSeed(id: String): String {
+        val s = link.askSeed.value?.takeIf { it.first == id }?.second.orEmpty()
+        link.askSeed.value = null
+        return s
+    }
 
     /** The conversation, for a review's images: each arrives as a file line the bridge sent with the reply. */
     val lines get() = link.lines
@@ -408,12 +431,25 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
 
     private fun handle(item: Item, heard: String) {
         if (heard.isBlank()) return silence(item)
-        when (val s = WalkPlan.said(heard)) {
+        when (val s = WalkPlan.saidOnPause(heard)) {
             Said.Next -> advance(item, if (item.isQuestion) Answer(item, skipped = true) else null)
             Said.Repeat -> speakCurrent()
             Said.Flush -> flush()
             is Said.Reply -> advance(item, Answer(item, s.text))
+            is Said.Unsent -> hold(item, s.text)
         }
+    }
+
+    /**
+     * TJ started answering and paused: the walk stops here, and his words open in the answer sheet,
+     * whose mic carries on through every pause. Only "send" or the send button sends them.
+     */
+    private fun hold(item: Item, words: String) {
+        stopAll()
+        release()
+        diag("held for send: \"${words.takeLast(60)}\"")
+        link.askSeed.value = item.id to words
+        asking.value = item
     }
 
     /**

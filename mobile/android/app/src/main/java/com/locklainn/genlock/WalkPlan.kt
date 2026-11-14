@@ -52,6 +52,13 @@ sealed class Said {
     /** Send the answers so far as one batch and end the walk; unheard items stay for next time. */
     object Flush : Said()
     data class Reply(val text: String) : Said()
+    /**
+     * Words that did not end in "send": not an answer yet. The walk stops and holds them in the
+     * answer sheet, which keeps listening through any pause until TJ says send or taps it. A pause
+     * never sends (TJ, 2026-11-14, in the car: "wait for the send word or wait for a button click,
+     * not the timed-on gaps").
+     */
+    data class Unsent(val text: String) : Said()
 }
 
 object WalkPlan {
@@ -312,6 +319,28 @@ object WalkPlan {
             t in flush -> Said.Flush
             else -> Said.Reply(heard.trim())
         }
+    }
+
+    /**
+     * What words heard after an item mean, when the recognizer stopped on a pause. Commands stand
+     * as they are. Anything else is an answer only if it ends in "send" (then that word goes);
+     * otherwise it is [Said.Unsent], held for TJ to finish.
+     */
+    /**
+     * Go back to step [to] of the walk (0 is the first): it and every step heard after it return to
+     * the front of the queue, in order, ahead of what was still to come. TJ, 2026-11-14: "if I click
+     * a step it should go back, but I should have a way to restart the update from the beginning".
+     * Returns (walked, pending).
+     */
+    fun rewind(walked: List<Item>, pending: List<Item>, to: Int): Pair<List<Item>, List<Item>> {
+        val k = to.coerceIn(0, walked.size)
+        val back = walked.drop(k)
+        return walked.take(k) to (back + pending.filterNot { p -> back.any { it.id == p.id } })
+    }
+
+    fun saidOnPause(heard: String): Said = when (val s = said(heard)) {
+        is Said.Reply -> spokenSend(s.text)?.let { if (it.isBlank()) Said.Flush else Said.Reply(it) } ?: Said.Unsent(s.text)
+        else -> s
     }
 
     /**

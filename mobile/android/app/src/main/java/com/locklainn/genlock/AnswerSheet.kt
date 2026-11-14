@@ -52,7 +52,9 @@ fun AnswerSheet(walker: Walker) {
     val item by walker.asking.collectAsStateWithLifecycle()
     val i = item ?: return
     val ctx = LocalContext.current
-    var typed by remember(i.id) { mutableStateOf("") }
+    // Words already said before the sheet opened (an update TJ began answering), taken once.
+    val seed = remember(i.id) { walker.takeSeed(i.id) }
+    var typed by remember(i.id) { mutableStateOf(seed) }
     var listening by remember(i.id) { mutableStateOf(false) }
     var finishing by remember(i.id) { mutableStateOf(false) }
     var problem by remember(i.id) { mutableStateOf<String?>(null) }
@@ -164,7 +166,7 @@ fun AnswerSheet(walker: Walker) {
         if (granted()) dictation.start(typed)
     }
     // On as the sheet opens, so TJ can just talk.
-    LaunchedEffect(i.id) { if (granted()) dictation.start("") else problem = "Genlock needs the microphone to hear a spoken answer. Tap or type it." }
+    LaunchedEffect(i.id) { if (granted()) dictation.start(seed) else problem = "Genlock needs the microphone to hear a spoken answer. Tap or type it." }
     fun toggleMic() {
         problem = null
         if (dictation.listening) { dictation.stop { finishing = false }; finishing = dictation.finishing; return }
@@ -399,10 +401,10 @@ class Armed(val text: String, val finish: Boolean = false) { val at = System.cur
 
 /** "Sending in a moment": a bar that drains over [SEND_CONFIRM_MS], with Cancel. */
 @Composable
-private fun SendingBar(a: Armed, step: Boolean = false, cancel: () -> Unit) {
+fun SendingBar(a: Armed, modifier: Modifier = Modifier, step: Boolean = false, cancel: () -> Unit) {
     val left = remember(a) { Animatable(1f) }
     LaunchedEffect(a) { left.animateTo(0f, tween(SEND_CONFIRM_MS.toInt(), easing = LinearEasing)) }
-    Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(QUESTION.copy(alpha = 0.18f)).padding(12.dp)) {
+    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(QUESTION.copy(alpha = 0.18f)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(if (a.finish) "Heard \"finish review\". Sending every comment… cancel to stop it."
                 else if (step) "Heard \"send\". Keeping this comment, next image…"

@@ -84,12 +84,22 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
                 var settled by remember { mutableStateOf(false) }
                 LaunchedEffect(idle) { settled = false; if (idle) { kotlinx.coroutines.delay(CAUGHT_UP_MS); settled = true } }
                 val grid by link.grid.collectAsStateWithLifecycle()
-                if (idle && settled) AtWork(grid)
-                else CaughtUp(name, outgoing?.stage, answered, walked.size, { walker.flush() }, { outgoing?.let { link.retry(it) } })
+                // The walk is over, but its steps can be heard again from the first.
+                val again = { walker.rewind(0) }
+                if (idle && settled) AtWork(grid, walked.size, again)
+                else CaughtUp(name, outgoing?.stage, answered, walked.size, { walker.flush() }, { outgoing?.let { link.retry(it) } }, again)
                 return@CompositionLocalProvider
             }
 
-            Segments(walked, pending, active)
+            // Each step is a tap target: an earlier one goes back to it, the one playing starts it again,
+            // a later one jumps ahead.
+            Segments(walked, pending, active) { n ->
+                when {
+                    n < walked.size -> walker.rewind(n)
+                    n == walked.size -> if (active) walker.repeat() else walker.start()
+                    else -> pending.getOrNull(n - walked.size)?.let { walker.jumpTo(it) }
+                }
+            }
             Spacer(Modifier.height(10.dp))
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("DIGEST  ·  ${walked.size + 1} OF ${walked.size + pending.size}", style = MaterialTheme.typography.labelMedium,
@@ -143,7 +153,7 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
             }
 
             CountdownBar(walker, Color.White, Color.White.copy(alpha = 0.2f), Modifier.fillMaxWidth().padding(bottom = 6.dp))
-            Transport(active, onPlay = { if (active) walker.pause() else walker.start() }, onRepeat = { if (active) walker.repeat() else walker.start() }, onNext = { walker.next() })
+            Transport(active, onRestart = { walker.rewind(0) }, onPlay = { if (active) walker.pause() else walker.start() }, onRepeat = { if (active) walker.repeat() else walker.start() }, onNext = { walker.next() })
             Spacer(Modifier.height(10.dp))
             // The caption carries the body only; the headline is already up top in big type.
             val body = now.say.replace(Regex("[*`#_]"), "")
@@ -156,18 +166,27 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
     }
 }
 
-/** One segment per item in the walk, like story progress: heard full, now bright, questions amber. */
+/**
+ * One segment per item in the walk, like story progress: heard full, now bright, questions amber.
+ * The bar is drawn 4dp tall but each segment's hit target is the full 32dp row, so a thumb can
+ * land on one; [onTap] gets its index across heard and pending.
+ */
 @Composable
-private fun Segments(walked: List<Item>, pending: List<Item>, active: Boolean) {
-    Row(Modifier.fillMaxWidth().height(4.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        walked.forEach { Box(Modifier.weight(1f).fillMaxHeight().clip(CircleShape).background(Color.White.copy(alpha = 0.85f))) }
+private fun Segments(walked: List<Item>, pending: List<Item>, active: Boolean, onTap: (Int) -> Unit) {
+    Row(Modifier.fillMaxWidth().height(32.dp), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        @Composable
+        fun RowScope.Seg(n: Int, c: Color, label: String) =
+            Box(Modifier.weight(1f).fillMaxHeight().clickable(onClickLabel = label) { onTap(n) }, contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().height(4.dp).clip(CircleShape).background(c))
+            }
+        walked.forEachIndexed { n, _ -> Seg(n, Color.White.copy(alpha = 0.85f), "Go back to step ${n + 1}") }
         pending.forEachIndexed { n, i ->
             val c = when {
                 n == 0 -> if (i.isQuestion) QUESTION else Color.White
                 i.isQuestion -> QUESTION.copy(alpha = 0.45f)
                 else -> Color.White.copy(alpha = 0.25f)
             }
-            Box(Modifier.weight(1f).fillMaxHeight().clip(CircleShape).background(if (n == 0 && !active) c.copy(alpha = 0.6f) else c))
+            Seg(walked.size + n, if (n == 0 && !active) c.copy(alpha = 0.6f) else c, if (n == 0) "Hear this step again" else "Jump to step ${walked.size + n + 1}")
         }
     }
 }
@@ -225,8 +244,10 @@ private fun UpNext(i: Item, more: Int, onTap: () -> Unit) {
 
 /** Repeat · big pause/play · next. Pause stops the voice at once and keeps your place. */
 @Composable
-private fun Transport(active: Boolean, onPlay: () -> Unit, onRepeat: () -> Unit, onNext: () -> Unit) {
+private fun Transport(active: Boolean, onRestart: () -> Unit, onPlay: () -> Unit, onRepeat: () -> Unit, onNext: () -> Unit) {
     Row(Modifier.fillMaxWidth().padding(top = 8.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
+        // Every step from the first: for a walk where more than one was missed.
+        IconButton(onClick = onRestart, Modifier.size(56.dp)) { Icon(Icons.Default.SkipPrevious, "Start over from the first step", Modifier.size(34.dp)) }
         IconButton(onClick = onRepeat, Modifier.size(56.dp)) { Icon(Icons.Default.Replay, "Repeat", Modifier.size(30.dp)) }
         FilledIconButton(onClick = onPlay, Modifier.size(76.dp),
             colors = IconButtonDefaults.filledIconButtonColors(containerColor = Color.White, contentColor = INK)) {
@@ -274,13 +295,13 @@ private const val CAUGHT_UP_MS = 5_000L
  * working now, "holding" (its turn is over but a job it started still runs) is paused.
  */
 @Composable
-private fun ColumnScope.AtWork(grid: Grid?) {
+private fun ColumnScope.AtWork(grid: Grid?, heard: Int, again: () -> Unit) {
     val rows = grid?.projects.orEmpty().flatMap { p -> p.sessions.filter { it.running }.map { p to it } }
     val working = rows.filter { it.second.phase == "working" }
     val paused = rows.filter { it.second.phase == "holding" }
     val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "atwork").animateFloat(0.35f, 1f,
         androidx.compose.animation.core.infiniteRepeatable(tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "dot")
-    Spacer(Modifier.height(24.dp))
+    if (heard > 0) HearAgain(heard, again) else Spacer(Modifier.height(24.dp))
     Text("AT WORK NOW", style = MaterialTheme.typography.titleSmall, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.75f))
     Spacer(Modifier.height(10.dp))
     if (grid == null || grid.mac != "open") {
@@ -327,7 +348,7 @@ private fun ColumnScope.AtWork(grid: Grid?) {
 
 /** Nothing left to walk. [stage]: where your latest message is, while its reply has not come. */
 @Composable
-private fun ColumnScope.CaughtUp(name: String, stage: Stage?, answered: Int, heard: Int, send: () -> Unit, retry: () -> Unit) {
+private fun ColumnScope.CaughtUp(name: String, stage: Stage?, answered: Int, heard: Int, send: () -> Unit, retry: () -> Unit, again: () -> Unit) {
     Spacer(Modifier.weight(1f))
     Text(when (stage) {
         Stage.SENDING -> "Sending…"
@@ -357,7 +378,18 @@ private fun ColumnScope.CaughtUp(name: String, stage: Stage?, answered: Int, hea
         Spacer(Modifier.height(18.dp))
         Button(onClick = send, colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = INK)) { Text("Send $answered answer${if (answered == 1) "" else "s"}") }
     }
+    if (heard > 0 && stage == null) { Spacer(Modifier.height(12.dp)); HearAgain(heard, again) }
     Spacer(Modifier.weight(1f))
+}
+
+/** Plays the last walk again from its first step. */
+@Composable
+private fun HearAgain(heard: Int, again: () -> Unit) {
+    OutlinedButton(onClick = again, border = androidx.compose.foundation.BorderStroke(1.dp, Color.White.copy(alpha = 0.5f)),
+        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)) {
+        Icon(Icons.Default.Replay, null, Modifier.size(18.dp)); Spacer(Modifier.width(8.dp))
+        Text(if (heard == 1) "Hear it again" else "Hear all $heard again")
+    }
 }
 
 private fun Color.compositeOver(bg: Color): Color {

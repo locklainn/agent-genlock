@@ -157,4 +157,36 @@ class WalkPlanTest {
 
     @Test fun anOlderBridgeStillGetsTheNewestGuess() =
         assertEquals("nightmaremode: Yes, take turns", WalkPlan.youSaid(false, "", null, said))
+
+    // TJ, 2026-11-14 in the car: words after an update were sent on the first pause.
+    @Test fun wordsAfterAnUpdateWithoutSendAreHeldNotSent() {
+        assertEquals(Said.Unsent("tell the belly crawl session to use the"), WalkPlan.saidOnPause("tell the belly crawl session to use the"))
+        assertEquals(Said.Unsent("yes go with option two"), WalkPlan.saidOnPause("yes go with option two"))
+    }
+
+    @Test fun wordsEndingInSendAreTheAnswerWithoutTheSendWord() =
+        assertEquals(Said.Reply("yes go with option two"), WalkPlan.saidOnPause("yes go with option two send"))
+
+    @Test fun commandsOnAPauseStillWork() {
+        assertEquals(Said.Next, WalkPlan.saidOnPause("next"))
+        assertEquals(Said.Repeat, WalkPlan.saidOnPause("repeat"))
+        assertEquals(Said.Flush, WalkPlan.saidOnPause("send"))
+        assertEquals(Said.Flush, WalkPlan.saidOnPause("send it"))
+    }
+
+    // TJ, 2026-11-14: a missed step could not be heard again.
+    @Test fun tappingAnEarlierStepPutsItAndEveryLaterHeardStepBackInFront() {
+        val (w, p) = WalkPlan.rewind(listOf(item("a", "g", "1"), item("b", "g", "2"), item("c", "g", "3")), listOf(item("d", "g", "4")), 1)
+        assertEquals(listOf("a"), ids(w)); assertEquals(listOf("b", "c", "d"), ids(p))
+    }
+
+    @Test fun restartPutsEveryStepBackFromTheFirst() {
+        val (w, p) = WalkPlan.rewind(listOf(item("a", "g", "1"), item("b", "g", "2")), emptyList(), 0)
+        assertEquals(emptyList<String>(), ids(w)); assertEquals(listOf("a", "b"), ids(p))
+    }
+
+    @Test fun rewindingNeverDuplicatesAStepStillPending() {
+        val (_, p) = WalkPlan.rewind(listOf(item("a", "g", "1")), listOf(item("a", "g", "1"), item("b", "g", "2")), 0)
+        assertEquals(listOf("a", "b"), ids(p))
+    }
 }

@@ -182,6 +182,8 @@ final class DeskModel {
     }
 
     private func merge(_ items: [DeskItem]) {
+        // A new update after the last one was walked through: its steps start a fresh bar.
+        if !active && pending.isEmpty && phase != .answering { walked = [] }
         let head = active ? Array(pending.prefix(1)) : []
         let keys = active ? heardKeys.union(head.map(\.key)) : []
         pending = head + DeskWalk.merge(Array(pending.dropFirst(head.count)), items, heard: keys)
@@ -261,6 +263,19 @@ final class DeskModel {
         read()
     }
 
+    /// Go back to step `to` (0: start the whole update over) and play on from there, whether the
+    /// walk is playing, paused or finished.
+    func rewind(to: Int) {
+        let r = DeskWalk.rewind(walked: walked, pending: pending, to: to)
+        walked = r.walked
+        pending = r.pending
+        token += 1
+        stopSpeaking()
+        arriving = nil
+        active = true
+        read()
+    }
+
     func jump(to item: DeskItem) {
         pending = [item] + pending.filter { $0.id != item.id }
         if active { read() }
@@ -285,7 +300,11 @@ final class DeskModel {
         heardKeys.insert(item.key)
         walked = walked.filter { $0.id != item.id } + [item]
         pending.removeAll { $0.id == item.id }
-        held.append(answer)
+        // Heard again after a rewind: a real answer replaces the old one; a pass keeps it.
+        if answer.answer != nil || answer.skipped || !held.contains(where: { $0.item.id == item.id }) {
+            held.removeAll { $0.item.id == item.id }
+            held.append(answer)
+        }
     }
 
     private func advance() {
@@ -513,7 +532,13 @@ private struct WalkCard: View {
         if let now = model.now {
             let accent = deskProjectColor(now.project.isEmpty ? model.assistantName : now.project)
             VStack(alignment: .leading, spacing: 0) {
-                Segments(walked: model.walked.count, pending: model.pending, active: model.active).padding(.top, 34)
+                Segments(walked: model.walked.count, pending: model.pending, active: model.active) { n in
+                    // An earlier step goes back to it, the one playing starts again, a later one jumps ahead.
+                    if n < model.walked.count { model.rewind(to: n) }
+                    else if n == model.walked.count { model.repeatItem() }
+                    else if model.pending.indices.contains(n - model.walked.count) { model.jump(to: model.pending[n - model.walked.count]) }
+                }
+                .padding(.top, 34)
                 HStack {
                     Text("DIGEST  ·  \(model.walked.count + 1) OF \(model.walked.count + model.pending.count)")
                         .font(.system(size: 11, weight: .medium)).tracking(1.6).foregroundStyle(.white.opacity(0.7))
@@ -609,6 +634,8 @@ private struct WalkCard: View {
     private var transport: some View {
         HStack(spacing: 28) {
             Spacer()
+            Button { model.rewind(to: 0) } label: { Image(systemName: "backward.end.fill").font(.system(size: 22)) }
+                .buttonStyle(.plain).help("Start over from the first step").keyboardShortcut(.leftArrow, modifiers: [.command, .shift])
             Button { model.repeatItem() } label: { Image(systemName: "gobackward").font(.system(size: 22)) }
                 .buttonStyle(.plain).help("Repeat").keyboardShortcut("r", modifiers: [.command])
             Button { if model.active { model.pause() } else { model.start() } } label: {
@@ -749,19 +776,25 @@ private struct ReviewImages: View {
     }
 }
 
+/// One segment per step. Drawn 4pt tall, clickable over a 20pt band so the pointer can find one.
 private struct Segments: View {
     let walked: Int
     let pending: [DeskItem]
     let active: Bool
+    let onTap: (Int) -> Void
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(0..<walked, id: \.self) { _ in Capsule().fill(.white.opacity(0.85)) }
+            ForEach(0..<walked, id: \.self) { n in seg(n, .white.opacity(0.85), "Go back to step \(n + 1)") }
             ForEach(Array(pending.enumerated()), id: \.element.id) { n, i in
                 let c: Color = n == 0 ? (i.isQuestion ? questionColor : .white) : (i.isQuestion ? questionColor.opacity(0.45) : .white.opacity(0.25))
-                Capsule().fill(n == 0 && !active ? c.opacity(0.6) : c)
+                seg(walked + n, n == 0 && !active ? c.opacity(0.6) : c, n == 0 ? "Hear this step again" : "Jump to step \(walked + n + 1)")
             }
         }
-        .frame(height: 4)
+        .frame(height: 20)
+    }
+    private func seg(_ n: Int, _ c: Color, _ help: String) -> some View {
+        Capsule().fill(c).frame(height: 4).frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle()).onTapGesture { onTap(n) }.help(help)
     }
 }
 
@@ -1017,6 +1050,10 @@ private struct DashPane: View {
             }
             if model.answered > 0 {
                 Button("Send \(model.answered) answer\(model.answered == 1 ? "" : "s")") { model.flush() }.buttonStyle(WhitePill()).padding(.top, 10)
+            }
+            if heard > 0 && stage == nil {
+                Button { model.rewind(to: 0) } label: { Label(heard == 1 ? "Hear it again" : "Hear all \(heard) again", systemImage: "gobackward") }
+                    .buttonStyle(.bordered).tint(.white).padding(.top, 10)
             }
             Spacer()
         }

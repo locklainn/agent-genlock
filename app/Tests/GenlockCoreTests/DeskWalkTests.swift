@@ -111,4 +111,17 @@ final class DeskWalkTests: XCTestCase {
                        "Image 2 of 4 (b.png, the side door): too dark\nImage 3 of 4 (c.png): love it")
         XCTAssertNil(DeskWalk.reviewAnswer(it.images, [0: " "]))
     }
+
+    // TJ, 2026-11-14: a missed step could not be heard again.
+    func testTappingAnEarlierStepPutsItAndEveryLaterHeardStepBackInFront() {
+        let r = DeskWalk.rewind(walked: [item("a", "g", "1"), item("b", "g", "2"), item("c", "g", "3")], pending: [item("d", "g", "4")], to: 1)
+        XCTAssertEqual(r.walked.map(\.id), ["a"])
+        XCTAssertEqual(r.pending.map(\.id), ["b", "c", "d"])
+    }
+
+    func testRestartPutsEveryStepBackFromTheFirstWithoutDuplicates() {
+        let r = DeskWalk.rewind(walked: [item("a", "g", "1"), item("b", "g", "2")], pending: [item("b", "g", "2"), item("c", "g", "3")], to: 0)
+        XCTAssertEqual(r.walked.map(\.id), [])
+        XCTAssertEqual(r.pending.map(\.id), ["a", "b", "c"])
+    }
 }
