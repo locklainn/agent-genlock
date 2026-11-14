@@ -220,6 +220,19 @@ public enum SplitLayout {
     /// Showing every session at once fills up to this many panes. Marking cards by hand stops at six.
     public static let maxPanes = 12
 
+    /// Where a session that has just opened goes in the panes on screen, or nil to leave the
+    /// screen alone. It joins after the last pane of its project, so a grid that shows its project
+    /// (its own, or every project's) takes it in. `beside` lets it join a single pane of its project:
+    /// an agent's open lands beside the session that asked, which is what the user is looking at;
+    /// Command-N, the user's own, still opens alone.
+    public static func joinIndex(visible: [String], project: (String) -> String?, newProject: String,
+                                 key: String, beside: Bool) -> Int? {
+        let fewest = beside ? 1 : 2
+        guard !visible.contains(key), visible.count >= fewest, maxPanes > visible.count,
+              let last = visible.lastIndex(where: { project($0) == newProject }) else { return nil }
+        return last + 1
+    }
+
     /// Terminal text size with this many panes on screen: smaller as each pane gets less room.
     public static func fontSize(panes: Int) -> Double {
         switch panes {

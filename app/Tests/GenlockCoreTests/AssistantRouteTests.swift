@@ -24,6 +24,34 @@ final class AssistantRouteTests: XCTestCase {
         XCTAssertEqual(RelayRouting.route(of: RelayReport(kind: "message", text: "x"), fromProject: "/p/alpha", subs: subs), .tally, "a project Assistant's message goes up to Tally")
     }
 
+    /// 13 Nov 2026: a nightmaremode session working for 30 minutes on what its own project
+    /// Assistant passed it held every report meant for Tally the full holdSeconds, so the user
+    /// had to ask. Only a reply owed to Tally holds Tally.
+    func testOnlyARepliesOwedToTallyHoldTally() {
+        let folders = subs.map(\.folder)
+        XCTAssertTrue(RelayRouting.owesTally(owedTo: nil, subFolders: folders), "Tally told it directly")
+        XCTAssertFalse(RelayRouting.owesTally(owedTo: "/ch/sub-a", subFolders: folders), "it owes nightmaremode's Assistant, not Tally")
+        XCTAssertFalse(RelayRouting.owesTally(owedTo: "/ch/sub-a/", subFolders: folders), "however the path is spelled")
+        XCTAssertTrue(RelayRouting.owesTally(owedTo: "/ch/gone", subFolders: folders), "its asker closed, so the reply comes to Tally")
+        XCTAssertTrue(RelayRouting.owes(owedTo: "/ch/sub-a", sub: "/ch/sub-a"))
+        XCTAssertFalse(RelayRouting.owes(owedTo: "/ch/sub-b", sub: "/ch/sub-a"), "another project's Assistant does not hold this one")
+        XCTAssertFalse(RelayRouting.owes(owedTo: nil, sub: "/ch/sub-a"), "owed to Tally")
+    }
+
+    func testAChannelSaysWhoseReplyItOwes() throws {
+        let base = FileManager.default.temporaryDirectory.appendingPathComponent("owed-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: base) }
+        let channel = VoiceChannel(session: "s1", base: base)
+        try FileManager.default.createDirectory(at: channel.folder, withIntermediateDirectories: true)
+        XCTAssertNil(channel.owedTo)
+        let file = channel.folder.appendingPathComponent("awaiting-reply.json")
+        try Data(#"{"at":1,"kind":"do"}"#.utf8).write(to: file)
+        XCTAssertTrue(channel.owesReply)
+        XCTAssertNil(channel.owedTo, "no from: Tally asked")
+        try Data(#"{"at":1,"from":"/ch/sub-a","kind":"do"}"#.utf8).write(to: file)
+        XCTAssertEqual(channel.owedTo, "/ch/sub-a")
+    }
+
     func testRelayRoutingBriefsAMessageAsFromAnAgent() {
         let text = RelayRouting.briefing([(project: "nightmaremode", session: "main", task: "rig", report: RelayReport(kind: "message", text: "need a\nlicence"))])
         XCTAssertTrue(text.contains("nightmaremode [main, on rig] sent you a message: \"need a / licence\""), text)

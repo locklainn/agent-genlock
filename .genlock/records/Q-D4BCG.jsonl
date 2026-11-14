@@ -1,0 +1,2 @@
+{"e":"beb37af8579a","at":"2026-11-13T23:01:49.372Z","by":"4018803d-3620-48a1-9467-bde0946892f6","op":"ask","to":"user","about":"T-D9C4Y","text":"The fix for reports reaching Tally late is built but not live. Installing it means relaunching the Genlock app, which interrupts every running session (Tally, nightmaremode's director migration). Relaunch now, or wait until you're back at the laptop?"}
+{"e":"f574f9260274","at":"2026-11-14T01:49:56.275Z","by":"cea11119-4a88-404b-b7e2-7cf904a61556","op":"answer","text":"Restart now","user_said":"Restart now Send"}

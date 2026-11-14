@@ -197,12 +197,15 @@ public struct SwapRequest: Codable, Equatable {
     public var title: String
     public var prompt: String
     public var user_said: String?
+    /// What the app's receipt is named after (receipt-ID.json).
+    public var id: String?
 
-    public init(goal: String, title: String, prompt: String, user_said: String? = nil) {
+    public init(goal: String, title: String, prompt: String, user_said: String? = nil, id: String? = nil) {
         self.goal = goal
         self.title = title
         self.prompt = prompt
         self.user_said = user_said
+        self.id = id
     }
 }
 

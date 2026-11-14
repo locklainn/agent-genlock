@@ -19,7 +19,7 @@ fs.mkdirSync(CWD);
 let pass = 0; const fails = [];
 
 // The cap tests fill a project to 4 sessions; the real default (12) is checked on its own below.
-const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT, GENLOCK_SESSION_CAP: '4' };
+const baseEnv = { ...process.env, GENLOCK_TERMINAL: 'print', HOME: ROOT, USERPROFILE: ROOT, GENLOCK_SESSION_CAP: '4', GENLOCK_RECEIPT_MS: '0' };
 // Run from a session inside the app, these would reach the live app and open real spin-offs in it.
 delete baseEnv.GENLOCK_APP_CHANNEL;
 delete baseEnv.GENLOCK_SESSION;

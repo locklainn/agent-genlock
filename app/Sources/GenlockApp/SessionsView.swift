@@ -682,7 +682,8 @@ struct PaneView: View {
     @State private var showingPhone = false
 
     /// In a grid, only the pane you are in, or the one under the pointer, shows its buttons.
-    /// The rest fade but keep their room, so names do not shift as the pointer passes.
+    /// The rest fade. In a grid they float over the name rather than taking room, so names neither
+    /// shift as the pointer passes nor shrink to an ellipsis.
     private var showsControls: Bool {
         guard isSplit else { return true }
         return hovering || isKeyPane
@@ -795,93 +796,26 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
-            HStack(spacing: 10) {
-            if model.isSubassistant(sessionKey) {
-                Button { model.projectStatus(projectID, replacing: sessionKey) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checklist")
-                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
-                    }
-                }
-                .buttonStyle(GlassButtonStyle(compact: isSplit))
-                .help("Start \(name)'s Assistant fresh, go through every session in this project, and suggest what to close or finish")
-                SprintReportPaneButton(compact: isSplit, help: "Ask \(name)'s Assistant for this project's sprint report: the sprint that just ended if one did, then this one") {
-                    model.sessions[sessionKey]?.submit(SessionLaunch.sprintReport(all: false))
-                }
-            }
-            if projectID == model.assistantFolder {
-                Button { model.statusSweep() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checklist")
-                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
-                    }
-                }
-                .buttonStyle(GlassButtonStyle(compact: isSplit))
-                .help("Go through every session in every project, say where each stands, and suggest what to close or finish")
-                SprintReportPaneButton(compact: isSplit, help: "Ask \(model.assistantName) for the sprint report across every project: the sprint that just ended if one did, then this one") {
-                    model.openAssistant()
-                    model.sessions[model.assistantFolder]?.submit(SessionLaunch.sprintReport(all: true))
-                }
-                Button { model.remoteControl.toggle() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: model.remoteControl ? "iphone.radiowaves.left.and.right" : "iphone")
-                        if !isSplit { Text(model.remoteControl ? "Remote on" : "Remote").font(.system(size: 12, weight: .semibold)).fixedSize() }
-                    }
-                    .foregroundStyle(model.remoteControl ? Theme.green : Theme.textPrimary)
-                }
-                .buttonStyle(GlassButtonStyle(compact: isSplit))
-                .help(model.remoteControl
-                      ? "Remote Control is on: reach \(model.assistantName) from the Claude Code app or claude.ai/code. Click to turn it off."
-                      : "Turn on Remote Control, to reach \(model.assistantName) from the Claude Code app on your phone or claude.ai/code. It restarts on the same conversation.")
-                .accessibilityLabel("Remote Control")
-                Button { showingPhone.toggle() } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "bubble.left.and.text.bubble.right")
-                        if !isSplit { Text("Phone").font(.system(size: 12, weight: .semibold)).fixedSize() }
-                    }
-                }
-                .buttonStyle(GlassButtonStyle(active: showingPhone, compact: isSplit))
-                .popover(isPresented: $showingPhone, arrowEdge: .bottom) {
-                    PhoneThreadView(assistantFolder: model.assistantFolder).environment(model)
-                }
-                .help("Everything you said from the phone and how \(model.assistantName) answered, across every conversation. A status update starts a fresh one, so the terminal shows only the newest.")
-                .accessibilityLabel("Phone thread")
-            }
-            if let session = model.sessions[sessionKey], session.isRunning,
-               projectID != model.assistantFolder, !model.isSubassistant(sessionKey) {
-                Button { session.submit(SessionLaunch.sessionStatus) } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "text.bubble")
-                        if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
-                    }
-                }
-                .buttonStyle(GlassButtonStyle(compact: isSplit))
-                .help("Ask this session where its task stands: what is proved, what is left, what is blocking")
-            }
-            if let session = model.sessions[sessionKey], session.isRunning {
-                Button { session.submit(DoneCheck.question) } label: { Image(systemName: "questionmark.bubble") }
-                    .buttonStyle(IconButtonStyle())
-                    .help("Are you done with your work? (⌘⇧Y)")
-                    .accessibilityLabel("Ask if done")
-            }
-            MicButton(listening: listeningHere, compact: isSplit) { model.pressVoice(for: sessionKey) }
-            if projectID != model.assistantFolder {
-                Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
-                    .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
-            }
-            if isSplit {
-                Button { model.hidePane(sessionKey) } label: { Image(systemName: "rectangle.split.2x1.slash") }
-                    .buttonStyle(IconButtonStyle()).help("Take this pane out of the split. The session keeps running in its tab.").accessibilityLabel("Hide from split")
-            }
-            Button { model.requestClose([sessionKey]) } label: { Image(systemName: "xmark") }
-                .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
-            }
-            // Listening keeps Talk lit wherever the pointer is: Send must stay pressable.
-            .opacity(showsControls || listeningHere ? 1 : 0)
-            .allowsHitTesting(showsControls || listeningHere)
-            .animation(.easeOut(duration: 0.15), value: showsControls)
+            // A grid pane's buttons float over the header's end instead of taking room in the row:
+            // reserved while faded, they left a 300pt pane about 30pt for its name, which showed
+            // as a bare "…" in every pane but the one you were in.
+            // Holds the row at the buttons' height, with no width, so the header does not shrink.
+            if isSplit { controls.hidden().frame(width: 0).clipped() } else { controls }
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
+        .overlay(alignment: .trailing) {
+            if isSplit {
+                controls
+                    .padding(.leading, 18).padding(.trailing, 12)
+                    .frame(maxHeight: .infinity)
+                    .background(ZStack { Theme.canvas; headerFill }
+                        .mask(HStack(spacing: 0) {
+                            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 18)
+                            Color.black
+                        })
+                        .opacity(showsControls || listeningHere ? 1 : 0))
+            }
+        }
         // Exactly the pane's width. Its pieces cannot shrink below their text, so with many tabs the
         // row is wider than the pane; unclamped, that widened the pane's column, which centred the
         // terminal in it: shifted right by half the overflow and clipped on the right.
@@ -894,6 +828,97 @@ struct PaneView: View {
         .animation(.easeOut(duration: 0.15), value: headerLit)
         .contentShape(Rectangle())
         .onTapGesture { model.focus(sessionKey) }
+    }
+
+    /// The pane's buttons. Inline in a single pane; over the header's end in a grid, where at rest
+    /// they fade out of the way of the session's name.
+    private var controls: some View {
+        let listeningHere = model.voice.isListening && model.voice.target == sessionKey
+        return HStack(spacing: 10) {
+        if model.isSubassistant(sessionKey) {
+            Button { model.projectStatus(projectID, replacing: sessionKey) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                    if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                }
+            }
+            .buttonStyle(GlassButtonStyle(compact: isSplit))
+            .help("Start \(name)'s Assistant fresh, go through every session in this project, and suggest what to close or finish")
+            SprintReportPaneButton(compact: isSplit, help: "Ask \(name)'s Assistant for this project's sprint report: the sprint that just ended if one did, then this one") {
+                model.sessions[sessionKey]?.submit(SessionLaunch.sprintReport(all: false))
+            }
+        }
+        if projectID == model.assistantFolder {
+            Button { model.statusSweep() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "checklist")
+                    if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                }
+            }
+            .buttonStyle(GlassButtonStyle(compact: isSplit))
+            .help("Go through every session in every project, say where each stands, and suggest what to close or finish")
+            SprintReportPaneButton(compact: isSplit, help: "Ask \(model.assistantName) for the sprint report across every project: the sprint that just ended if one did, then this one") {
+                model.openAssistant()
+                model.sessions[model.assistantFolder]?.submit(SessionLaunch.sprintReport(all: true))
+            }
+            Button { model.remoteControl.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: model.remoteControl ? "iphone.radiowaves.left.and.right" : "iphone")
+                    if !isSplit { Text(model.remoteControl ? "Remote on" : "Remote").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                }
+                .foregroundStyle(model.remoteControl ? Theme.green : Theme.textPrimary)
+            }
+            .buttonStyle(GlassButtonStyle(compact: isSplit))
+            .help(model.remoteControl
+                  ? "Remote Control is on: reach \(model.assistantName) from the Claude Code app or claude.ai/code. Click to turn it off."
+                  : "Turn on Remote Control, to reach \(model.assistantName) from the Claude Code app on your phone or claude.ai/code. It restarts on the same conversation.")
+            .accessibilityLabel("Remote Control")
+            Button { showingPhone.toggle() } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.and.text.bubble.right")
+                    if !isSplit { Text("Phone").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                }
+            }
+            .buttonStyle(GlassButtonStyle(active: showingPhone, compact: isSplit))
+            .popover(isPresented: $showingPhone, arrowEdge: .bottom) {
+                PhoneThreadView(assistantFolder: model.assistantFolder).environment(model)
+            }
+            .help("Everything you said from the phone and how \(model.assistantName) answered, across every conversation. A status update starts a fresh one, so the terminal shows only the newest.")
+            .accessibilityLabel("Phone thread")
+        }
+        if let session = model.sessions[sessionKey], session.isRunning,
+           projectID != model.assistantFolder, !model.isSubassistant(sessionKey) {
+            Button { session.submit(SessionLaunch.sessionStatus) } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "text.bubble")
+                    if !isSplit { Text("Status update").font(.system(size: 12, weight: .semibold)).fixedSize() }
+                }
+            }
+            .buttonStyle(GlassButtonStyle(compact: isSplit))
+            .help("Ask this session where its task stands: what is proved, what is left, what is blocking")
+        }
+        if let session = model.sessions[sessionKey], session.isRunning {
+            Button { session.submit(DoneCheck.question) } label: { Image(systemName: "questionmark.bubble") }
+                .buttonStyle(IconButtonStyle())
+                .help("Are you done with your work? (⌘⇧Y)")
+                .accessibilityLabel("Ask if done")
+        }
+        MicButton(listening: listeningHere, compact: isSplit) { model.pressVoice(for: sessionKey) }
+        if projectID != model.assistantFolder {
+            Button { toggleInspector() } label: { Image(systemName: "sidebar.right") }
+                .buttonStyle(IconButtonStyle()).help("Show or hide goals and tasks").accessibilityLabel("Goals and tasks")
+        }
+        if isSplit {
+            Button { model.hidePane(sessionKey) } label: { Image(systemName: "rectangle.split.2x1.slash") }
+                .buttonStyle(IconButtonStyle()).help("Take this pane out of the split. The session keeps running in its tab.").accessibilityLabel("Hide from split")
+        }
+        Button { model.requestClose([sessionKey]) } label: { Image(systemName: "xmark") }
+            .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
+        }
+        // Listening keeps Talk lit wherever the pointer is: Send must stay pressable.
+        .opacity(showsControls || listeningHere ? 1 : 0)
+        .allowsHitTesting(showsControls || listeningHere)
+        .animation(.easeOut(duration: 0.15), value: showsControls)
     }
 
     /// The pane's status in split view, where there is no room for the pill.

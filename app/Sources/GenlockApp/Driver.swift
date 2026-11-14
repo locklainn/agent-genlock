@@ -93,6 +93,16 @@ enum Driver {
         if let args = step["tier"] as? [String], let id = projectID(named: args[0]), let tier = Tier(rawValue: args[1]) { model.move(id, to: tier) }
         if let args = step["dictate"] as? [String], let id = projectID(named: args[0]) { model.voice.submit(args[1], to: id) }
         if let args = step["type"] as? [String], let id = projectID(named: args[0]) { model.sessions[id]?.view.send(txt: args[1]) }
+        // Any session of a project, by its place among that project's sessions (sorted keys), not just the main one.
+        if let args = step["typeNth"] as? [String], args.count == 3, let id = projectID(named: args[0]), let n = Int(args[1]) {
+            let keys = model.sessionKeys(in: id)
+            if n < keys.count { model.sessions[keys[n]]?.view.send(txt: args[2]) }
+        }
+        // A message delivered the way the app delivers one (a paste, then Return), to any session of a project.
+        if let args = step["submitNth"] as? [String], args.count == 3, let id = projectID(named: args[0]), let n = Int(args[1]) {
+            let keys = model.sessionKeys(in: id)
+            if n < keys.count { model.sessions[keys[n]]?.submit(args[2]) }
+        }
         // Dropped paths and a private pasteboard, so a test never touches the real clipboard.
         if let args = step["insertPaths"] as? [String], let id = projectID(named: args[0]) {
             _ = model.sessions[id]?.view.insert(paths: Array(args.dropFirst()))

@@ -646,26 +646,31 @@ final class AppModel {
 
     /// An agent's spin-off, which you have already said yes to, joins the split.
     func collectSpawns() {
+        // Not before the tools are found: a request taken then could not open, and genlock would think it had.
+        guard tools != nil else { return }
         for session in Array(sessions.values) {
-            for request in session.channel.takeSpawns() { openSpawn(request, beside: session.key) }
+            for request in session.channel.takeSpawns() { openSpawn(request, beside: session.key, channel: session.channel) }
         }
     }
 
-    private func openSpawn(_ request: SpawnRequest, beside parent: String) {
-        guard let tools else { return }
+    private func openSpawn(_ request: SpawnRequest, beside parent: String, channel: VoiceChannel) {
+        guard let tools else { return channel.writeReceipt(request.id, ok: false, why: "the app is still starting") }
         if let folder = sessions[parent]?.projectID, !request.belongs(to: folder) {
             message = "Ignored spin-off \(request.ticket), which came from \(request.project), not this project."
-            return
+            return channel.writeReceipt(request.id, ok: false, why: "it came from \(request.project), not this session's project")
         }
         let project = sessions[parent]?.projectID ?? request.project
-        guard roomForAgentSession(in: project, handoff: false, overCap: request.overCap, asker: tabLabel(parent)) else { return }
+        guard roomForAgentSession(in: project, handoff: false, overCap: request.overCap, asker: tabLabel(parent)) else {
+            return channel.writeReceipt(request.id, ok: false, why: message ?? "the project is at its session cap", code: "cap")
+        }
         // The parent's id, not the path git reports: they can spell one folder differently (/tmp, /private/tmp).
         let session = TerminalSession(projectID: project, spawn: request)
         sessions[session.key] = session
         launch(session, tools: tools)
+        channel.writeReceipt(request.id, ok: true)
         var next = visible
         if !next.contains(parent) { next.append(parent) }
-        if next.count >= DashSelection.maxPanes {
+        if next.count >= SplitLayout.maxPanes {
             message = "\(tabLabel(session.key)) is running, but the split is full. Find it in \(projectName(session.projectID))'s tabs."
         } else {
             next.append(session.key)
@@ -867,15 +872,15 @@ final class AppModel {
     }
 
     /// A grid is the list of panes taken when it was opened, so a session started later is not in
-    /// it. When the grid on screen already shows this session's project (its own grid, or every
-    /// project's), the session joins it after that project's last pane. One session on screen is
-    /// left alone, so nothing jumps in front of you. Returns whether it joined.
+    /// it. When the screen already shows this session's project, the session joins after that
+    /// project's last pane. `beside` (an agent's open) joins a single pane of the project too; ⌘N
+    /// leaves one session on screen alone. Rule: SplitLayout.joinIndex. Returns whether it joined.
     @discardableResult
-    func joinGridIfShowing(_ key: String) -> Bool {
-        guard route == .sessions, visible.count > 1, !visible.contains(key), visible.count < DashSelection.maxPanes,
-              let project = sessions[key]?.projectID,
-              let last = visible.lastIndex(where: { sessions[$0]?.projectID == project }) else { return false }
-        withAnimation(.spring(duration: 0.4)) { visible.insert(key, at: last + 1) }
+    func joinGridIfShowing(_ key: String, beside: Bool = false) -> Bool {
+        guard route == .sessions, let project = sessions[key]?.projectID,
+              let at = SplitLayout.joinIndex(visible: visible, project: { self.sessions[$0]?.projectID },
+                                             newProject: project, key: key, beside: beside) else { return false }
+        withAnimation(.spring(duration: 0.4)) { visible.insert(key, at: at) }
         return true
     }
 
@@ -905,13 +910,18 @@ final class AppModel {
                 else if let project = store.projects.first(where: { resolvedPath($0.id) == resolvedPath(request.project) }), project.exists { target = project.id }
                 else {
                     message = "\(tabLabel(asker.key)) asked to open a session in \(request.project), which is not one of your projects on disk."
+                    asker.channel.writeReceipt(request.id, ok: false, why: "\(request.project) is not one of the app's projects on disk")
                     continue
                 }
                 let handoff = own && request.handoff == true
-                guard roomForAgentSession(in: target, handoff: handoff, overCap: request.overCap, asker: tabLabel(asker.key)) else { continue }
+                guard roomForAgentSession(in: target, handoff: handoff, overCap: request.overCap, asker: tabLabel(asker.key)) else {
+                    asker.channel.writeReceipt(request.id, ok: false, why: message ?? "the project is at its session cap", code: "cap")
+                    continue
+                }
                 let key = startSession(in: target, opening: request.prompt)
+                asker.channel.writeReceipt(request.id, ok: true)
                 // A handoff's asker closes at the end of its turn, and its pane falls to this one.
-                joinGridIfShowing(key)
+                joinGridIfShowing(key, beside: true)
                 message = handoff
                     ? "\(tabLabel(asker.key)) handed its work to a fresh session in \(projectName(target)) to save tokens."
                     : "\(tabLabel(asker.key)) opened \(tabLabel(key)) in \(projectName(target))\(own ? ", beside it" : "")."
@@ -922,11 +932,16 @@ final class AppModel {
             for request in asker.channel.takeOpens() {
                 guard let project = store.project(request.project), project.exists else {
                     message = "\(who) asked to open \(request.project), which is not one of your projects."
+                    asker.channel.writeReceipt(request.id, ok: false, why: "\(request.project) is not one of the app's projects on disk")
                     continue
                 }
-                guard roomForAgentSession(in: project.id, handoff: false, overCap: request.overCap, asker: who) else { continue }
+                guard roomForAgentSession(in: project.id, handoff: false, overCap: request.overCap, asker: who) else {
+                    asker.channel.writeReceipt(request.id, ok: false, why: message ?? "the project is at its session cap", code: "cap")
+                    continue
+                }
                 let key = startSession(in: project.id, opening: request.prompt)
-                message = joinGridIfShowing(key)
+                asker.channel.writeReceipt(request.id, ok: true)
+                message = joinGridIfShowing(key, beside: true)
                     ? "\(who) opened \(tabLabel(key)) in \(project.name), beside its other sessions."
                     : "\(who) opened \(tabLabel(key)) in \(project.name). Find it in its tabs."
             }
@@ -1131,14 +1146,22 @@ final class AppModel {
         if wasFocused { focus(assistantFolder) }
     }
 
+    /// Swap requests already answered with a receipt, so each is answered once.
+    @ObservationIgnored private var swapsHeard: Set<String> = []
+
     /// A session asked, on your yes, to give way to a fresh one on a goal. Once its turn ends
     /// the fresh one takes its place in the tab and the split, and opens on that goal. The old
     /// conversation goes to Recently ended, so a swap made by mistake is one click from undone.
     func swapSessionsIfAsked() {
         guard let tools else { return }
         for old in Array(sessions.values) where old.projectID != assistantFolder && old.isRunning {
-            guard let swap = old.channel.requestedSwap,
-                  SessionSwap.ready(phase: old.phase, repliesWaiting: old.channel.waitingCount,
+            guard let swap = old.channel.requestedSwap else { continue }
+            // Heard at once, though it waits for the turn to end: genlock only falls back when nobody hears.
+            if let id = swap.id, !swapsHeard.contains(id) {
+                swapsHeard.insert(id)
+                old.channel.writeReceipt(id, ok: true)
+            }
+            guard SessionSwap.ready(phase: old.phase, repliesWaiting: old.channel.waitingCount,
                                     dictating: voice.machine.state != .idle) else { continue }
             let key = old.key
             let wasFocused = focusedProject == key
@@ -1204,13 +1227,18 @@ final class AppModel {
         let routed = waiting.map { (item: $0, route: RelayRouting.route(of: $0.report, fromProject: $0.session.projectID, subs: subList)) }
         let forTally = routed.filter { $0.route == .tally }.map(\.item)
         if !forTally.isEmpty {
-            let stillOwing = reporters.filter { $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+            // Only replies owed to Tally hold Tally's reports. A session working on what its project's
+            // Assistant passed it owes that Assistant, and would otherwise hold Tally the full holdSeconds.
+            let subFolders = Array(subs.keys)
+            let stillOwing = reporters.filter { $0.channel.owesReply && RelayRouting.owesTally(owedTo: $0.channel.owedTo, subFolders: subFolders)
+                && $0.isRunning && $0.phase == "working" }.count
             deliverRelays(forTally, to: sessions[assistantFolder], stillOwing: stillOwing)
         }
         for folder in Set(routed.compactMap { if case .sub(let f) = $0.route { return f } else { return nil } }) {
             guard let sub = subs[folder] else { continue }
             let mine = routed.filter { $0.route == .sub(folder) }.map(\.item)
-            let stillOwing = reporters.filter { $0.projectID == sub.projectID && $0 !== sub && $0.channel.owesReply && $0.isRunning && $0.phase == "working" }.count
+            let stillOwing = reporters.filter { $0 !== sub && $0.channel.owesReply && RelayRouting.owes(owedTo: $0.channel.owedTo, sub: folder)
+                && $0.isRunning && $0.phase == "working" }.count
             deliverRelays(mine, to: sub, stillOwing: stillOwing)
         }
         for project in Set(routed.compactMap { if case .startSub(let p) = $0.route { return p } else { return nil } }) {

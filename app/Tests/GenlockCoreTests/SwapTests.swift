@@ -43,11 +43,28 @@ final class SwapTests: XCTestCase {
         let g = "node \"\(cli)\""
         try sh("git init -q && \(g) init --private && \(g) goal add 'Refunds settle within two days' --user-said yes --short refunds && \(g) goal next refunds 'Wire the button'", in: repo)
         XCTAssertNil(channel.requestedSwap, "nothing is asked until the CLI asks")
-        try sh("\(g) swap refunds --user-said 'yes swap' --uncommitted none", in: repo, env: ["GENLOCK_APP_CHANNEL": channel.folder.path])
+        // No app answers here, so genlock is told not to wait for a receipt (it would take the request back).
+        try sh("\(g) swap refunds --user-said 'yes swap' --uncommitted none", in: repo, env: ["GENLOCK_APP_CHANNEL": channel.folder.path, "GENLOCK_RECEIPT_MS": "0"])
         let swap = try XCTUnwrap(channel.requestedSwap)
+        XCTAssertFalse(swap.id?.isEmpty ?? true, "the request names the receipt the app answers with")
         XCTAssertEqual(swap.title, "Refunds settle within two days")
         XCTAssertTrue(swap.prompt.contains("genlock continue \(swap.goal)"))
         XCTAssertEqual(swap.user_said, "yes swap")
+    }
+
+    /// The other half of the contract: the receipt genlock waits for (lib/appask.mjs).
+    func testReceiptIsWhatGenlockReads() throws {
+        let channel = VoiceChannel(session: "tok", base: root.appendingPathComponent("channels"))
+        channel.writeReceipt("ab12cd34", ok: false, why: "at the cap", code: "cap")
+        let data = try Data(contentsOf: channel.folder.appendingPathComponent("receipt-ab12cd34.json"))
+        let obj = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        XCTAssertEqual(obj["ok"] as? Bool, false)
+        XCTAssertEqual(obj["why"] as? String, "at the cap")
+        XCTAssertEqual(obj["code"] as? String, "cap")
+        channel.writeReceipt(nil, ok: true)
+        channel.writeReceipt("../escape", ok: true)
+        let names = try FileManager.default.contentsOfDirectory(atPath: channel.folder.path)
+        XCTAssertEqual(names, ["receipt-ab12cd34.json"], "no id, or one with a slash, writes nothing")
     }
 
     func testWaitsForTheTurnToEndAndTheReplyToBeHeard() {
