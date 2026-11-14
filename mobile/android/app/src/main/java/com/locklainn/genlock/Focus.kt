@@ -1,6 +1,7 @@
 package com.locklainn.genlock
 
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -77,7 +78,16 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
             // Your latest message, until its reply is here: where it is, so you never wonder whether it arrived.
             val mine = lines.indexOfLast { it.who == Who.ME }
             val outgoing = lines.getOrNull(mine)?.takeIf { l -> lines.drop(mine + 1).none { it.who == Who.ASSISTANT } && (waiting || l.failed) }
-            if (now == null) { CaughtUp(name, outgoing?.stage, answered, walked.size, { walker.flush() }, { outgoing?.let { link.retry(it) } }); return@CompositionLocalProvider }
+            if (now == null) {
+                // "All caught up" says its piece for a few seconds, then gives the screen to what is going on.
+                val idle = outgoing == null && answered == 0
+                var settled by remember { mutableStateOf(false) }
+                LaunchedEffect(idle) { settled = false; if (idle) { kotlinx.coroutines.delay(CAUGHT_UP_MS); settled = true } }
+                val grid by link.grid.collectAsStateWithLifecycle()
+                if (idle && settled) AtWork(grid)
+                else CaughtUp(name, outgoing?.stage, answered, walked.size, { walker.flush() }, { outgoing?.let { link.retry(it) } })
+                return@CompositionLocalProvider
+            }
 
             Segments(walked, pending, active)
             Spacer(Modifier.height(10.dp))
@@ -252,6 +262,66 @@ private fun Caption(active: Boolean, phase: Walker.Phase, text: String, to: Int,
                 color = if (tail.isEmpty()) Color.White.copy(alpha = 0.55f) else Color.White, maxLines = 4, overflow = TextOverflow.Ellipsis,
                 modifier = Modifier.heightIn(min = 25.dp))
         }
+    }
+}
+
+/** How long "All caught up" shows before the screen turns to the sessions at work. */
+private const val CAUGHT_UP_MS = 5_000L
+
+/**
+ * Nothing to hear: the sessions at work, as a sign that things are going on. Working and paused are
+ * counted the way genlock sweep counts them, from each session's reported phase: "working" is
+ * working now, "holding" (its turn is over but a job it started still runs) is paused.
+ */
+@Composable
+private fun ColumnScope.AtWork(grid: Grid?) {
+    val rows = grid?.projects.orEmpty().flatMap { p -> p.sessions.filter { it.running }.map { p to it } }
+    val working = rows.filter { it.second.phase == "working" }
+    val paused = rows.filter { it.second.phase == "holding" }
+    val pulse by androidx.compose.animation.core.rememberInfiniteTransition(label = "atwork").animateFloat(0.35f, 1f,
+        androidx.compose.animation.core.infiniteRepeatable(tween(900), androidx.compose.animation.core.RepeatMode.Reverse), label = "dot")
+    Spacer(Modifier.height(24.dp))
+    Text("AT WORK NOW", style = MaterialTheme.typography.titleSmall, letterSpacing = 2.sp, fontWeight = FontWeight.Bold, color = Color.White.copy(alpha = 0.75f))
+    Spacer(Modifier.height(10.dp))
+    if (grid == null || grid.mac != "open") {
+        Text(if (grid == null) "Waiting for the Mac…" else "The Mac app is closed", fontSize = 30.sp, lineHeight = 36.sp, fontWeight = FontWeight.ExtraBold)
+        Spacer(Modifier.weight(1f)); return
+    }
+    // The same big bold title every update has, so this screen reads like the rest of the walk.
+    Text(when {
+        working.isNotEmpty() -> "${working.size} ${if (working.size == 1) "session" else "sessions"} working"
+        paused.isNotEmpty() -> "All paused"
+        else -> "Nothing running"
+    }, fontSize = 38.sp, lineHeight = 42.sp, fontWeight = FontWeight.ExtraBold, maxLines = 3, overflow = TextOverflow.Ellipsis)
+    Spacer(Modifier.height(8.dp))
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(if (working.isEmpty()) Color.White.copy(alpha = 0.3f) else DONE.copy(alpha = pulse)))
+        Spacer(Modifier.width(8.dp))
+        Text(if (working.isEmpty()) "Quiet" else "Active", style = MaterialTheme.typography.titleMedium, color = if (working.isEmpty()) Color.White.copy(alpha = 0.6f) else DONE)
+        if (paused.isNotEmpty()) {
+            Text("  ·  ", style = MaterialTheme.typography.titleMedium, color = Color.White.copy(alpha = 0.5f))
+            Text("${paused.size} paused", style = MaterialTheme.typography.titleMedium, color = QUESTION)
+        }
+    }
+    Spacer(Modifier.height(18.dp))
+    Column(Modifier.weight(1f).fillMaxWidth().verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        (working.map { it to true } + paused.map { it to false }).forEach { (ps, active) ->
+            val (p, x) = ps
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (active) Box(Modifier.size(9.dp).clip(CircleShape).background(DONE.copy(alpha = pulse)))
+                else Icon(Icons.Default.Pause, "Paused", Modifier.size(14.dp), tint = QUESTION)
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(listOf(p.name, x.title).filter { it.isNotBlank() }.joinToString(" · "), style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val line = x.wait?.headline?.takeIf { it.isNotBlank() } ?: x.task ?: x.headline
+                    if (line.isNotBlank()) Text(line, style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.65f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(if (active) "working" else "paused", style = MaterialTheme.typography.labelMedium, color = if (active) DONE else QUESTION)
+            }
+        }
+        if (rows.isNotEmpty() && working.isEmpty() && paused.isEmpty()) Text("Nothing running right now. Say or type anything to start something.",
+            style = MaterialTheme.typography.bodyLarge, color = Color.White.copy(alpha = 0.7f))
     }
 }
 

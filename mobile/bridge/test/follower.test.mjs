@@ -86,3 +86,39 @@ test('the moved-on mark is read from history when following starts, without repo
   assert.equal(f.mark, Date.parse('2026-11-12T09:00:00.000Z'));
   assert.equal(f.lastSource, 'phone');
 });
+
+test('each reply carries the prompt that began its turn: none when an event began it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'follower-'));
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, '');
+  const got = [];
+  const f = new TranscriptFollower(() => file, { onReply: (e) => got.push([e.text, e.prompt && { source: e.prompt.source, turn: e.prompt.turn, text: e.prompt.text }]) });
+  f.poll();
+  const add = (e) => fs.appendFileSync(file, JSON.stringify(e) + '\n');
+  const reply = (id, text) => add({ type: 'assistant', message: { id, stop_reason: 'end_turn', content: [{ type: 'text', text }] } });
+  add({ type: 'user', uuid: 'p1', message: { role: 'user', content: '[phone] [voice] what is the budget doing' } });
+  reply('m1', 'Budget answer.');
+  // A relay report, an alert and a task notification each begin a turn TJ did not prompt.
+  add({ type: 'user', uuid: 'r1', message: { role: 'user', content: '[relay] 1 report from project sessions.' } });
+  reply('m2', 'Report.');
+  add({ type: 'user', uuid: 'r2', message: { role: 'user', content: '\n\n<pasted_content id="x">\n[Load alert] Memory went red.\n</pasted_content>' } });
+  reply('m3', 'Alert.');
+  add({ type: 'user', uuid: 'r3', message: { role: 'user', content: '<task-notification>done</task-notification>' } });
+  reply('m4', 'Notified.');
+  add({ type: 'user', uuid: 'l1', message: { role: 'user', content: 'typed at the laptop' } });
+  // An event folded into that turn mid-way does not take its prompt away; TJ's queued words replace it.
+  add({ type: 'attachment', uuid: 'q0', attachment: { type: 'queued_command', prompt: '<task-notification>x</task-notification>' } });
+  reply('m5', 'Laptop answer.');
+  add({ type: 'user', uuid: 'l2', message: { role: 'user', content: 'first' } });
+  add({ type: 'attachment', uuid: 'q1', attachment: { type: 'queued_command', prompt: '[phone] and second' } });
+  reply('m6', 'Both.');
+  f.poll();
+  assert.deepEqual(got, [
+    ['Budget answer.', { source: 'phone', turn: 'p1', text: 'what is the budget doing' }],
+    ['Report.', null],
+    ['Alert.', null],
+    ['Notified.', null],
+    ['Laptop answer.', { source: 'laptop', turn: 'l1', text: 'typed at the laptop' }],
+    ['Both.', { source: 'phone', turn: 'q1', text: 'and second' }],
+  ]);
+});

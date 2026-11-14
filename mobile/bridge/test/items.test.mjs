@@ -45,3 +45,12 @@ test('a walk becomes one message: each answer with its project, task and questio
     + '(2) budget / FY26 pages: skipped, heard but not answered (3) budget / audit: heard '
     + '3 more items are still unheard on the phone; TJ will walk them later, so do not repeat them.');
 });
+
+test('an empty items block means nothing new: shown as text, marked quiet so the phone does not walk it', () => {
+  const r = parseItems(block([]), 't9');
+  assert.equal(r.quiet, true);
+  assert.equal(r.text, 'Written reply for the screen.');
+  assert.equal(r.items.length, 1);
+  assert.equal(parseItems(block([{ project: 'p', task: 't', say: 'New.' }]), 't9').quiet, undefined);
+  assert.equal(parseItems('No block at all.', 't9').quiet, undefined);
+});

@@ -278,11 +278,13 @@ class Link(app: Application) : AndroidViewModel(app) {
 
     /** Throw out the pending items the conversation has moved past. Held answers stay: they are TJ's words. */
     private fun dropPast() {
-        val kept = WalkPlan.current(pending.value, movedAt, keepHead = walking)
+        val before = pending.value
+        val kept = WalkPlan.current(before, movedAt, keepHead = walking)
         val n = pending.value.size - kept.size
         if (n == 0) return
         pending.value = kept
         saveItems()
+        diag("dropped $n past item${if (n == 1) "" else "s"} (${before.count { it.isQuestion } - kept.count { it.isQuestion }} questions), ${kept.size} left${if (arriving.value != null) ", arrival screen showing" else ""}")
         flash.value = "Dropped $n older item${if (n == 1) "" else "s"}: you carried on elsewhere."
     }
 
@@ -577,8 +579,7 @@ class Link(app: Application) : AndroidViewModel(app) {
                 val items = m.optJSONArray("items")?.let { a -> (0 until a.length()).map { itemOf(a.getJSONObject(it)) } }
                     ?.filter { it.say.isNotBlank() }?.takeIf { it.isNotEmpty() }
                     ?: listOf(Item("$id-0", "", "", "update", text.replace(Regex("[*`#_]"), "")))
-                // What this answers: the last thing said to the Assistant before it, from the phone or the laptop.
-                val re = lines.value.lastOrNull { it.who == Who.ME || it.who == Who.LAPTOP_PROMPT }?.text?.takeIf { it.isNotBlank() }
+                val re = WalkPlan.youSaid(m.has("re"), m.optString("re"), m.optString("reOf").ifEmpty { null }, lines.value)
                 val tagged = items.map { it.copy(re = re?.take(400), at = t) }
                 // Not walked: a reply to TJ at the laptop (he read it there), or one the conversation has
                 // since moved past (a replay of a reply from before the mark).

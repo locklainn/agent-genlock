@@ -21,9 +21,18 @@ public enum Delivery {
         return String(unwrapped.unicodeScalars.filter { !CharacterSet.whitespacesAndNewlines.contains($0) }.map(Character.init))
     }
 
-    /// Everything the user side of the conversation said, in these transcript lines.
+    /// Everything the user side of the conversation said, in these transcript lines. A message typed
+    /// while the session was busy reaches it mid-turn as a queued_command attachment, not a user
+    /// line: it arrived all the same, and typing it again makes the agent answer it twice.
     public static func prompts(inTranscript tail: String) -> [String] {
         tail.split(separator: "\n").compactMap { line -> String? in
+            if line.contains("\"queued_command\""), let data = line.data(using: .utf8),
+               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let a = obj["attachment"] as? [String: Any], a["type"] as? String == "queued_command" {
+                if let text = a["prompt"] as? String { return text }
+                let parts = (a["prompt"] as? [[String: Any]] ?? []).compactMap { $0["text"] as? String }
+                return parts.isEmpty ? nil : parts.joined(separator: "\n")
+            }
             guard line.contains("\"user\""), let data = line.data(using: .utf8),
                   let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                   obj["type"] as? String == "user", let message = obj["message"] as? [String: Any] else { return nil }

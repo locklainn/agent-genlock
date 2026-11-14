@@ -22,8 +22,38 @@ object AudioHold {
     val speech: AudioAttributes = AudioAttributes.Builder()
         .setUsage(AudioAttributes.USAGE_ASSISTANT)
         .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+    /** Where focus changes are reported (the bridge log, through Link.diag). */
+    var log: ((String) -> Unit)? = null
+
+    /**
+     * Another app took focus back (the music resumed itself, the car head unit, a call): we no longer
+     * hold it. Ignoring this left `holding` true for good, and the music played over every item after
+     * (TJ, 2026-11-13, in a Ford truck over Bluetooth: "something is glitchy about audio focus").
+     */
     private val request = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-        .setAudioAttributes(speech).setOnAudioFocusChangeListener { }.build()
+        .setAudioAttributes(speech).setOnAudioFocusChangeListener({ change ->
+            holding = change == AudioManager.AUDIOFOCUS_GAIN
+            log?.invoke("audio focus: ${when (change) {
+                AudioManager.AUDIOFOCUS_GAIN -> "gained"
+                AudioManager.AUDIOFOCUS_LOSS -> "lost"
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> "lost for now"
+                AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> "asked to duck"
+                else -> "change $change"
+            }}")
+        }, Handler(Looper.getMainLooper())).build()
+
+    /**
+     * Set the audio state fresh for each item and each clip, rather than trusting what the walk
+     * started with: ask for focus again every time while it is needed. Asking while holding it is a
+     * no-op for Android; asking after a head unit or the music quietly took it back gets it again.
+     */
+    fun renew(ctx: Context) = main.post {
+        if (reasons.isEmpty()) return@post
+        audio = audio ?: ctx.applicationContext.getSystemService(AudioManager::class.java)
+        val was = holding
+        holding = audio?.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        if (!was || !holding) log?.invoke("audio focus renewed: ${if (holding) "granted" else "refused"}${if (!was) " (had been lost)" else ""}")
+    }.let { }
 
     private val main = Handler(Looper.getMainLooper())
     private val reasons = mutableSetOf<String>()

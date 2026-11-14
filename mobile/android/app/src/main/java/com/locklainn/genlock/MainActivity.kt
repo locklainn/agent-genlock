@@ -134,11 +134,11 @@ class MainActivity : ComponentActivity() {
         // or over you while you dictate: the walk picks new items up in their place.
         link.onReply = {
             Cues.done()
-            if (prefs().getBoolean("speak", true)) {
-                // Typing or talking: never take the screen. The reply waits behind a small notice until he sends.
-                if (busy()) Walker.held.value += 1
-                else window.decorView.postDelayed({ if (busy()) Walker.held.value += 1 else walker.arrive() }, Cues.DONE_MS)
-            }
+            // The arrival screen shows whether or not replies are read aloud: with the speaker off it is
+            // silent and waits for a tap. (Gating it on the speaker hid it with no sign why, TJ 2026-11-13.)
+            // Typing or talking: never take the screen. The reply waits behind a small notice until he sends.
+            if (busy()) Walker.held.value += 1
+            else window.decorView.postDelayed({ if (busy()) Walker.held.value += 1 else walker.arrive() }, Cues.DONE_MS)
         }
         lifecycleScope.launch {
             combine(Walker.dictating, Walker.composing) { d, c -> d || c }.collect { on ->

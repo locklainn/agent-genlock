@@ -27,7 +27,9 @@ data class Item(
 data class WebLink(val label: String, val url: String)
 
 /** A reply has come and a walk is about to start: what the arrival screen announces. */
-data class Arrival(val items: Int, val questions: Int, val projects: List<String>, val status: Boolean, val at: Long)
+data class Arrival(val items: Int, val questions: Int, val projects: List<String>, val status: Boolean, val at: Long,
+                   /** The speaker is off: shown without a word, and the walk waits for a tap. */
+                   val quiet: Boolean = false)
 
 /** TJ's answer to one item: what he said, or that he skipped it. */
 data class Answer(val item: Item, val answer: String? = null, val skipped: Boolean = false)
@@ -79,14 +81,38 @@ object WalkPlan {
         }
         return (own + fromReply).distinctBy { it.url }
     }
+    /**
+     * YOU SAID for a reply's items: the words of TJ's that the reply answers, or null when it answers
+     * none of them (a relay report or an alert began the turn). The bridge names the prompt ([hasRe]):
+     * [reOf] is the phone's own message that began the turn, quoted as the phone showed it; else [re],
+     * the prompt as typed. Only an older bridge, which names nothing, leaves the guess: the newest
+     * thing said, which quotes the wrong words for any reply TJ did not prompt.
+     */
+    fun youSaid(hasRe: Boolean, re: String, reOf: String?, lines: List<Line>): String? {
+        val said = if (hasRe) reOf?.let { o -> lines.firstOrNull { it.id == o && it.who == Who.ME }?.text } ?: re
+                   else lines.lastOrNull { it.who == Who.ME || it.who == Who.LAPTOP_PROMPT }?.text
+        return said?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     private val next = setOf("next", "skip", "skip it", "next one", "move on", "pass")
     private val repeat = setOf("repeat", "repeat that", "say again", "say that again", "again", "one more time")
     private val flush = setOf("send", "send it", "send them", "send answers", "send my answers", "that's it", "thats it",
+        // What the recognizer most often writes for a lone "send": a short word said once is often misheard.
+        "sent", "sent it", "sand", "cent", "scent", "sends",
         "that's all", "thats all", "stop", "i'm done", "im done")
 
     private val numbers = listOf("no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
         "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty")
     private fun count(n: Int, one: String, many: String) = "${numbers.getOrNull(n) ?: n.toString()} ${if (n == 1) one else many}"
+
+    /**
+     * The arrival screen's counts, from the queue as it is now rather than when the screen opened:
+     * items dropped meanwhile (the conversation moved on elsewhere) are not announced, so the count
+     * always matches the walk that follows. Null when nothing is left to walk.
+     */
+    fun arrivalNow(a: Arrival, pending: List<Item>): Arrival? = if (pending.isEmpty()) null else
+        a.copy(items = pending.size, questions = pending.count { it.isQuestion },
+            projects = pending.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() })
 
     /** What the arrival screen says aloud, and shows: "Three updates, one question." Plain items count as updates. */
     fun arrivalLine(items: Int, questions: Int): String {
@@ -97,7 +123,8 @@ object WalkPlan {
         ).joinToString(", ").ifEmpty { "nothing new" }.replaceFirstChar { it.uppercase() } + "."
     }
 
-    private val sendWords = listOf("send it", "send that", "send")
+    /** "send", plus the words a recognizer writes for it when it is said alone and short (TJ: "I have to say send like 12 times"). */
+    private val sendWords = listOf("send it", "send that", "sent it", "send", "sent", "sand", "cent", "scent", "sends")
 
     /**
      * An answer dictated in the answer sheet ends when TJ says "send" as the last word: returns the
@@ -105,11 +132,12 @@ object WalkPlan {
      * Empty when "send" was all he said.
      */
     fun spokenSend(text: String): String? {
-        val t = text.trim().trimEnd('.', '!', ',', ' ')
+        val t = text.trim().trimEnd('.', '!', ',', '?', ' ')
         val low = t.lowercase()
         for (w in sendWords) {
             if (low == w) return ""
-            if (low.endsWith(" $w")) return t.dropLast(w.length).trim().trimEnd(',', '.', ' ')
+            // "send send" (said twice to be sure): every trailing send goes, not just the last.
+            if (low.endsWith(" $w")) { val rest = t.dropLast(w.length).trim().trimEnd(',', '.', ' '); return spokenSend(rest) ?: rest }
         }
         return null
     }

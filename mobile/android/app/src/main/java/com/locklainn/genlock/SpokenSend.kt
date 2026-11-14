@@ -15,20 +15,25 @@ package com.locklainn.genlock
  */
 class SpokenSend(private val quietMs: Long = QUIET_MS) {
     private var text = ""
+    /** Everything heard so far, for the log. */
+    val lastHeard: String get() = text
     private var changedAt = 0L
 
     /** What the recognizer has now, everything heard: settled phrases then the live one. */
     fun heard(all: String, now: Long) {
         val t = all.trim()
         if (t == text) return
-        val same = WalkPlan.spokenSend(t)?.let { it.isNotBlank() && it == WalkPlan.spokenSend(text) } == true
+        val same = WalkPlan.spokenSend(t)?.let { it == WalkPlan.spokenSend(text) } == true
         text = t
         if (!same) changedAt = now
     }
 
-    /** The answer, without "send", once "send" has been the last word for [quietMs]; null otherwise. */
+    /**
+     * The answer, without "send", once "send" has been the last word for [quietMs]; null otherwise.
+     * Empty when "send" was all that was said: send the answers so far, as the walk's own "send" does.
+     */
     fun ready(now: Long): String? {
-        val answer = WalkPlan.spokenSend(text)?.takeIf { it.isNotBlank() } ?: return null
+        val answer = WalkPlan.spokenSend(text) ?: return null
         return if (now - changedAt >= quietMs) answer else null
     }
 

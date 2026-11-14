@@ -36,13 +36,16 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  */
 @Composable
 fun ArrivalScreen(link: Link, walker: Walker) {
-    val arrival by link.arriving.collectAsStateWithLifecycle()
+    val shown by link.arriving.collectAsStateWithLifecycle()
+    val pending by link.pending.collectAsStateWithLifecycle()
+    // Counted from the live queue, so an item dropped while this shows is not still announced.
+    val arrival = shown?.let { WalkPlan.arrivalNow(it, pending) ?: it }
     val a = arrival ?: return
     val name by link.assistantName.collectAsStateWithLifecycle()
 
     // In: fades up and settles from slightly large. Then the ring breathes until the walk starts.
-    val enter = remember(a) { Animatable(0f) }
-    LaunchedEffect(a) { enter.animateTo(1f, tween(450, easing = FastOutSlowInEasing)) }
+    val enter = remember(shown) { Animatable(0f) }
+    LaunchedEffect(shown) { enter.animateTo(1f, tween(450, easing = FastOutSlowInEasing)) }
     val pulse by rememberInfiniteTransition(label = "arrive").animateFloat(1f, 1.18f,
         infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "ring")
 
@@ -76,7 +79,8 @@ fun ArrivalScreen(link: Link, walker: Walker) {
                 Spacer(Modifier.height(40.dp))
                 Text("Walking you through it…", style = MaterialTheme.typography.titleMedium, color = QUESTION)
                 Spacer(Modifier.height(6.dp))
-                Text("Tap to start now", style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f))
+                Text(if (a.quiet) "Reading aloud is off: on screen only. Tap to start now" else "Tap to start now",
+                    style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.5f))
             }
         }
     }

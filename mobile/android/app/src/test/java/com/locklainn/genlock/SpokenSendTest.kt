@@ -33,7 +33,15 @@ class SpokenSendTest {
         val s = SpokenSend(quietMs = 1200)
         s.heard("I think the second option", 0)
         assertNull(s.ready(60_000))
-        s.heard("send", 61_000)                     // "send" on its own is not an answer
-        assertNull(s.ready(70_000))
+        s.heard("send", 61_000)                     // "send" on its own: send the answers so far
+        assertEquals("", s.ready(62_200))
+    }
+
+    @Test fun theWordsARecognizerWritesForALoneSendCountAsSend() {
+        val s = SpokenSend(quietMs = 1200)
+        s.heard("Yes ship it sent", 0)
+        assertEquals("Yes ship it", s.ready(1200))
+        s.reset(); s.heard("Sand.", 0)
+        assertEquals("", s.ready(1200))
     }
 }

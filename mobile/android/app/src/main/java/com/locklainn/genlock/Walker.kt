@@ -46,6 +46,7 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
     data class Countdown(val from: Long, val ms: Long)
 
     private val main = Handler(Looper.getMainLooper())
+    init { AudioHold.log = { link.diag(it) } }
     private var recognizer: SpeechRecognizer? = null
     private var player: MediaPlayer? = null
     private var repeats = 0
@@ -71,6 +72,12 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
          */
         val CLIP: AudioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_MEDIA).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+        /**
+         * For a captured route (Android Auto and the like take media and speech alike, 2026-11-13 in
+         * TJ's Ford): a car plays navigation prompts over whatever source is on.
+         */
+        val GUIDANCE: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_ASSISTANCE_NAVIGATION_GUIDANCE).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
         /** Tones that move media to speaker-safe while they play. */
         private val SOUNDS = setOf(AudioAttributes.USAGE_NOTIFICATION, AudioAttributes.USAGE_NOTIFICATION_EVENT,
             AudioAttributes.USAGE_ASSISTANCE_SONIFICATION, AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
@@ -97,11 +104,20 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
      */
     fun arrive() {
         // An open answer sheet is never closed by news: the new items wait their turn in the queue.
-        if (active.value || link.pending.value.isEmpty() || link.arriving.value != null || link.asking.value != null) return
+        val skip = when {
+            active.value -> "a walk is on"
+            link.pending.value.isEmpty() -> "nothing pending"
+            link.arriving.value != null -> "already showing"
+            link.asking.value != null -> "answer sheet open"
+            else -> null
+        }
+        if (skip != null) { link.diag("arrival skipped: $skip"); return }
         val q = link.pending.value
         val status = link.lines.value.lastOrNull { it.who == Who.ME }?.text?.trim()?.startsWith("Status update", ignoreCase = true) == true
-        val a = Arrival(q.size, q.count { it.isQuestion }, q.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }, status, System.currentTimeMillis())
+        val quiet = !speakOn()
+        val a = Arrival(q.size, q.count { it.isQuestion }, q.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }, status, System.currentTimeMillis(), quiet)
         link.arriving.value = a
+        link.diag("arrival shown: ${a.items} items${if (quiet) ", speaker off: silent" else ""}")
         // The screen shows for ARRIVE_MS and says the count aloud; the walk starts once both are over,
         // so its first item never talks over the readout. A readout that never reports back is not waited on past ARRIVE_CAP_MS.
         var shown = false
@@ -110,6 +126,8 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         arrivalSaid = { said = true; go() }
         main.postDelayed({ shown = true; go() }, ARRIVE_MS)
         main.postDelayed({ said = true; go() }, ARRIVE_CAP_MS)
+        // Speaker off: the line is shown, not said, and the walk that follows is silent too.
+        if (quiet) { arrivalDone(); return }
         val line = WalkPlan.arrivalLine(a.items, a.questions)
         // In the Genlock voice: the bridge voiced this line with the reply (same id), else it is asked for now.
         val id = "arrive:$line"
@@ -135,6 +153,9 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
     }
 
     private var arrivalSaid: (() -> Unit)? = null
+
+    /** Replies are read aloud (the speaker button in the top bar). */
+    private fun speakOn() = ctx.getSharedPreferences("genlock-ui", Context.MODE_PRIVATE).getBoolean("speak", true)
 
     /** The arrival readout finished (or was stopped). */
     fun arrivalDone() = main.post { arrivalSaid?.invoke(); arrivalSaid = null }.let { }
@@ -183,6 +204,9 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         AudioHold.take(ctx, AudioHold.REPLY)
     }
 
+    /** A line for the bridge log, so a phone test can be read from the laptop. */
+    fun diag(text: String) = link.diag(text)
+
     /** Send what has been answered so far, as one batch, and end the walk. Unheard items stay. */
     fun flush() {
         stopAll()
@@ -227,6 +251,14 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         spoken.value = ""
         spokenTo.value = 0
         sentence.value = ""
+        // Reading aloud is off: nothing is said. The item shows whole, and the walk goes on from the screen.
+        if (!speakOn()) {
+            spoken.value = item.spoken().replace(Regex("[*`#_]"), "")
+            spokenTo.value = spoken.value.length
+            link.diag("item ${item.id}: speaker off: shown, not read")
+            return listen(item)
+        }
+        AudioHold.renew(ctx)
         val ids = listOfNotNull(if (item.late) "late:${item.project}" else null, item.id)
         ids.filterNot { link.clips.known(it) }.forEach { link.askClips(it) }
         whenMediaRoute(my, System.currentTimeMillis()) { playFrom(my, item, ids, 0, 0, System.currentTimeMillis()) }
@@ -305,6 +337,8 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
 
     private fun play(my: Int, clip: Clips.Clip, then: () -> Unit) {
         sentence.value = clip.text
+        // The audio state is set fresh for every clip: focus asked for again, attributes from where media goes now.
+        AudioHold.renew(ctx)
         player?.release()
         val p = MediaPlayer()
         player = p
@@ -312,16 +346,31 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         p.setOnCompletionListener { finish(it) }
         p.setOnErrorListener { mp, _, _ -> finish(mp); true }
         runCatching {
-            p.setAudioAttributes(CLIP)
+            p.setAudioAttributes(clipAttributes())
             p.setDataSource(clip.file.path)
             p.prepare()
             val t0 = System.currentTimeMillis()
             // Where each clip actually plays, and every move: speaker-safe (type 24) is the thin sound.
             p.addOnRoutingChangedListener({ r ->
-                link.diag("clip ${clip.file.name} on ${r.routedDevice?.type} at +${System.currentTimeMillis() - t0}ms")
+                val type = r.routedDevice?.type
+                link.diag("clip ${clip.file.name} on $type at +${System.currentTimeMillis() - t0}ms${if (type == AudioDeviceInfo.TYPE_REMOTE_SUBMIX) " (remote submix: the car takes it, e.g. Android Auto)" else ""}")
             }, main)
             p.start()
         }.onFailure { finish(p) }
+    }
+
+    /**
+     * Clips play as media (see CLIP), unless media is being captured right now: casting or projecting
+     * routes media to REMOTE_SUBMIX, a virtual output nobody hears, and every clip went silent there
+     * until the cast let go (TJ, 2026-11-13, bridge log: clips "on 25" from 22:26:50). Then they play
+     * with the speech usage, which such a capture does not take.
+     */
+    private fun clipAttributes(): AudioAttributes {
+        val am = ctx.getSystemService(AudioManager::class.java)
+        if (am == null || Build.VERSION.SDK_INT < 33) return CLIP
+        val captured = am.getAudioDevicesForAttributes(CLIP).any { it.type == AudioDeviceInfo.TYPE_REMOTE_SUBMIX }
+        if (captured) link.diag("clip route captured: media goes to remote submix, playing as navigation guidance")
+        return if (captured) GUIDANCE else CLIP
     }
 
     /** The phone's own voice, for an item whose clips did not come. */
@@ -366,9 +415,11 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
      * does. Only TJ's actual words stop it (then his words decide what happens).
      */
     private fun countDown(my: Int, item: Item) {
-        val cd = Countdown(System.currentTimeMillis(), MOVE_ON_MS)
+        // Silent, the bar is reading time: about 4 words a second, never under MOVE_ON_MS.
+        val ms = if (speakOn()) MOVE_ON_MS else maxOf(MOVE_ON_MS, item.spoken().split(Regex("\\s+")).size * 250L + 1_500L)
+        val cd = Countdown(System.currentTimeMillis(), ms)
         countdown.value = cd
-        main.postDelayed({ if (my == token && countdown.value === cd && active.value) { stopAll(); advance(item, null) } }, MOVE_ON_MS)
+        main.postDelayed({ if (my == token && countdown.value === cd && active.value) { stopAll(); advance(item, null) } }, ms)
     }
 
     private fun listen(item: Item) {
@@ -377,6 +428,8 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         // taps send, like the main one. No recognizer here, so no silence that re-reads it over him.
         if (item.isQuestion) { phase.value = Phase.IDLE; asking.value = item; return }
         countDown(my, item)
+        // Silent: no mic either (its tones would sound); Next, Pause and the bar carry the walk.
+        if (!speakOn()) return
         val granted = ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         if (!granted || !SpeechRecognizer.isRecognitionAvailable(ctx)) {
             // An update moves on when its countdown runs out.

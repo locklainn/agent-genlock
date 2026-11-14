@@ -42,16 +42,22 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
   };
 
   const follower = new TranscriptFollower(() => findAssistant(home)?.transcript, {
-    onReply: ({ text: raw, turn, answers }) => {
+    onReply: ({ text: raw, turn, answers, prompt }) => {
       // Cut into items for the phone to walk; the text shown loses the items block.
-      const { text, items: cut } = parseItems(raw, turn);
+      const { text, items: cut, quiet } = parseItems(raw, turn);
       const items = cut.map(withVoice);
       // A reply to TJ at the laptop or Remote Control was read there: the phone shows it, not walks it.
-      const walk = answers !== 'laptop';
-      log('reply', items.length, 'items', walk ? '' : '(not walked)', text.slice(0, 60));
-      send({ kind: 'reply', text, turn, items, ...(walk ? {} : { walk: false }) });
+      // Nor one whose items block is empty: nothing in it is new to him (a repeat of what Tally said).
+      const walk = answers !== 'laptop' && !quiet;
+      log('reply', items.length, 'items', walk ? '' : quiet ? '(not walked: nothing new)' : '(not walked)', text.slice(0, 60));
+      // What this reply answers, for the phone's YOU SAID: TJ's own words, or '' when an event began
+      // the turn (a relay report, an alert). reOf names the phone's own message, so it quotes that.
+      const reOf = prompt?.source === 'phone' ? phoneTurns.get(prompt.turn) : undefined;
+      send({ kind: 'reply', text, turn, items, re: prompt?.text?.slice(0, 400) || '', ...(reOf ? { reOf } : {}), ...(walk ? {} : { walk: false }) });
       if (walk && !ondevice && voicer) {
         // The arrival screen's line first: it is said before any item. The phone asks by the same
+  /** Which phone message began each transcript turn (prompt uuid -> the phone's message id). */
+  const phoneTurns = new Map();
         // id (arrive:<line>), so when nothing else was pending its clip is already here.
         const line = arrivalLine(items);
         voicer.line(`arrive:${line}`, line).catch((e) => log('voice', e.message));
@@ -62,7 +68,11 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     // TJ moved on away from the phone: what it holds from before now is past.
     onMoved: ({ at }) => send({ kind: 'moved', at }),
     // Phone messages reach the conversation in the order they were delivered: this one is the oldest still waiting.
-    onPhone: ({ turn }) => { const of = delivered.shift(); send({ kind: 'started', turn, ...(of ? { of } : {}) }); },
+    onPhone: ({ turn }) => {
+      const of = delivered.shift();
+      if (of) { phoneTurns.set(turn, of); if (phoneTurns.size > 50) phoneTurns.delete(phoneTurns.keys().next().value); }
+      send({ kind: 'started', turn, ...(of ? { of } : {}) });
+    },
     onFiles: ({ files, caption, turn }) => files.forEach((f, i) => sendFile(f, { caption: i === 0 ? caption : undefined, turn: `${turn}-${i}` })),
   });
 

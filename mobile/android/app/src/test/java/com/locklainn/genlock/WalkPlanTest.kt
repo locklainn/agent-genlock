@@ -69,6 +69,11 @@ class WalkPlanTest {
         assertEquals("", WalkPlan.spokenSend("Send"))
         assertEquals(null, WalkPlan.spokenSend("send it to Mia first"))
         assertEquals(null, WalkPlan.spokenSend("I want the godsend"))
+        assertEquals("Ship it", WalkPlan.spokenSend("Ship it, sent."))
+        assertEquals("", WalkPlan.spokenSend("Cent"))
+        assertEquals("It works really well", WalkPlan.spokenSend("It works really well Send send"))
+        assertEquals("", WalkPlan.spokenSend("send send"))
+        assertEquals(Said.Flush, WalkPlan.said("Sent."))
     }
 
     @Test fun theArrivalReadoutCountsUpdatesAndQuestions() {
@@ -98,4 +103,34 @@ class WalkPlanTest {
         assertEquals("genlock, review. The plan is up at.", i.spoken())
         assertEquals("Open the review page now.", WalkPlan.unlinked("Open the [review page](https://x.dev/a) now."))
     }
+
+    // YOU SAID quotes the words a reply answers, not the newest thing said (TJ, 2026-11-13).
+    private val said = listOf(
+        Line("ph1", Who.ME, "what is the budget doing", 1), Line("lap", Who.LAPTOP_PROMPT, "typed at the laptop", 2),
+        Line("ph2", Who.ME, "nightmaremode: Yes, take turns", 3),
+    )
+
+    @Test fun arrivalCountsTheQueueAsItIsNowNotWhenItOpened() {
+        val q = Item("a-0", "genlock", "x", "question", "s", ask = "Ship it?")
+        val u = (1..5).map { Item("u-$it", "genlock", "t$it", "update", "s") }
+        val opened = Arrival(6, 1, listOf("genlock"), false, 0)
+        // The question was past and dropped while the screen showed: it is not announced.
+        val now = WalkPlan.arrivalNow(opened, u)!!
+        assertEquals(5, now.items); assertEquals(0, now.questions)
+        assertEquals("Five updates.", WalkPlan.arrivalLine(now.items, now.questions))
+        assertEquals(1, WalkPlan.arrivalNow(opened, u + q)!!.questions)
+        assertEquals(null, WalkPlan.arrivalNow(opened, emptyList()))
+    }
+
+    @Test fun youSaidQuotesThePhoneMessageTheBridgeNames() =
+        assertEquals("what is the budget doing", WalkPlan.youSaid(true, "what is the budget doing", "ph1", said))
+
+    @Test fun youSaidIsEmptyForAReplyNobodyPrompted() =
+        assertEquals(null, WalkPlan.youSaid(true, "", null, said))
+
+    @Test fun youSaidUsesTheBridgeTextWhenThePhoneLineIsGone() =
+        assertEquals("typed at the laptop", WalkPlan.youSaid(true, "typed at the laptop", "gone", said))
+
+    @Test fun anOlderBridgeStillGetsTheNewestGuess() =
+        assertEquals("nightmaremode: Yes, take turns", WalkPlan.youSaid(false, "", null, said))
 }

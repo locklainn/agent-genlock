@@ -42,6 +42,9 @@ export function parseItems(raw, turn = 'r') {
         ...(str(x.ask, 300) ? { ask: str(x.ask, 300) } : {}), ...(options.length ? { options } : {}),
       };
     });
+  // An empty block is Tally saying there is nothing new to hear (a session's report repeats what TJ
+  // was already told): shown with the rest, never walked or read, so he hears each update once.
+  if (list && !list.length) return { text, items: [{ id: `${turn}-0`, project: '', task: '', kind: 'update', say: plain(text) }], quiet: true };
   if (!items.length) return { text, items: [{ id: `${turn}-0`, project: '', task: '', kind: 'update', say: plain(text) }] };
   return { text: text || items.map((x) => x.say).join('\n\n'), items };
 }

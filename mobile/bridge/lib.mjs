@@ -116,6 +116,10 @@ export function promptSource(raw) {
   return 'laptop';
 }
 
+const PHONE_PREFIX_RE = /^\[phone\]\s*/;
+/** A notice the Mac app typed into the conversation (a load alert): not TJ's words, though promptSource counts it as the laptop. */
+const MAC_NOTICE = /^\[Load alert\b/;
+
 /** A prompt as the phone shows it: unwrapped, without the [voice] tag. */
 const shownPrompt = (raw) => String(raw || '').trim()
   .replace(/^<pasted_content\b[^>]*>([\s\S]*?)(?:<\/pasted_content>)?$/, '$1').trim()
@@ -151,6 +155,12 @@ export class TranscriptFollower {
     this.mark = 0;
     /** Where the latest prompt came from: the reply that follows answers it. */
     this.lastSource = null;
+    /**
+     * What began the turn now running, for the phone's YOU SAID: { source, turn, text } for TJ's own
+     * words (the phone or the laptop), null for a turn that began on an event (a relay report, an
+     * alert, a task notification), which answers nothing he said.
+     */
+    this.lastPrompt = null;
     this.quiet = false;
   }
 
@@ -193,10 +203,16 @@ export class TranscriptFollower {
     for (const line of lines) if (line.trim()) this.line(line);
   }
 
-  prompt(raw, e) {
+  prompt(raw, e, { queued = false } = {}) {
     const source = promptSource(raw);
+    // A new turn begun by an event clears YOU SAID; an event folded into a turn already running leaves it.
+    if (!queued) this.lastPrompt = null;
     if (!source) return;
     this.lastSource = source;
+    const words = shownPrompt(raw).replace(PHONE_PREFIX_RE, '').replace(/^\[voice\]\s*/, '').trim();
+    this.lastPrompt = (source === 'phone' || source === 'laptop') && !MAC_NOTICE.test(words)
+      ? { source, turn: e.uuid, text: words }
+      : (queued ? this.lastPrompt : null);
     if (source === 'laptop') {
       const at = Date.parse(e.timestamp) || Date.now();
       const moved = at > this.mark;
@@ -215,7 +231,7 @@ export class TranscriptFollower {
     if (e.type === 'user' && m && typeof m.content === 'string' && !e.isMeta) return this.prompt(m.content, e);
     // A message sent while the Assistant was mid-turn is folded into that turn as a queued command,
     // not a user prompt. It has still reached the Assistant, so the phone hears it was picked up.
-    if (e.type === 'attachment' && e.attachment?.type === 'queued_command') return this.prompt(e.attachment.prompt, e);
+    if (e.type === 'attachment' && e.attachment?.type === 'queued_command') return this.prompt(e.attachment.prompt, e, { queued: true });
     if (e.type !== 'assistant' || !m || !Array.isArray(m.content)) return;
     const id = m.id || e.uuid;
     const got = this.texts.get(id) || [];
@@ -228,8 +244,8 @@ export class TranscriptFollower {
     this.texts.set(id, got);
     if (m.stop_reason === 'end_turn') {
       this.texts.delete(id);
-      // answers: where the prompt this turn answers came from.
-      if (got.length && !this.quiet) this.onReply({ text: got.join('\n\n'), turn: id, answers: this.lastSource });
+      // answers: where the prompt this turn answers came from; prompt: that prompt, or null for an event.
+      if (got.length && !this.quiet) this.onReply({ text: got.join('\n\n'), turn: id, answers: this.lastSource, prompt: this.lastPrompt });
     }
   }
 }

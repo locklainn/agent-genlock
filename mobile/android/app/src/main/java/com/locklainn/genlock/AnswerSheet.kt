@@ -52,11 +52,14 @@ fun AnswerSheet(walker: Walker) {
      */
     var armed by remember(i.id) { mutableStateOf<Armed?>(null) }
     val spokenSend = remember(i.id) { SpokenSend() }
+    val lastSettled = remember(i.id) { arrayOf("") }
     val dictation = remember(i.id) {
         Dictation(ctx,
             onText = { settled, partial ->
                 val all = listOf(settled, partial).filter { it.isNotBlank() }.joinToString(" ")
                 android.util.Log.i("GenlockSend", "heard settled=\"$settled\" partial=\"$partial\"")
+                // Each settled phrase goes to the bridge log too, so a missed "send" shows what was heard instead.
+                if (settled.isNotBlank() && settled != lastSettled[0]) { lastSettled[0] = settled; walker.diag("sheet heard: \"${settled.takeLast(60)}\"") }
                 // Armed, and the recognizer only settled the same words: leave the box as it is (no "send").
                 if (armed != null && WalkPlan.spokenSend(all) == armed?.text) return@Dictation
                 typed = all
@@ -79,9 +82,12 @@ fun AnswerSheet(walker: Walker) {
     LaunchedEffect(i.id) {
         while (true) {
             kotlinx.coroutines.delay(200)
-            if (armed != null || !listening) continue
+            // Not gated on the mic still being on: the recognizer often closes the moment "send" is
+            // said, and a send that waits for an open mic never arms (the "say it 12 times" bug).
+            if (armed != null) continue
             spokenSend.ready(System.currentTimeMillis())?.let { answer ->
                 android.util.Log.i("GenlockSend", "armed: \"$answer\"")
+                walker.diag("spoken send armed${if (answer.isBlank()) " (send alone)" else ""} after: \"${spokenSend.lastHeard.takeLast(60)}\"")
                 typed = answer
                 armed = Armed(answer)
             }
@@ -90,7 +96,10 @@ fun AnswerSheet(walker: Walker) {
     LaunchedEffect(armed) {
         val a = armed ?: return@LaunchedEffect
         kotlinx.coroutines.delay(SEND_CONFIRM_MS)
-        if (armed === a) { answer(a.text, via = "spoken send") }
+        if (armed !== a) return@LaunchedEffect
+        walker.diag("spoken send: ${if (a.text.isBlank()) "on its own, sending the answers so far" else "answer sent"}")
+        // "send" on its own: the answers so far go, and this question stays for next time.
+        if (a.text.isBlank()) { dictation.destroy(); Cues.answered(); walker.flush() } else answer(a.text, via = "spoken send")
     }
     DisposableEffect(i.id) { onDispose { dictation.destroy(); AudioHold.drop(AudioHold.MIC) } }
     val granted = { ContextCompat.checkSelfPermission(ctx, android.Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED }
@@ -201,7 +210,8 @@ private fun SendingBar(a: Armed, cancel: () -> Unit) {
     LaunchedEffect(a) { left.animateTo(0f, tween(SEND_CONFIRM_MS.toInt(), easing = LinearEasing)) }
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(QUESTION.copy(alpha = 0.18f)).padding(12.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Text("Heard \"send\". Sending… keep talking or cancel to stop it.", Modifier.weight(1f),
+            Text(if (a.text.isBlank()) "Heard \"send\". Sending your answers so far… cancel to stop it."
+                else "Heard \"send\". Sending… keep talking or cancel to stop it.", Modifier.weight(1f),
                 style = MaterialTheme.typography.labelLarge, color = QUESTION)
             TextButton(onClick = cancel) { Text("Cancel", color = Color.White, fontWeight = FontWeight.Bold) }
         }

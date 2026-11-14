@@ -47,6 +47,16 @@ final class DeliveryTests: XCTestCase {
         XCTAssertTrue(Delivery.arrived(sent, inTranscript: line([["type": "text", "text": sent]])), "content given as parts")
     }
 
+    func testAMessageTakenMidTurnAsAQueuedCommandHasArrived() {
+        // Measured 2026-11-14 02:25: a phone message typed while Tally was busy reached it as this
+        // attachment, was typed again when idle, and Tally answered it twice.
+        let att: [String: Any] = ["type": "attachment", "attachment": ["type": "queued_command", "prompt": sent]]
+        let queued = String(decoding: try! JSONSerialization.data(withJSONObject: att), as: UTF8.self)
+        XCTAssertTrue(Delivery.arrived(sent, inTranscript: [line("earlier"), queued].joined(separator: "\n")))
+        let other: [String: Any] = ["type": "attachment", "attachment": ["type": "queued_command", "prompt": "something else"]]
+        XCTAssertFalse(Delivery.arrived(sent, inTranscript: String(decoding: try! JSONSerialization.data(withJSONObject: other), as: UTF8.self)))
+    }
+
     func testOnlyTheTailOfAMessageIsNotDelivered() {
         XCTAssertFalse(Delivery.arrived(sent, inTranscript: line("k, and report back.")))
         XCTAssertFalse(Delivery.arrived(sent, inTranscript: ""), "an empty transcript")
