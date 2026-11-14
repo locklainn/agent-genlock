@@ -63,6 +63,17 @@ test('an item can carry images to review: local image paths, with or without a c
   assert.equal(parseItems(block([{ say: 'No images.' }]), 't7').items[0].images, undefined);
 });
 
+test('an item can carry documents: absolute paths of any type, named or not; URLs and relative paths are left out', async () => {
+  const { walkable } = await import('../items.mjs');
+  const r = parseItems(block([{ project: 'p', task: 't', say: 'Three docs.', files: [
+    '/tmp/plan.pdf', { path: '/tmp/notes.md', name: 'the notes' }, { path: '/tmp/sheet.csv', caption: 'budget sheet' },
+    'https://x.test/a.pdf', 'relative.pdf', '/tmp/dir/', 42,
+  ] }]), 't8');
+  assert.deepEqual(r.items[0].files, [{ path: '/tmp/plan.pdf' }, { path: '/tmp/notes.md', caption: 'the notes' }, { path: '/tmp/sheet.csv', caption: 'budget sheet' }]);
+  assert.equal(parseItems(block([{ say: 'No files.' }]), 't8').items[0].files, undefined);
+  assert.equal(walkable({ answers: 'laptop', items: r.items }), true);
+});
+
 test('a reply to the laptop is not walked, unless it carries images to review; an empty block never is', async () => {
   const { walkable } = await import('../items.mjs');
   const plain = [{ id: 'r-0', say: 'x' }];

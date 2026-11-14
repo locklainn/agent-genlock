@@ -23,7 +23,7 @@ struct DeskLine: Identifiable, Equatable {
 final class DeskModel {
     static let shared = DeskModel()
 
-    enum Phase { case idle, reading, answering, counting }
+    enum Phase { case idle, reading, answering, counting, waiting }
 
     private(set) var conn: DeskConnection.State = .connecting
     private(set) var assistant = "unknown"
@@ -226,6 +226,8 @@ final class DeskModel {
         speak(item.spoken, project: item.project) { [weak self] in
             guard let self, my == self.token, self.active else { return }
             if item.isQuestion { self.phase = .answering; return }
+            // Something to open (a document, an image, a link): it stays until TJ clicks next.
+            if item.waitsForTap(links: self.linksShown(item)) { self.phase = .waiting; return }
             self.phase = .counting
             self.countdownEnds = Date().addingTimeInterval(Self.moveOnSeconds)
             DispatchQueue.main.asyncAfter(deadline: .now() + Self.moveOnSeconds) { [weak self] in
@@ -235,9 +237,15 @@ final class DeskModel {
         }
     }
 
+    /// The links shown on `item`: in its own words, or in the reply where its paragraph names it.
+    func linksShown(_ item: DeskItem) -> [DeskLinkRef] {
+        guard let r = lines.last(where: { $0.who == .assistant && item.id.hasPrefix($0.id + "-") }) else { return DeskWalk.links(for: item, reply: nil, siblings: [item]) }
+        return DeskWalk.links(for: item, reply: r.text, siblings: (walked + pending).filter { $0.id.hasPrefix(r.id + "-") })
+    }
+
     /// TJ started typing an answer: the walk holds still for him.
     func holdForAnswer() {
-        guard active, phase == .counting || phase == .reading else { return }
+        guard active, phase == .counting || phase == .reading || phase == .waiting else { return }
         token += 1
         countdownEnds = nil
         if phase == .reading { stopSpeaking() }
@@ -578,7 +586,22 @@ private struct WalkCard: View {
                             ReviewImages(images: now.images, page: page, commented: commentedPages) { turn(to: $0, images: now.images) }
                                 .padding(.top, 14)
                         }
-                        let links = DeskWalk.links(for: now, reply: replyText(now), siblings: siblings(now))
+                        if !now.files.isEmpty {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(now.files, id: \.fid) { f in
+                                    Button { if let p = f.path { NSWorkspace.shared.open(URL(fileURLWithPath: p)) } } label: {
+                                        Label(f.label, systemImage: "doc.text").font(.system(size: 13, weight: .semibold))
+                                    }
+                                    .buttonStyle(.plain).padding(.horizontal, 10).padding(.vertical, 6)
+                                    .background(RoundedRectangle(cornerRadius: 8).fill(.white.opacity(0.12)))
+                                    .contextMenu { if let p = f.path { Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) } } }
+                                    .help(f.path ?? f.name)
+                                }
+                            }
+                            .padding(.top, 14)
+                        }
+                        let links = model.linksShown(now)
+                        let holds = now.waitsForTap(links: links)
                         if !links.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
                                 ForEach(links) { l in
@@ -590,6 +613,10 @@ private struct WalkCard: View {
                                 }
                             }
                             .padding(.top, 14)
+                        }
+                        if holds && !now.isQuestion {
+                            Text("Take your time. Click next when you're done.").font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.7)).padding(.top, 10)
                         }
                         if now.late {
                             Text("Came in while we talked").font(.system(size: 11, weight: .medium)).foregroundStyle(.white.opacity(0.7)).padding(.top, 6)
@@ -622,15 +649,6 @@ private struct WalkCard: View {
         }
     }
 
-    private func replyText(_ item: DeskItem) -> String? {
-        model.lines.last { $0.who == .assistant && item.id.hasPrefix($0.id + "-") }?.text
-    }
-
-    private func siblings(_ item: DeskItem) -> [DeskItem] {
-        guard let r = model.lines.last(where: { $0.who == .assistant && item.id.hasPrefix($0.id + "-") }) else { return [item] }
-        return (model.walked + model.pending).filter { $0.id.hasPrefix(r.id + "-") }
-    }
-
     private var transport: some View {
         HStack(spacing: 28) {
             Spacer()
@@ -658,6 +676,7 @@ private struct WalkCard: View {
         case .reading: return "READING"
         case .answering: return "YOUR ANSWER"
         case .counting: return "MOVING ON"
+        case .waiting: return "YOUR PACE"
         }
     }
 
@@ -680,7 +699,7 @@ private struct WalkCard: View {
                 .keyboardShortcut(.return, modifiers: [.command])
             }
             HStack(spacing: 8) {
-                TextField(!now.images.isEmpty ? "Your comment on image \(page + 1)" : now.isQuestion ? "Your answer" : "Reply to this, or let it move on", text: $draft, axis: .vertical)
+                TextField(!now.images.isEmpty ? "Your comment on image \(page + 1)" : now.isQuestion ? "Your answer" : model.phase == .waiting ? "Reply to this" : "Reply to this, or let it move on", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...4).focused($typing)
                     .padding(10).background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.12)))
                     .onSubmit { send() }

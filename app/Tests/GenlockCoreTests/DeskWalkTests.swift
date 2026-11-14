@@ -124,4 +124,20 @@ final class DeskWalkTests: XCTestCase {
         XCTAssertEqual(r.walked.map(\.id), [])
         XCTAssertEqual(r.pending.map(\.id), ["a", "b", "c"])
     }
+
+    func testAStepWithSomethingToOpenWaitsForAClick() {
+        let m: [String: Any] = ["turn": "r", "items": [
+            ["id": "r-0", "project": "genlock", "task": "docs", "say": "Three documents.",
+             "files": [["fid": "r-0-file0", "name": "plan.pdf", "path": "/tmp/plan.pdf"], ["fid": "r-0-file1", "name": "notes.md", "caption": "the notes"], ["name": "no-fid"]]],
+            ["id": "r-1", "project": "genlock", "task": "news", "say": "Shipped."],
+            ["id": "r-2", "project": "genlock", "task": "site", "say": "Live at https://example.com/page"],
+        ]]
+        let items = DeskWalk.items(fromReply: m, at: 1, re: nil)
+        XCTAssertEqual(items[0].files.map(\.label), ["plan.pdf", "the notes"])
+        XCTAssertFalse(items[0].isQuestion)
+        XCTAssertTrue(items[0].waitsForTap(links: []))
+        XCTAssertTrue(items[0].spoken.hasSuffix("2 documents to open."))
+        XCTAssertFalse(items[1].waitsForTap(links: DeskWalk.links(for: items[1], reply: nil, siblings: items)))
+        XCTAssertTrue(items[2].waitsForTap(links: DeskWalk.links(for: items[2], reply: nil, siblings: items)))
+    }
 }

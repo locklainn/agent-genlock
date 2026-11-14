@@ -470,6 +470,13 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         // A question waits in the answer sheet for as long as TJ takes: its own mic listens until he
         // taps send, like the main one. No recognizer here, so no silence that re-reads it over him.
         if (item.isQuestion) { phase.value = Phase.IDLE; asking.value = item; return }
+        // A step with something to open (a document, a link) stays until TJ taps next: no countdown,
+        // and no mic whose silence would move it on (TJ, 2026-11-14).
+        if (item.waitsForTap(WalkPlan.linksShown(item, link.lines.value, link.walked.value + link.pending.value))) {
+            phase.value = Phase.IDLE
+            diag("item ${item.id}: has something to open: waits for a tap")
+            return
+        }
         countDown(my, item)
         // Silent: no mic either (its tones would sound); Next, Pause and the bar carry the walk.
         if (!speakOn()) return

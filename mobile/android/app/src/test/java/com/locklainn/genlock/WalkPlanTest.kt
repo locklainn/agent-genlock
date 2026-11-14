@@ -120,6 +120,22 @@ class WalkPlanTest {
         assertEquals(true, review.spoken().endsWith("4 images to look at."))
     }
 
+    @Test fun aStepWithSomethingToOpenWaitsForATap() {
+        val docs = listOf(FileRef("r-0-file0", "plan.pdf"), FileRef("r-0-file1", "notes.md", "the notes"), FileRef("r-0-file2", "sheet.csv"))
+        val withDocs = Item("r-0", "genlock", "docs", "update", "Three documents.", files = docs)
+        assertEquals(false, withDocs.isQuestion)
+        assertEquals(true, withDocs.waitsForTap(emptyList()))
+        assertEquals(true, withDocs.spoken().endsWith("3 documents to open."))
+        assertEquals("the notes", docs[1].label)
+        val plain = Item("r-1", "genlock", "news", "update", "Shipped.")
+        assertEquals(false, plain.waitsForTap(emptyList()))
+        // A link anywhere it shows (its words, or its paragraph of the reply) holds the step too.
+        val linked = Item("r-2", "genlock", "site", "update", "Live at https://example.com/page")
+        val lines = listOf(Line("r", Who.ASSISTANT, "Reply.", 1))
+        assertEquals(true, linked.waitsForTap(WalkPlan.linksShown(linked, lines, listOf(linked))))
+        assertEquals(false, plain.waitsForTap(WalkPlan.linksShown(plain, lines, listOf(plain))))
+    }
+
     @Test fun nextImageSaidAtTheEndTurnsThePageAndKeepsTheComment() {
         assertEquals("too dark" to 1, WalkPlan.spokenPage("too dark, next image."))
         assertEquals("" to 1, WalkPlan.spokenPage("Next picture"))

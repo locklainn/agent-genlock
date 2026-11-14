@@ -12,6 +12,8 @@ data class Item(
     val re: String? = null, val at: Long = 0,
     /** Images an agent wants reviewed: paged through one at a time, a comment on each. */
     val images: List<ImageRef> = emptyList(),
+    /** Documents an agent hands over: listed as links to open or save. */
+    val files: List<FileRef> = emptyList(),
 ) {
     /** A review asks for comments, so it waits for TJ like a question. */
     val isQuestion get() = kind == "question" || ask != null || images.isNotEmpty()
@@ -24,7 +26,19 @@ data class Item(
         listOf(project, task).filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString(", ", postfix = "."),
         WalkPlan.unlinked(say), ask?.let { WalkPlan.unlinked(it) },
         when (images.size) { 0 -> null; 1 -> "One image to look at."; else -> "${images.size} images to look at." },
+        when (files.size) { 0 -> null; 1 -> "One document to open."; else -> "${files.size} documents to open." },
     ).joinToString(" ")
+
+    /**
+     * A step that shows an asset (a document, an image, a link) never moves on by itself: TJ moves it
+     * on with a tap (TJ, 2026-11-14: "it should be a manual Click to go through that step").
+     */
+    fun waitsForTap(links: List<WebLink>) = files.isNotEmpty() || images.isNotEmpty() || links.isNotEmpty()
+}
+
+/** One document: [fid] names the file the bridge sent with the reply; [name] its file name, [caption] what to call it. */
+data class FileRef(val fid: String, val name: String, val caption: String? = null, val mime: String? = null) {
+    val label get() = caption ?: name
 }
 
 /** One image of a review: [fid] names the file the bridge sent with the reply; [name] its file name. */
@@ -99,6 +113,16 @@ object WalkPlan {
         }
         return (own + fromReply).distinctBy { it.url }
     }
+    /**
+     * The links shown on [item] (the Focus screen and the walk agree on them): its reply is the
+     * assistant line its id starts with, and its siblings are that reply's other items.
+     */
+    fun linksShown(item: Item, lines: List<Line>, all: List<Item>): List<WebLink> {
+        val reply = lines.lastOrNull { it.who == Who.ASSISTANT && item.id.startsWith(it.id + "-") }
+        val siblings = reply?.let { r -> all.filter { it.id.startsWith(r.id + "-") } } ?: listOf(item)
+        return linksFor(item, reply?.text, siblings)
+    }
+
     /**
      * YOU SAID for a reply's items: the words of TJ's that the reply answers, or null when it answers
      * none of them (a relay report or an alert began the turn). The bridge names the prompt ([hasRe]):

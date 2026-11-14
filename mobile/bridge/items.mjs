@@ -35,6 +35,22 @@ export function imagesOf(list) {
     .map((x) => ({ path: x.path, ...(str(x.caption, 120) ? { caption: str(x.caption, 120) } : {}) }));
 }
 
+/**
+ * The documents an item hands TJ: local files on the Mac of any type (a PDF, a page, a sheet, an
+ * image), as paths or {path, name, caption}. Up to 12. The bridge sends each as a file and the phone
+ * lists them as links to open or save. A URL is not a file: put links in say, where they show as links.
+ */
+export function filesOf(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => (typeof x === 'string' ? { path: x } : x && typeof x === 'object' ? x : null))
+    .filter((x) => x && typeof x.path === 'string' && x.path.startsWith('/') && !x.path.endsWith('/'))
+    .slice(0, 12)
+    .map((x) => {
+      const label = str(x.name, 80) || str(x.caption, 120);
+      return { path: x.path, ...(label ? { caption: label } : {}) };
+    });
+}
+
 /** { text, items }: the text to show, and the items to walk (ids `${turn}-${i}`). */
 export function parseItems(raw, turn = 'r') {
   const full = String(raw || '').trim();
@@ -54,6 +70,7 @@ export function parseItems(raw, turn = 'r') {
         id: `${turn}-${i}`, project: str(x.project, 60), task: str(x.task, 80), kind, say: str(x.say, 600),
         ...(str(x.ask, 300) ? { ask: str(x.ask, 300) } : {}), ...(options.length ? { options } : {}),
         ...(imagesOf(x.images).length ? { images: imagesOf(x.images) } : {}),
+        ...(filesOf(x.files).length ? { files: filesOf(x.files) } : {}),
       };
     });
   // An empty block is Tally saying there is nothing new to hear (a session's report repeats what TJ
@@ -92,5 +109,5 @@ export function formatAnswers(answers, { left = 0 } = {}) {
  */
 export function walkable({ answers, quiet, items, block }) {
   if (quiet) return false;
-  return answers !== 'laptop' || Boolean(block) || items.some((it) => it.images?.length);
+  return answers !== 'laptop' || Boolean(block) || items.some((it) => it.images?.length || it.files?.length);
 }

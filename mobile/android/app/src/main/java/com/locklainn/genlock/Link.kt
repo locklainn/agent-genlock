@@ -374,14 +374,17 @@ class Link(app: Application) : AndroidViewModel(app) {
 
     private fun itemJson(i: Item) = JSONObject().put("id", i.id).put("project", i.project).put("task", i.task).put("kind", i.kind)
         .put("say", i.say).put("late", i.late).put("at", i.at).apply { i.ask?.let { put("ask", it) }; i.re?.let { put("re", it) }; put("options", JSONArray(i.options))
-            if (i.images.isNotEmpty()) put("images", JSONArray(i.images.map { im -> JSONObject().put("fid", im.fid).put("name", im.name).apply { im.caption?.let { put("caption", it) } } })) }
+            if (i.images.isNotEmpty()) put("images", JSONArray(i.images.map { im -> JSONObject().put("fid", im.fid).put("name", im.name).apply { im.caption?.let { put("caption", it) } } }))
+            if (i.files.isNotEmpty()) put("files", JSONArray(i.files.map { f -> JSONObject().put("fid", f.fid).put("name", f.name).apply { f.caption?.let { put("caption", it) }; f.mime?.let { put("mime", it) } } })) }
 
     private fun itemOf(o: JSONObject) = Item(o.optString("id"), o.optString("project"), o.optString("task"), o.optString("kind", "update"),
         o.optString("say"), o.optString("ask").takeIf { it.isNotEmpty() },
         o.optJSONArray("options")?.let { a -> (0 until a.length()).map { a.optString(it) } } ?: emptyList(), o.optBoolean("late"),
         o.optString("re").takeIf { it.isNotEmpty() }, o.optLong("at"),
         o.optJSONArray("images")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.filter { it.optString("fid").isNotEmpty() }
-            .map { ImageRef(it.optString("fid"), it.optString("name"), it.optString("caption").takeIf { c -> c.isNotEmpty() }) } } ?: emptyList())
+            .map { ImageRef(it.optString("fid"), it.optString("name"), it.optString("caption").takeIf { c -> c.isNotEmpty() }) } } ?: emptyList(),
+        o.optJSONArray("files")?.let { a -> (0 until a.length()).mapNotNull { a.optJSONObject(it) }.filter { it.optString("fid").isNotEmpty() }
+            .map { FileRef(it.optString("fid"), it.optString("name"), it.optString("caption").takeIf { c -> c.isNotEmpty() }, it.optString("mime").takeIf { c -> c.isNotEmpty() }) } } ?: emptyList())
 
     /** Where a file the bridge sent has landed on the phone, once it has arrived whole; null until then. */
     fun fileFor(fid: String): String? = lines.value.firstOrNull { it.id == fid }?.file

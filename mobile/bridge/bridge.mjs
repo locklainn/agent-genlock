@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { Assembler, chunksFor, prepareOutgoing, saveIncoming, withAttachments } from './files.mjs';
+import { Assembler, chunksFor, mimeOf, prepareOutgoing, saveIncoming, withAttachments } from './files.mjs';
 import { backupMessages } from './backup.mjs';
 import { parseItems, formatAnswers, walkable } from './items.mjs';
 import { Voicer, arrivalLine } from './voicing.mjs';
@@ -65,6 +65,11 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
         sendFile(im.path, { turn: fid });
         // path: the Mac's Focus Mode opens the image where it is; the phone uses the file it was sent.
         return { fid, name: path.basename(im.path), path: im.path, ...(im.caption ? { caption: im.caption } : {}) };
+      }) } : it)).map((it) => (it.files ? { ...it, files: it.files.map((f, k) => {
+        // Documents ride the same transport; the phone lists each as a link to open or save.
+        const fid = `${it.id}-file${k}`;
+        sendFile(f.path, { turn: fid });
+        return { fid, name: path.basename(f.path), path: f.path, mime: mimeOf(f.path), ...(f.caption ? { caption: f.caption } : {}) };
       }) } : it)).map(withVoice);
       // A reply to TJ at the laptop or Remote Control was read there: the phone shows it, not walks it.
       // Nor one whose items block is empty: nothing in it is new to him (a repeat of what Tally said).

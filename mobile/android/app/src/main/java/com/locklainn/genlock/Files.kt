@@ -87,6 +87,26 @@ object Files {
             ctx.startActivity(Intent.createChooser(intent, "Open with").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         }
     }
+
+    /**
+     * A copy in the phone's Downloads, under its own name, so it outlives the app. Android 10 and up
+     * need no permission for this; older phones get the share sheet instead.
+     */
+    fun saveToDownloads(ctx: Context, path: String, name: String, mime: String?) {
+        val type = mime ?: "application/octet-stream"
+        if (Build.VERSION.SDK_INT < 29) {
+            val uri = FileProvider.getUriForFile(ctx, "${ctx.packageName}.files", File(path))
+            ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).setType(type).putExtra(Intent.EXTRA_STREAM, uri)
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION), "Save $name").addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            return
+        }
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Downloads.DISPLAY_NAME, name)
+            put(android.provider.MediaStore.Downloads.MIME_TYPE, type)
+        }
+        val uri = ctx.contentResolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: error("no Downloads")
+        ctx.contentResolver.openOutputStream(uri)?.use { out -> File(path).inputStream().use { it.copyTo(out) } } ?: error("no stream")
+    }
 }
 
 /** Puts a file from the laptop back together. add() returns the saved file once its last chunk is in. */

@@ -242,6 +242,31 @@ test('a review item sends each image to the phone as a file and names it on the 
   p.ws.close();
 });
 
+test('an item with documents sends each to the phone as a file, whole, and names it on the item by that file id', async () => {
+  const docs = ['plan.pdf', 'notes.md', 'sheet.csv'].map((n) => path.join(home, n));
+  docs.forEach((d, i) => fs.writeFileSync(d, bigBytes(300_000 * (i + 1))));
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  const items = [{ project: 'genlock', task: 'phone documents', say: 'Three documents.', files: [docs[0], { path: docs[1], name: 'the notes' }, docs[2]] }];
+  fs.appendFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm-doc', content: [{ type: 'text', text: 'Docs.\n\n```items\n' + JSON.stringify(items) + '\n```' }], stop_reason: 'end_turn' } }) + '\n');
+  const reply = await waitFor(() => p.got.find((m) => m.kind === 'reply' && m.turn === 'm-doc'));
+  assert.deepEqual(reply.items[0].files, [
+    { fid: 'm-doc-0-file0', name: 'plan.pdf', path: docs[0], mime: 'application/pdf' },
+    { fid: 'm-doc-0-file1', name: 'notes.md', path: docs[1], mime: 'text/markdown', caption: 'the notes' },
+    { fid: 'm-doc-0-file2', name: 'sheet.csv', path: docs[2], mime: 'text/csv' },
+  ]);
+  // Every chunk of every document arrives, and puts back to the bytes on the Mac.
+  for (const [k, d] of docs.entries()) {
+    const fid = `m-doc-0-file${k}`;
+    // A file can come twice (the outbox replays to a phone that just said hello): one copy of each chunk.
+    const parts = await waitFor(() => { const c = new Map(p.got.filter((m) => m.kind === 'file' && m.fid === fid).map((m) => [m.seq, m])); return c.size && c.size === c.values().next().value.total ? [...c.values()] : null; });
+    const buf = Buffer.concat(parts.sort((x, y) => x.seq - y.seq).map((m) => Buffer.from(m.data, 'base64')));
+    assert.ok(buf.equals(fs.readFileSync(d)), `${fid} arrives whole`);
+  }
+  p.ws.close();
+});
+
 test('a walk\'s answers reach the Assistant as one message, each labelled with its project and task', async () => {
   const p = phone();
   await p.opened;

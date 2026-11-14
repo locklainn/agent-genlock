@@ -21,12 +21,19 @@ public struct DeskItem: Codable, Equatable, Identifiable, Sendable {
     public var at: Int64
     /// Images an agent wants reviewed: paged through one at a time, a comment on each.
     public var images: [DeskImage]
+    /// Documents an agent hands over: listed as links to open, each where it is on this Mac.
+    public var files: [DeskFile]
 
     public init(id: String, project: String = "", task: String = "", kind: String = "update", say: String,
-                ask: String? = nil, options: [String] = [], late: Bool = false, re: String? = nil, at: Int64 = 0, images: [DeskImage] = []) {
+                ask: String? = nil, options: [String] = [], late: Bool = false, re: String? = nil, at: Int64 = 0, images: [DeskImage] = [],
+                files: [DeskFile] = []) {
         self.id = id; self.project = project; self.task = task; self.kind = kind; self.say = say
-        self.ask = ask; self.options = options; self.late = late; self.re = re; self.at = at; self.images = images
+        self.ask = ask; self.options = options; self.late = late; self.re = re; self.at = at; self.images = images; self.files = files
     }
+
+    /// A step that shows an asset (a document, an image, a link) never moves on by itself: TJ moves it
+    /// on with a click (TJ, 2026-11-14: "it should be a manual Click to go through that step").
+    public func waitsForTap(links: [DeskLinkRef]) -> Bool { !files.isEmpty || !images.isEmpty || !links.isEmpty }
 
     /// A review asks for comments, so it waits for TJ like a question.
     public var isQuestion: Bool { kind == "question" || ask != nil || !images.isEmpty }
@@ -46,6 +53,7 @@ public struct DeskItem: Codable, Equatable, Identifiable, Sendable {
         parts.append(DeskWalk.unlinked(say))
         if let ask { parts.append(DeskWalk.unlinked(ask)) }
         if images.count == 1 { parts.append("One image to look at.") } else if images.count > 1 { parts.append("\(images.count) images to look at.") }
+        if files.count == 1 { parts.append("One document to open.") } else if files.count > 1 { parts.append("\(files.count) documents to open.") }
         return parts.joined(separator: " ")
     }
 }
@@ -58,6 +66,17 @@ public struct DeskImage: Codable, Equatable, Sendable {
     public var caption: String?
     public var path: String?
     public init(fid: String, name: String, caption: String? = nil, path: String? = nil) { self.fid = fid; self.name = name; self.caption = caption; self.path = path }
+}
+
+/// One document. The desk is on the Mac, so it opens [path] where it is; the phone gets the same
+/// file as one named [fid].
+public struct DeskFile: Codable, Equatable, Sendable {
+    public var fid: String
+    public var name: String
+    public var caption: String?
+    public var path: String?
+    public init(fid: String, name: String, caption: String? = nil, path: String? = nil) { self.fid = fid; self.name = name; self.caption = caption; self.path = path }
+    public var label: String { caption ?? name }
 }
 
 /// TJ's answer to one item: what he said, or that he skipped it.
@@ -259,6 +278,10 @@ public enum DeskWalk {
                             images: ((o["images"] as? [[String: Any]]) ?? []).compactMap { im in
                                 guard let fid = im["fid"] as? String, !fid.isEmpty else { return nil }
                                 return DeskImage(fid: fid, name: (im["name"] as? String) ?? "", caption: im["caption"] as? String, path: im["path"] as? String)
+                            },
+                            files: ((o["files"] as? [[String: Any]]) ?? []).compactMap { f in
+                                guard let fid = f["fid"] as? String, !fid.isEmpty else { return nil }
+                                return DeskFile(fid: fid, name: (f["name"] as? String) ?? "", caption: f["caption"] as? String, path: f["path"] as? String)
                             })
         }
         if items.isEmpty {

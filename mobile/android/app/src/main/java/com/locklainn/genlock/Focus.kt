@@ -137,11 +137,12 @@ fun FocusView(link: Link, walker: Walker, modifier: Modifier = Modifier) {
                 KindTag(now)
                 // Links to open: in the item's own words, or in the written reply where its paragraph names this task.
                 val reply = lines.lastOrNull { it.who == Who.ASSISTANT && now.id.startsWith(it.id + "-") }
-                val links = remember(now.id, reply?.text) {
-                    val siblings = reply?.let { r -> (walked + pending).filter { it.id.startsWith(r.id + "-") } } ?: listOf(now)
-                    WalkPlan.linksFor(now, reply?.text, siblings)
-                }
+                val links = remember(now.id, reply?.text) { WalkPlan.linksShown(now, lines, walked + pending) }
+                if (now.files.isNotEmpty()) { Spacer(Modifier.height(14.dp)); Documents(now.files, lines) }
                 if (links.isNotEmpty()) { Spacer(Modifier.height(14.dp)); Links(links) }
+                // A step with something to open waits for a tap, so say so where the countdown bar would be.
+                if (now.waitsForTap(links)) Text("Take your time. Tap next when you're done.", Modifier.padding(top = 10.dp),
+                    style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
                 if (now.late) Text("Came in while we talked", Modifier.padding(top = 6.dp), style = MaterialTheme.typography.labelMedium, color = Color.White.copy(alpha = 0.7f))
                 // The question itself is not here: it opens in the answer sheet once the item has been read.
                 // One quiet line, so nothing competes with the headline: the next title, or just a count.
@@ -219,6 +220,36 @@ private fun Links(links: List<WebLink>) {
                 Text(l.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.width(6.dp))
                 Icon(Icons.AutoMirrored.Filled.OpenInNew, "Open", Modifier.size(14.dp), tint = Color.White.copy(alpha = 0.7f))
+            }
+        }
+    }
+}
+
+/**
+ * Each document as a row to tap: it opens in whatever the phone uses for that type, and the save
+ * button puts a copy in Downloads. One still on its way says so instead.
+ */
+@Composable
+private fun Documents(files: List<FileRef>, lines: List<Line>) {
+    val ctx = androidx.compose.ui.platform.LocalContext.current
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        files.forEach { f ->
+            val got = lines.firstOrNull { it.id == f.fid }?.file
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Color.White.copy(alpha = 0.16f))
+                .clickable(enabled = got != null, onClickLabel = "Open ${f.label}") { got?.let { Files.open(ctx, it, f.mime ?: lines.firstOrNull { l -> l.id == f.fid }?.mime) } }
+                .heightIn(min = 52.dp).padding(start = 14.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.Description, null, Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(f.label, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(if (got == null) "Arriving…" else if (f.caption != null) f.name else "Tap to open",
+                        style = MaterialTheme.typography.labelSmall, color = Color.White.copy(alpha = 0.65f), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                if (got != null) IconButton(onClick = {
+                    val ok = runCatching { Files.saveToDownloads(ctx, got, f.name, f.mime) }.isSuccess
+                    android.widget.Toast.makeText(ctx, if (ok) "Saved ${f.name} to Downloads" else "Could not save ${f.name}", android.widget.Toast.LENGTH_SHORT).show()
+                }, Modifier.size(48.dp)) { Icon(Icons.Default.Download, "Save ${f.label} to Downloads", Modifier.size(22.dp)) }
             }
         }
     }
