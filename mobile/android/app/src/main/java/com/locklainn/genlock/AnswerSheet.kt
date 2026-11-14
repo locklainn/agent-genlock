@@ -85,7 +85,7 @@ fun AnswerSheet(walker: Walker) {
                 // "next image": the words so far stay with this image, and the next one comes up.
                 if (images.isNotEmpty()) WalkPlan.spokenPage(all)?.let { (rest, d) -> typed = rest; turnTo(page + d); return@Dictation }
                 // "finish review": every comment goes now, wherever in the set TJ is.
-                if (images.isNotEmpty() && armed?.finish != true) WalkPlan.spokenFinish(all)?.let { rest -> typed = rest; armed = Armed(rest, finish = true); return@Dictation }
+                if (images.isNotEmpty() && armed?.finish != true) WalkPlan.spokenFinish(all)?.let { rest -> typed = rest; Cues.sendHeard(ctx); armed = Armed(rest, finish = true); return@Dictation }
                 if (armed?.finish == true && WalkPlan.spokenFinish(all) == armed?.text) return@Dictation
                 // Armed, and the recognizer only settled the same words: leave the box as it is (no "send").
                 if (armed != null && WalkPlan.spokenSend(all) == armed?.text) return@Dictation
@@ -120,13 +120,14 @@ fun AnswerSheet(walker: Walker) {
                 // nothing, so it happens at once, with no countdown bar appearing to move the layout.
                 if (images.isNotEmpty() && page < images.size - 1) {
                     walker.diag("spoken send: comment kept, next image${if (spokenSend.dropped) " (recognizer dropped the send; kept)" else ""}")
-                    typed = answer; spokenSend.reset(); turnTo(page + 1)
+                    Cues.sendHeard(ctx); typed = answer; spokenSend.reset(); turnTo(page + 1)
                     if (!dictation.listening && granted()) dictation.start(typed)
                     return@let
                 }
                 android.util.Log.i("GenlockSend", "armed: \"$answer\"")
                 walker.diag("spoken send armed${if (answer.isBlank()) " (send alone)" else ""}${if (spokenSend.dropped) " (recognizer dropped the send; kept)" else ""} after: \"${spokenSend.lastHeard.takeLast(60)}\"")
                 typed = answer
+                Cues.sendHeard(ctx)
                 armed = Armed(answer)
             }
         }
@@ -175,6 +176,7 @@ fun AnswerSheet(walker: Walker) {
     // Send waits for the recognizer's last words, as the main send does, so the end is not cut off.
     fun send() {
         if (dictation.finishing) return
+        Cues.sendHeard(ctx)
         armed = null
         // A review before its last image: keep this comment, turn the page, carry on listening.
         if (images.isNotEmpty() && page < images.size - 1) {

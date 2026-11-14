@@ -511,6 +511,7 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
     // sentence is not cut off. The draft clears only once the text has gone.
     fun send() {
         if (dictation.finishing) return
+        Cues.sendHeard(ctx)
         armed = null; spokenSend.reset()
         val dictating = dictation.stop { heard ->
             finishing = false
@@ -532,6 +533,7 @@ fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {
                 if (text.isBlank() && attachment == null) { spokenSend.reset(); draft = ""; return@let }
                 link.diag("chat: spoken send armed after: \"${spokenSend.lastHeard.takeLast(60)}\"")
                 draft = text
+                Cues.sendHeard(ctx)
                 armed = Armed(text)
             }
         }

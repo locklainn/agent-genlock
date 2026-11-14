@@ -15,6 +15,7 @@ import kotlin.math.sin
  *  - failed:  two notes falling (your message did not reach the laptop: it waits with Retry)
  *  - listening: one bright ding (the answer sheet's mic is on: talk)
  *  - answered:  two quick high notes (your answer to a question went)
+ *  - sendHeard: a quick run of three notes up, with a double buzz ("send" heard, said or tapped)
  * Synthesised once as sine notes with a soft attack and decay; no sound files.
  */
 object Cues {
@@ -36,6 +37,19 @@ object Cues {
     private val listening by lazy { tones(listOf(1046.5 to 150)) }
     private val answered by lazy { tones(listOf(1318.5 to 60, 1568.0 to 170)) }
     fun listening() = play(listening)
+    /**
+     * "Send" heard (said or tapped): a quick three-note run up, unlike every other cue, with a short
+     * buzz, so in the car TJ knows at once that it heard him and the message is on its way.
+     */
+    private val sendHeard by lazy { tones(listOf(880.0 to 45, 1174.66 to 45, 1760.0 to 140), volume = 0.33) }
+    fun sendHeard(ctx: android.content.Context) {
+        play(sendHeard)
+        runCatching {
+            val v = if (android.os.Build.VERSION.SDK_INT >= 31) ctx.getSystemService(android.os.VibratorManager::class.java)?.defaultVibrator
+                else @Suppress("DEPRECATION") ctx.getSystemService(android.os.Vibrator::class.java)
+            v?.vibrate(android.os.VibrationEffect.createWaveform(longArrayOf(0, 40, 50, 40), -1))
+        }
+    }
     fun answered() = play(answered)
 
     private fun tones(notes: List<Pair<Double, Int>>, volume: Double = 0.3): ShortArray {

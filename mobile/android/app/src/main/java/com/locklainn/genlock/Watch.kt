@@ -141,12 +141,28 @@ class Watch : Service() {
             if (started.updateAndGet { (it - 1).coerceAtLeast(0) } == 0) current?.let { w -> w.main.postDelayed({ if (!visible) w.resume() }, 500) }
         }
         const val QUIET = "listening"
-        const val REPLIES = "replies"
+        /**
+         * A channel's sound and vibration are fixed once Android has created it, so giving replies
+         * their own buzz and chime needs a new id; the old "replies" channel is deleted.
+         */
+        const val REPLIES = "replies-v2"
+        private const val OLD_REPLIES = "replies"
+        /** Genlock's own buzz, so TJ can tell it from other apps by feel: short, short, long. */
+        val BUZZ = longArrayOf(0, 90, 70, 90, 70, 320)
 
         fun channels(ctx: Context) {
             val nm = ctx.getSystemService(NotificationManager::class.java)
+            nm.deleteNotificationChannel(OLD_REPLIES)
+            val chime = android.net.Uri.parse("android.resource://${ctx.packageName}/${R.raw.genlock_notify}")
             nm.createNotificationChannel(NotificationChannel(REPLIES, "Assistant replies", NotificationManager.IMPORTANCE_HIGH)
-                .apply { description = "When the Assistant has something to tell you" })
+                .apply {
+                    description = "When the Assistant has something to tell you"
+                    enableVibration(true)
+                    vibrationPattern = BUZZ
+                    setSound(chime, android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_NOTIFICATION)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                })
             nm.createNotificationChannel(NotificationChannel(QUIET, "Listening in the background", NotificationManager.IMPORTANCE_MIN)
                 .apply { description = "Keeps the connection open so replies can reach you"; setShowBadge(false) })
         }
