@@ -36,7 +36,11 @@ data class WebLink(val label: String, val url: String)
 /** A reply has come and a walk is about to start: what the arrival screen announces. */
 data class Arrival(val items: Int, val questions: Int, val projects: List<String>, val status: Boolean, val at: Long,
                    /** The speaker is off: shown without a word, and the walk waits for a tap. */
-                   val quiet: Boolean = false)
+                   val quiet: Boolean = false,
+                   /** A status report's lead-in, naming the period it covers: "Here's your status report from last night." */
+                   val lead: String? = null,
+                   /** When the oldest item is from, once it is old enough to doubt ([WalkPlan.STALE_MS]): its [Item.at]. */
+                   val asOf: Long? = null)
 
 /** TJ's answer to one item: what he said, or that he skipped it. */
 data class Answer(val item: Item, val answer: String? = null, val skipped: Boolean = false)
@@ -121,6 +125,97 @@ object WalkPlan {
         a.copy(items = pending.size, questions = pending.count { it.isQuestion },
             projects = pending.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() })
 
+    /**
+     * Whether a reply at [t] is walked: the bridge did not mark it laptop-only ([walk]), the conversation
+     * has not moved on past it ([movedAt]), and it did not finish before the status button cleared the
+     * queue ([clearedAt]), unless it is the answer to that button ([answersStatus]).
+     */
+    fun walkable(walk: Boolean, t: Long, movedAt: Long, clearedAt: Long, answersStatus: Boolean): Boolean =
+        walk && t >= movedAt && (answersStatus || t >= clearedAt)
+
+    /** Items older than this are doubted: the walk says when they are from and that nothing newer came. */
+    const val STALE_MS = 60 * 60 * 1000L
+
+    /** A heading whose last two words never part: no line is left holding one word ("…status update / is in"). */
+    fun keepLastTwo(s: String): String {
+        val t = s.trim(); val i = t.lastIndexOf(' ')
+        return if (i <= 0) t else t.substring(0, i) + '\u00A0' + t.substring(i + 1)
+    }
+
+    /** The time of [at], with the day when it is not today: "3:12 AM", "yesterday 11:40 PM", "Tue 9:05 AM". */
+    fun clock(at: Long, now: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String {
+        val f = java.text.SimpleDateFormat("h:mm a", java.util.Locale.US).apply { timeZone = zone }
+        val t = f.format(java.util.Date(at))
+        return when (days(at, now, zone)) {
+            0 -> t
+            1 -> "yesterday $t"
+            in 2..6 -> java.text.SimpleDateFormat("EEE", java.util.Locale.US).apply { timeZone = zone }.format(java.util.Date(at)) + " " + t
+            else -> java.text.SimpleDateFormat("MMM d", java.util.Locale.US).apply { timeZone = zone }.format(java.util.Date(at)) + " " + t
+        }
+    }
+
+    /** Calendar days from [a] to [b] in [zone]. */
+    private fun days(a: Long, b: Long, zone: java.util.TimeZone): Int {
+        fun day(t: Long) = (t + zone.getOffset(t)) / 86_400_000L
+        return (day(b) - day(a)).toInt()
+    }
+
+    /** "45 minutes ago", "7 hours ago", "2 days ago". */
+    fun ago(at: Long, now: Long): String {
+        val m = ((now - at) / 60_000L).coerceAtLeast(0)
+        return when {
+            m < 1 -> "just now"
+            m < 60 -> "$m minute${if (m == 1L) "" else "s"} ago"
+            m < 48 * 60 -> (m / 60).let { h -> "$h hour${if (h == 1L) "" else "s"} ago" }
+            else -> (m / 1440).let { d -> "$d days ago" }
+        }
+    }
+
+    /** "As of 3:12 AM, 7 hours ago" when [at] is older than [STALE_MS]; null while it is fresh. */
+    fun asOf(at: Long, now: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String? =
+        if (at <= 0 || now - at < STALE_MS) null else "As of ${clock(at, now, zone)}, ${ago(at, now)}"
+
+    /** The oldest item's time when the queue is old enough to doubt; null when every item is fresh. */
+    fun staleSince(items: List<Item>, now: Long): Long? =
+        items.map { it.at }.filter { it > 0 }.minOrNull()?.takeIf { now - it >= STALE_MS }
+
+    /**
+     * The period a status report covers, from when TJ last heard an update ([since]) to [now], as a
+     * listener would say it: "from last night", "from this morning", "from the last 3 hours".
+     */
+    fun period(since: Long, now: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String? {
+        if (since <= 0 || now <= since) return null
+        val gap = now - since
+        val cal = { t: Long -> java.util.Calendar.getInstance(zone).apply { timeInMillis = t }.get(java.util.Calendar.HOUR_OF_DAY) }
+        val (sh, nh, d) = Triple(cal(since), cal(now), days(since, now, zone))
+        val mins = gap / 60_000L
+        return when {
+            mins < 90 -> if (mins < 50) "from the last ${mins.coerceAtLeast(1)} minute${if (mins <= 1) "" else "s"}" else "from the last hour"
+            d == 1 && nh < 13 && (sh >= 17 || gap <= 16 * 3_600_000L) -> "from last night"
+            d == 0 && sh < 6 && nh < 13 -> "from overnight"
+            d == 0 && sh < 12 && nh >= 12 -> "from this morning"
+            d == 0 -> (mins / 60).let { h -> "from the last $h hours" }
+            d == 1 -> "since yesterday"
+            else -> "from the last $d days"
+        }
+    }
+
+    /** What a status report opens with, said and shown: "Here's your status report from last night." */
+    fun lead(since: Long, now: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String =
+        "Here's your status report" + (period(since, now, zone)?.let { " $it" } ?: "") + "."
+
+    /**
+     * What the status button asks for: a full, fresh report that stands on its own, since the phone
+     * has just thrown away everything it held. It names the period, and asks for every open question
+     * again, so nothing waiting on TJ is lost with the queue. Starts "Status update" (the arrival screen keys on it).
+     */
+    fun statusRequest(since: Long, now: Long, zone: java.util.TimeZone = java.util.TimeZone.getDefault()): String =
+        "Status update, a fresh full report: I cleared everything queued on the phone, so treat this as if you had told me nothing. " +
+        "Every project, each time: where it stands now" +
+        (if (since > 0) ", and what happened since I last heard an update (${clock(since, now, zone)}, ${ago(since, now)})" else "") +
+        ". Then list every open question still waiting on me, from every project, even ones you asked before, each as its own question item. " +
+        "Only the latest state of each thing; say no change for a project that has none."
+
     /** What the arrival screen says aloud, and shows: "Three updates, one question." Plain items count as updates. */
     fun arrivalLine(items: Int, questions: Int): String {
         val updates = items - questions
@@ -129,6 +224,20 @@ object WalkPlan {
             count(questions, "question", "questions").takeIf { questions > 0 },
         ).joinToString(", ").ifEmpty { "nothing new" }.replaceFirstChar { it.uppercase() } + "."
     }
+
+    /**
+     * The whole arrival readout: the status lead-in, the counts, and for items old enough to doubt,
+     * when they are from and whether anything newer could have come ([connected]: the laptop just
+     * replayed everything the phone missed, so nothing newer has).
+     */
+    fun arrivalSpoken(a: Arrival, now: Long, connected: Boolean): String = listOfNotNull(
+        a.lead, arrivalLine(a.items, a.questions), a.asOf?.let { freshness(it, now, connected) },
+    ).joinToString(" ")
+
+    /** "These are from 7 hours ago, and nothing newer has come in." */
+    fun freshness(asOf: Long, now: Long, connected: Boolean): String =
+        "These are from ${ago(asOf, now)}" +
+        if (connected) ", and nothing newer has come in." else ". Not connected to the laptop, so there may be newer news."
 
     /** "send", plus the words a recognizer writes for it when it is said alone and short (TJ: "I have to say send like 12 times"). */
     /** How a review comment names its image: "Image 2 of 4 (door.png, the side door)". */
@@ -225,6 +334,7 @@ object WalkPlan {
     /**
      * Merges newly arrived items into the queue still ahead, without interrupting anything (TJ's
      * placement rule, agreed 2026-11-12):
+     *  0. a plain update replaces older plain updates still ahead for its project (one current word per project);
      *  1. same task as an item still ahead: it replaces that item, in its place;
      *  2. about something already heard in this walk (or being heard now): to the very end, marked late;
      *  3. same project as items still ahead: joins that group (questions before updates);
@@ -233,9 +343,18 @@ object WalkPlan {
     fun merge(ahead: List<Item>, incoming: List<Item>, heardKeys: Set<String>): List<Item> {
         val q = ahead.toMutableList()
         for (i in order(incoming)) {
+            // A newer plain update for a project replaces that project's older plain updates: one current word per
+            // project, never an old one walked ahead of the new. Questions go only when their own task is replaced.
+            // It takes the place of the first one it replaces.
+            val older = { o: Item -> !i.isQuestion && i.project.isNotBlank() && !o.isQuestion && o.key != i.key && o.at < i.at &&
+                o.project.equals(i.project, ignoreCase = true) }
+            val slot = q.indexOfFirst(older)
+            val slotLate = slot >= 0 && q[slot].late
+            q.removeAll(older)
             val same = q.indexOfFirst { it.key == i.key }
             if (same >= 0) { q[same] = i.copy(late = q[same].late); continue }
             if (i.key in heardKeys) { q.add(i.copy(late = true)); continue }
+            if (slot >= 0) { q.add(slot.coerceAtMost(q.size), i.copy(late = slotLate)); continue }
             val firstLate = q.indexOfFirst { it.late }.let { if (it < 0) q.size else it }
             val group = (0 until firstLate).filter { q[it].project.equals(i.project, ignoreCase = true) && i.project.isNotBlank() }
             val at = when {

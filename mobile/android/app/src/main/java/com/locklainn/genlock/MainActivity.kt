@@ -266,7 +266,8 @@ fun WalkBar(link: Link, walker: Walker) {
         Column(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
             val now = if (active) pending.firstOrNull() else null
             if (now != null) {
-                Text(listOf(now.label.ifBlank { "Reply" }, "${pending.size} to go").joinToString(" · "),
+                // Old news is labelled with when it is from, so nothing stale passes as current.
+                Text(listOfNotNull(now.label.ifBlank { "Reply" }, WalkPlan.asOf(now.at, System.currentTimeMillis())?.replaceFirstChar { it.lowercase() }, "${pending.size} to go").joinToString(" · "),
                     style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSecondaryContainer)
                 Text(now.say, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
                 Text(when (phase) {
@@ -375,12 +376,14 @@ fun TopBar(link: Link, prefs: () -> android.content.SharedPreferences, hush: () 
             )
             // Icon only, with the connection dot as a badge on its corner.
             FilledTonalIconButton(
-                onClick = { link.say(STATUS_REQUEST) },
+                // Clears what is queued and fetches a fresh report: every project, every open question, since he last heard.
+                onClick = { hush(); link.statusReport() },
                 modifier = Modifier.size(44.dp)
                     .semantics { stateDescription = if (live) "Connected" else if (conn == Conn.CONNECTING) "Connecting" else "Not connected" },
             ) {
                 Box {
-                    Icon(Icons.Default.Summarize, "Status update")
+                    // A newspaper: "catch me up", where Summarize read as a floppy disk (save).
+                    Icon(Icons.Default.Newspaper, "Status report: catch me up")
                     Box(Modifier.align(Alignment.TopEnd).offset(x = 4.dp, y = (-3).dp).size(10.dp)
                         .background(MaterialTheme.colorScheme.secondaryContainer, CircleShape).padding(1.5.dp)
                         .graphicsLayer { alpha = if (live) pulse else 1f }.background(dot, CircleShape))
@@ -418,7 +421,6 @@ fun buildLabel(ctx: Context): String = runCatching {
     "v${info.versionName} · built $built"
 }.getOrDefault("version unknown")
 
-const val STATUS_REQUEST = "Status update: every project, each time. What changed since you last told me, what finished, and what is waiting on me; say no change for a project that has none."
 
 @Composable
 fun TalkScreen(link: Link, walker: Walker, focus: Boolean) {

@@ -295,6 +295,35 @@ class Link(app: Application) : AndroidViewModel(app) {
         saveItems()
     }
 
+    /** When the status button last cleared the queue (phone clock): replies finished before it are not walked. */
+    private var clearedAt = prefs.getLong("clearedAt", 0)
+    /** The phone message that asked for the fresh report: its reply is walked whatever the clocks say. */
+    private var statusAsk = prefs.getString("statusAsk", null)
+    /** The lead-in the next status arrival opens with ("Here's your status report from last night"), set by the button. */
+    var statusLead: String? = prefs.getString("statusLead", null)
+        set(v) { field = v; prefs.edit().putString("statusLead", v).apply() }
+
+    /**
+     * The status button: throw away every unheard item (held answers stay: they are TJ's words), then ask
+     * for a fresh full report covering the time since he last heard an update, with every open question.
+     */
+    fun statusReport(): Boolean {
+        val now = System.currentTimeMillis()
+        val since = prefs.getLong("heardAt", 0)
+        val dropped = pending.value.size
+        arriving.value = null
+        pending.value = emptyList()
+        saveItems()
+        clearedAt = now
+        statusLead = WalkPlan.lead(since, now)
+        val ok = say(WalkPlan.statusRequest(since, now))
+        statusAsk = lines.value.lastOrNull { it.who == Who.ME }?.id
+        prefs.edit().putLong("clearedAt", now).putString("statusAsk", statusAsk).apply()
+        diag("status: cleared $dropped pending, report since ${if (since > 0) WalkPlan.clock(since, now) else "never"}")
+        if (dropped > 0) flash.value = "Cleared $dropped older item${if (dropped == 1) "" else "s"}. Fetching a fresh report."
+        return ok
+    }
+
     fun moveFirst(item: Item) {
         pending.value = listOf(item) + pending.value.filterNot { it.id == item.id }
         saveItems()
@@ -303,6 +332,7 @@ class Link(app: Application) : AndroidViewModel(app) {
     /** The item being heard is finished with, answered or not. */
     fun heard(item: Item, answer: Answer?) {
         heardKeys += item.key
+        prefs.edit().putLong("heardAt", System.currentTimeMillis()).apply()
         walked.value = walked.value.filterNot { it.id == item.id } + item
         pending.value = pending.value.filterNot { it.id == item.id }
         answer?.let { held.value = held.value + it }
@@ -589,7 +619,9 @@ class Link(app: Application) : AndroidViewModel(app) {
                 val tagged = items.map { it.copy(re = re?.take(400), at = t) }
                 // Not walked: a reply to TJ at the laptop (he read it there), or one the conversation has
                 // since moved past (a replay of a reply from before the mark).
-                val walk = m.optBoolean("walk", true) && t >= movedAt
+                // Nor one that finished before the status button cleared the queue, unless it answers that button.
+                val answersStatus = statusAsk != null && m.optString("reOf") == statusAsk
+                val walk = WalkPlan.walkable(m.optBoolean("walk", true), t, movedAt, clearedAt, answersStatus)
                 if (walk && pending.value.none { p -> tagged.any { it.id == p.id } }) mergeItems(tagged)
                 // Start making the voice now, in walk order, so each item is ready before it is reached.
                 if (walk) pending.value.forEach { voiceOnPhone(it.id, first = false) }

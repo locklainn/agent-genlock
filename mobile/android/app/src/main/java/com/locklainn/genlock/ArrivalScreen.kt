@@ -22,6 +22,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +43,8 @@ fun ArrivalScreen(link: Link, walker: Walker) {
     val arrival = shown?.let { WalkPlan.arrivalNow(it, pending) ?: it }
     val a = arrival ?: return
     val name by link.assistantName.collectAsStateWithLifecycle()
+    val conn by link.conn.collectAsStateWithLifecycle()
+    val laptop by link.laptop.collectAsStateWithLifecycle()
 
     // In: fades up and settles from slightly large. Then the ring breathes until the walk starts.
     val enter = remember(shown) { Animatable(0f) }
@@ -66,11 +69,30 @@ fun ArrivalScreen(link: Link, walker: Walker) {
                     }
                 }
                 Spacer(Modifier.height(36.dp))
-                Text(if (a.status) "Your status update is in" else "$name replied", fontSize = 34.sp, lineHeight = 40.sp,
-                    fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center)
+                // The last two words never part, and the lines balance, so no line is left holding "in".
+                Text(WalkPlan.keepLastTwo(if (a.status) "Your status report is in" else "$name replied"), fontSize = 34.sp, lineHeight = 40.sp,
+                    fontWeight = FontWeight.ExtraBold, textAlign = TextAlign.Center,
+                    style = LocalTextStyle.current.copy(lineBreak = LineBreak.Heading))
                 Spacer(Modifier.height(12.dp))
                 // The same words it says aloud.
+                a.lead?.let {
+                    Text(it, fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = QUESTION, textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(4.dp))
+                }
                 Text(WalkPlan.arrivalLine(a.items, a.questions).removeSuffix("."), fontSize = 19.sp, fontWeight = FontWeight.SemiBold, color = Color.White.copy(alpha = 0.85f), textAlign = TextAlign.Center)
+                // Old news says how old, and whether anything newer could be waiting, with a way to get a fresh report.
+                a.asOf?.let { at ->
+                    val now = System.currentTimeMillis()
+                    val connected = conn == Conn.CONNECTED && laptop != "offline"
+                    Spacer(Modifier.height(18.dp))
+                    Text(WalkPlan.asOf(at, now) ?: "", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold,
+                        color = Color(0xFFE0AF68), textAlign = TextAlign.Center)
+                    Text(if (connected) "Checked with the laptop just now: nothing newer has come in." else "Not connected to the laptop: there may be newer news.",
+                        style = MaterialTheme.typography.bodyMedium, color = Color.White.copy(alpha = 0.75f), textAlign = TextAlign.Center)
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = { walker.pause(); link.statusReport() }, enabled = connected,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color.White)) { Text("Get a fresh report instead") }
+                }
                 if (a.projects.isNotEmpty()) {
                     Spacer(Modifier.height(6.dp))
                     Text(a.projects.take(4).joinToString(", ") + if (a.projects.size > 4) " and ${a.projects.size - 4} more" else "",

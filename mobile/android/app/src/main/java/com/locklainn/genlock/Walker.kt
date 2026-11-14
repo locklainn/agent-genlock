@@ -115,7 +115,11 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         val q = link.pending.value
         val status = link.lines.value.lastOrNull { it.who == Who.ME }?.text?.trim()?.startsWith("Status update", ignoreCase = true) == true
         val quiet = !speakOn()
-        val a = Arrival(q.size, q.count { it.isQuestion }, q.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }, status, System.currentTimeMillis(), quiet)
+        val now = System.currentTimeMillis()
+        // A status report opens with the period it covers; the lead-in is used once.
+        val lead = if (status) link.statusLead.also { link.statusLead = null } else null
+        val a = Arrival(q.size, q.count { it.isQuestion }, q.map { it.project }.filter { it.isNotBlank() }.distinctBy { it.lowercase() }, status, now, quiet,
+            lead = lead, asOf = WalkPlan.staleSince(q, now))
         link.arriving.value = a
         link.diag("arrival shown: ${a.items} items${if (quiet) ", speaker off: silent" else ""}")
         // The screen shows for ARRIVE_MS and says the count aloud; the walk starts once both are over,
@@ -128,7 +132,7 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
         main.postDelayed({ said = true; go() }, ARRIVE_CAP_MS)
         // Speaker off: the line is shown, not said, and the walk that follows is silent too.
         if (quiet) { arrivalDone(); return }
-        val line = WalkPlan.arrivalLine(a.items, a.questions)
+        val line = WalkPlan.arrivalSpoken(a, now, link.conn.value == Conn.CONNECTED && link.laptop.value != "offline")
         // In the Genlock voice: the bridge voiced this line with the reply (same id), else it is asked for now.
         val id = "arrive:$line"
         if (!link.clips.known(id)) link.askClips(id, line)
