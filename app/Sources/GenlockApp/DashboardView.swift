@@ -60,6 +60,7 @@ struct DashboardHeader: View {
             Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                 .buttonStyle(GlassButtonStyle())
                 .help("One session across all your projects. Right ⌥ from here talks to it.")
+            FocusModeButton()
             if !model.visible.isEmpty {
                 Button { model.route = .sessions } label: {
                     Label("Back to \(model.visible.count == 1 ? "session" : "\(model.visible.count) sessions")", systemImage: "terminal.fill")
@@ -689,5 +690,15 @@ struct SetupSheet: View {
             .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
         .buttonStyle(.plain)
+    }
+}
+
+/// Opens Focus Mode: the phone app's walk-through on the Mac, in its own window.
+struct FocusModeButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button { openWindow(id: "desk") } label: { Label("Focus Mode", systemImage: "scope") }
+            .buttonStyle(GlassButtonStyle())
+            .help("Your updates one at a time, read aloud, with simple answers: the phone's walk-through on the Mac (⌘⇧P)")
     }
 }

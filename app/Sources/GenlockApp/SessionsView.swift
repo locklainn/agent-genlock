@@ -71,6 +71,7 @@ struct SessionBar: View {
                 Button { model.openAssistant() } label: { Label(model.assistantName, systemImage: "sparkles") }
                     .buttonStyle(GlassButtonStyle())
                     .help("One session across all your projects")
+                FocusModeButton()
 
                 Spacer(minLength: 8).layoutPriority(-2)
                 LoadMeter()

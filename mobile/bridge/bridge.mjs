@@ -9,11 +9,12 @@ import { backupMessages } from './backup.mjs';
 import { parseItems, formatAnswers } from './items.mjs';
 import { Voicer, arrivalLine } from './voicing.mjs';
 import { speak as genlockSpeak, voiceFor as genlockVoiceFor } from '../../lib/speaker.mjs';
-import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status, readGrid, sprintReport } from './lib.mjs';
+import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status, readGrid, sprintReport, genlockHome } from './lib.mjs';
+import { startDesk } from './desk.mjs';
 
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 
-export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl = globalThis.WebSocket, wake, speak = genlockSpeak, voiceFor = genlockVoiceFor } = {}) {
+export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl = globalThis.WebSocket, wake, speak = genlockSpeak, voiceFor = genlockVoiceFor, desk: withDesk = false, deskPort = 0 } = {}) {
   let ws = null;
   let stopped = false;
   let retry = 1000;
@@ -21,8 +22,18 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
   /** Ids of phone messages handed to the Assistant and not yet seen in its conversation, oldest first. */
   const delivered = [];
 
+  // The desk (the Mac app's Phone window, desk.mjs) gets what the phone gets. Its own messages are
+  // answered to it alone, and a reply to one is shown on the phone but not walked there: TJ heard it at the Mac.
+  /** Ids of messages the desk sent, so their ack, start and reply are routed to it. */
+  const deskIds = new Set();
+  let desk = null;
   const send = (msg) => {
-    if (ws?.readyState === 1) ws.send(JSON.stringify({ id: randomUUID(), t: Date.now(), ...msg }));
+    const full = { id: randomUUID(), t: Date.now(), ...msg };
+    const fromDesk = deskIds.has(full.of) || deskIds.has(full.reOf);
+    const toPhone = full.kind === 'reply' && deskIds.has(full.reOf) ? { ...full, walk: false, origin: 'desk' }
+      : fromDesk && (full.kind === 'ack' || full.kind === 'started' || full.kind === 'error') ? null : full;
+    if (toPhone && ws?.readyState === 1) ws.send(JSON.stringify(toPhone));
+    if (desk && full.kind !== 'clip' && full.kind !== 'file' && full.kind !== 'backup-file') desk.send(fromDesk && full.kind === 'reply' ? { ...full, origin: 'desk' } : full);
   };
 
   const assistantState = () => {
@@ -210,7 +221,33 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
   }
   connect();
 
-  return { stop() { stopped = true; clearInterval(tick); ws?.close(); } };
+  // The desk's hello: the same catch-up the phone gets, without touching the phone's voice setting.
+  function deskHello() {
+    desk.send(stateMsg());
+    const { msg } = gridMsg();
+    desk.send(msg);
+    try { follower.poll(); } catch {}
+    if (follower.mark) desk.send({ kind: 'moved', at: follower.mark });
+  }
+  if (withDesk) {
+    desk = startDesk({
+      home: home || genlockHome(), port: deskPort, log,
+      onMessage: async (msg) => {
+        if (msg.kind === 'hello') return deskHello();
+        if (msg.kind === 'clips' || msg.kind === 'diag' || msg.kind === 'backup' || msg.kind === 'file') return;
+        if (msg.kind === 'say') {
+          deskIds.add(msg.id);
+          if (deskIds.size > 200) deskIds.delete(deskIds.values().next().value);
+          // TJ took his news at the Mac: what the phone still holds from before now is past.
+          if (ws?.readyState === 1) ws.send(JSON.stringify({ id: randomUUID(), t: Date.now(), kind: 'moved', at: Date.now() }));
+        }
+        await handle(msg);
+      },
+    });
+    desk.ready.catch((e) => log('desk failed', e.message));
+  }
+
+  return { desk, stop() { stopped = true; clearInterval(tick); ws?.close(); desk?.stop(); } };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
@@ -220,5 +257,5 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   // (an emulator sees the laptop as 10.0.2.2).
   const pairing = process.env.GENLOCK_RELAY ? { ...saved, relay: process.env.GENLOCK_RELAY } : saved;
   log(`bridge for room ${pairing.room.slice(0, 6)}… via ${pairing.relay}`);
-  startBridge(pairing);
+  startBridge(pairing, { desk: true });
 }

@@ -22,6 +22,7 @@ enum Driver {
     }
 
     private static var pasteResults: [Bool] = []
+    private static var deskWindow: NSWindow?
     /// Simulated clicks do not reach panel rows, so a test asks for this state instead.
     static var expandQuestions = false
 
@@ -171,6 +172,33 @@ enum Driver {
             }
             w.orderOut(nil)
         }
+        // The Phone window (DeskView) off screen, driven like TJ would use it: open, snap, answer, send.
+        if step["deskOpen"] != nil {
+            let host = NSHostingView(rootView: DeskView().environment(model))
+            host.frame = NSRect(x: 0, y: 0, width: 460, height: 820)
+            let w = NSWindow(contentRect: NSRect(x: -6000, y: -6000, width: 460, height: 820), styleMask: [.borderless], backing: .buffered, defer: false)
+            w.appearance = NSAppearance(named: .darkAqua)
+            w.contentView = host
+            w.orderFrontRegardless()
+            deskWindow = w
+        }
+        if let path = step["deskSnap"] as? String, let host = deskWindow?.contentView {
+            host.layoutSubtreeIfNeeded()
+            if let rep = host.bitmapImageRepForCachingDisplay(in: host.bounds) {
+                host.cacheDisplay(in: host.bounds, to: rep)
+                try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: path))
+            }
+        }
+        if let text = step["deskSay"] as? String { DeskModel.shared.say(text) }
+        if let text = step["deskAnswer"] as? String { DeskModel.shared.answer(text) }
+        if step["deskNext"] != nil { DeskModel.shared.next() }
+        if let path = step["deskState"] as? String {
+            let d = DeskModel.shared
+            let o: [String: Any] = ["conn": "\(d.conn)", "pending": d.pending.map(\.id), "walked": d.walked.map(\.id), "active": d.active,
+                                    "arriving": d.arriving ?? "", "phase": "\(d.phase)", "lines": d.lines.map { "\($0.who):\($0.stage):\($0.text.prefix(80))" }]
+            try? JSONSerialization.data(withJSONObject: o, options: .prettyPrinted).write(to: URL(fileURLWithPath: path))
+        }
+        if step["deskClose"] != nil { deskWindow?.orderOut(nil); deskWindow = nil }
         // The real `genlock swap`, run as the session's agent would: in its folder, through its channel.
         if let args = step["swap"] as? [String], let id = projectID(named: args[0]), let s = model.sessions[id], let cli = model.tools?.genlockArgv {
             let p = Process()

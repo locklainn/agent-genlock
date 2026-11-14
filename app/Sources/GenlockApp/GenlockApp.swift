@@ -28,6 +28,7 @@ struct GenlockApp: App {
                 Button("Focus on LATER") { model.focusDashboard(.later) }.keyboardShortcut("3")
                 Button("Show All Tiers") { model.focusDashboard(.all) }.keyboardShortcut("4")
                 SprintReportButton()
+                FocusModeMenuButton()
                 Divider()
                 Button(model.paneMode == .cli ? "Show Tasks" : "Show Terminals") {
                     model.paneMode = model.paneMode == .cli ? .tasks : .cli
@@ -50,6 +51,12 @@ struct GenlockApp: App {
             SprintReportView().environment(model)
         }
         .defaultSize(width: 640, height: 760)
+
+        // The phone app on the Mac: opt-in, in its own window, connected only while it is open.
+        Window("Focus Mode", id: "desk") {
+            DeskView().environment(model)
+        }
+        .defaultSize(width: 460, height: 820)
 
         MenuBarExtra {
             MenuBarMenu().environment(model)
@@ -434,5 +441,12 @@ struct SprintReportButton: View {
     @Environment(\.openWindow) private var openWindow
     var body: some View {
         Button("Sprint Report") { openWindow(id: "sprint") }.keyboardShortcut("r", modifiers: [.command, .shift])
+    }
+}
+
+struct FocusModeMenuButton: View {
+    @Environment(\.openWindow) private var openWindow
+    var body: some View {
+        Button("Focus Mode") { openWindow(id: "desk") }.keyboardShortcut("p", modifiers: [.command, .shift])
     }
 }
