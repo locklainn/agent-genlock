@@ -103,6 +103,18 @@ enum Driver {
             let keys = model.sessionKeys(in: id)
             if n < keys.count { model.sessions[keys[n]]?.submit(args[2]) }
         }
+        // The visible screen of any session as text, with a second line under each marking dim
+        // cells with "~": [project, n, path]. Also records what the app reads as the input draft.
+        if let args = step["dumpScreen"] as? [String], args.count == 3, let id = projectID(named: args[0]), let n = Int(args[1]) {
+            let keys = model.sessionKeys(in: id)
+            if n < keys.count, let session = model.sessions[keys[n]] {
+                var out = session.view.screenRows().map { row in
+                    row.text + "\n" + String(row.dim.map { $0 ? "~" : " " }) + "  colors: " + Array(Set(row.colors)).sorted().joined(separator: ",")
+                }.joined(separator: "\n")
+                out += "\n--- draft: \(session.draft().map { "\"\($0)\"" } ?? "unknown")\n--- held: \(session.heldCount)\n"
+                try? out.write(toFile: args[2], atomically: true, encoding: .utf8)
+            }
+        }
         // Dropped paths and a private pasteboard, so a test never touches the real clipboard.
         if let args = step["insertPaths"] as? [String], let id = projectID(named: args[0]) {
             _ = model.sessions[id]?.view.insert(paths: Array(args.dropFirst()))

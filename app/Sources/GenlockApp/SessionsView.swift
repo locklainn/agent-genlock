@@ -680,10 +680,11 @@ struct PaneView: View {
     private var tier: Tier { model.store.project(projectID)?.tier ?? .soon }
     @State private var hovering = false
     @State private var showingPhone = false
+    @State private var headerWidth: CGFloat = 0
 
     /// In a grid, only the pane you are in, or the one under the pointer, shows its buttons.
-    /// The rest fade. In a grid they float over the name rather than taking room, so names neither
-    /// shift as the pointer passes nor shrink to an ellipsis.
+    /// The rest fade but keep their room, so names do not shift as the pointer passes. A narrow
+    /// grid pane shows only three (see compactControls), so the name still has room.
     private var showsControls: Bool {
         guard isSplit else { return true }
         return hovering || isKeyPane
@@ -774,6 +775,7 @@ struct PaneView: View {
                     Text(model.tabLabel(sessionKey)).font(.system(size: 12.5, weight: .semibold)).foregroundStyle(Theme.textPrimary)
                         .lineLimit(1).truncationMode(.tail).contentShape(Rectangle())
                 }
+                .layoutPriority(1)
                 .buttonStyle(.plain).onHover { $0 ? NSCursor.pointingHand.push() : NSCursor.pop() }
                 .help("\(name): \(model.tabLabel(sessionKey)). Click to open it alone, with its terminal.")
                 // The strip under the header already says what a project session is waiting on;
@@ -796,26 +798,12 @@ struct PaneView: View {
                 }
             }
             Spacer(minLength: 8)
-            // A grid pane's buttons float over the header's end instead of taking room in the row:
-            // reserved while faded, they left a 300pt pane about 30pt for its name, which showed
-            // as a bare "…" in every pane but the one you were in.
-            // Holds the row at the buttons' height, with no width, so the header does not shrink.
-            if isSplit { controls.hidden().frame(width: 0).clipped() } else { controls }
+            controls
         }
         .padding(.horizontal, 12).padding(.vertical, 5)
-        .overlay(alignment: .trailing) {
-            if isSplit {
-                controls
-                    .padding(.leading, 18).padding(.trailing, 12)
-                    .frame(maxHeight: .infinity)
-                    .background(ZStack { Theme.canvas; headerFill }
-                        .mask(HStack(spacing: 0) {
-                            LinearGradient(colors: [.clear, .black], startPoint: .leading, endPoint: .trailing).frame(width: 18)
-                            Color.black
-                        })
-                        .opacity(showsControls || listeningHere ? 1 : 0))
-            }
-        }
+        .background(GeometryReader { g in
+            Color.clear.onAppear { headerWidth = g.size.width }.onChange(of: g.size.width) { _, w in headerWidth = w }
+        })
         // Exactly the pane's width. Its pieces cannot shrink below their text, so with many tabs the
         // row is wider than the pane; unclamped, that widened the pane's column, which centred the
         // terminal in it: shifted right by half the overflow and clipped on the right.
@@ -830,9 +818,63 @@ struct PaneView: View {
         .onTapGesture { model.focus(sessionKey) }
     }
 
-    /// The pane's buttons. Inline in a single pane; over the header's end in a grid, where at rest
-    /// they fade out of the way of the session's name.
-    private var controls: some View {
+    /// A grid pane narrower than this folds its buttons into Talk, a menu and Close, so the
+    /// session's name keeps its room. Interim until the header's buttons are redesigned.
+    static let fullControlsWidth: CGFloat = 640
+
+    /// The pane's buttons: all of them, or in a narrow grid pane Talk, a menu of the rest, and Close.
+    @ViewBuilder private var controls: some View {
+        if isSplit && headerWidth > 0 && headerWidth < Self.fullControlsWidth { compactControls } else { fullControls }
+    }
+
+    private var compactControls: some View {
+        let listeningHere = model.voice.isListening && model.voice.target == sessionKey
+        let session = model.sessions[sessionKey]
+        return HStack(spacing: 8) {
+            Menu {
+                if model.isSubassistant(sessionKey) {
+                    Button("Status Update") { model.projectStatus(projectID, replacing: sessionKey) }
+                    Button("Sprint Report") { model.sessions[sessionKey]?.submit(SessionLaunch.sprintReport(all: false)) }
+                }
+                if projectID == model.assistantFolder {
+                    Button("Status Update") { model.statusSweep() }
+                    Button("Sprint Report") {
+                        model.openAssistant()
+                        model.sessions[model.assistantFolder]?.submit(SessionLaunch.sprintReport(all: true))
+                    }
+                    Button(model.remoteControl ? "Turn Remote Control Off" : "Turn Remote Control On") { model.remoteControl.toggle() }
+                    Button("Phone Thread") { showingPhone = true }
+                }
+                if let session, session.isRunning, projectID != model.assistantFolder, !model.isSubassistant(sessionKey) {
+                    Button("Status Update") { session.submit(SessionLaunch.sessionStatus) }
+                }
+                if let session, session.isRunning {
+                    Button("Are You Done?") { session.submit(DoneCheck.question) }
+                }
+                if projectID != model.assistantFolder {
+                    Button("Goals and Tasks") { toggleInspector() }
+                }
+                Divider()
+                Button("Take Out of the Split") { model.hidePane(sessionKey) }
+            } label: {
+                Image(systemName: "ellipsis.circle").font(.system(size: 13, weight: .semibold)).foregroundStyle(Theme.textSecondary)
+            }
+            .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
+            .popover(isPresented: $showingPhone, arrowEdge: .bottom) {
+                PhoneThreadView(assistantFolder: model.assistantFolder).environment(model)
+            }
+            .help("This pane's other buttons")
+            .accessibilityLabel("More")
+            MicButton(listening: listeningHere, compact: true) { model.pressVoice(for: sessionKey) }
+            Button { model.requestClose([sessionKey]) } label: { Image(systemName: "xmark") }
+                .buttonStyle(IconButtonStyle()).help("Close this session. Asks first; its conversation stays under Recently ended.").accessibilityLabel("Close session")
+        }
+        .opacity(showsControls || listeningHere ? 1 : 0)
+        .allowsHitTesting(showsControls || listeningHere)
+        .animation(.easeOut(duration: 0.15), value: showsControls)
+    }
+
+    private var fullControls: some View {
         let listeningHere = model.voice.isListening && model.voice.target == sessionKey
         return HStack(spacing: 10) {
         if model.isSubassistant(sessionKey) {

@@ -35,6 +35,23 @@ final class PaneTerminalView: LocalProcessTerminalView {
         return true
     }
 
+    /// The visible screen, one entry per row: its text and which cells are drawn dim (the way
+    /// Claude Code draws a placeholder in an empty input line).
+    func screenRows() -> [PromptScreen.Row] {
+        guard let snap = terminalContentSnapshot(region: .history(maximumScrollbackRows: -1)) else { return [] }
+        return snap.rows.map { row in
+            var text = ""
+            var dim: [Bool] = []
+            var colors: [String] = []
+            for cell in row.cells where cell.width != 0 {
+                text.append(cell.text.isEmpty || cell.text == "\u{0}" ? " " : cell.text)
+                dim.append(cell.attribute.style.contains(.dim))
+                colors.append(String(describing: cell.attribute.fg))
+            }
+            return PromptScreen.Row(text: text, dim: dim, colors: colors)
+        }
+    }
+
     static func fileURLs(on board: NSPasteboard) -> [URL] {
         board.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
     }

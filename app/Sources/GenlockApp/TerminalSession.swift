@@ -135,8 +135,29 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     /// as part of the paste rather than as pressing Enter. Each message is then checked against
     /// the transcript (confirmDeliveries).
     func submit(_ text: String) {
-        type(text)
-        pending.append(Delivery.Pending(text: text, at: Date()))
+        held.append(text)
+        flushHeld()
+    }
+
+    /// Messages waiting for the user's draft to leave the input line. Return submits the whole
+    /// input line, so a message typed into a half-written draft would send the draft with it.
+    @ObservationIgnored private var held: [String] = []
+    var heldCount: Int { held.count }
+
+    /// What the user has typed on the input line and not sent: "" for none, nil if the input line
+    /// is not on screen.
+    func draft() -> String? { PromptScreen.draft(in: view.screenRows()) }
+
+    /// Types the held messages, in order, once the input line has no draft. Called on submit and
+    /// on every delivery tick, so a held message goes as soon as the user sends or clears theirs.
+    func flushHeld() {
+        guard !held.isEmpty else { return }
+        if let d = draft(), !d.isEmpty { return }
+        for text in held {
+            type(text)
+            pending.append(Delivery.Pending(text: text, at: Date()))
+        }
+        held.removeAll()
     }
 
     private func type(_ text: String) {
@@ -150,6 +171,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
     /// unconfirmed: types a missing message once more when the session is idle, and returns those
     /// that never arrived, for the sender to hear about.
     func confirmDeliveries(now: Date = Date()) -> [String] {
+        flushHeld()
         guard !pending.isEmpty, now.timeIntervalSince(checkedAt) >= 3 else { return [] }
         checkedAt = now
         let tail = channel.readState()?.transcript.flatMap { Delivery.tail(of: URL(fileURLWithPath: $0)) }
@@ -162,6 +184,7 @@ final class TerminalSession: NSObject, LocalProcessTerminalViewDelegate {
             case .arrived: continue
             case .wait: keep.append(p)
             case .retype:
+                if let d = draft(), !d.isEmpty { keep.append(p); continue }
                 type(p.text)
                 p.tries += 1
                 p.at = now
