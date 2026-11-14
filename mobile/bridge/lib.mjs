@@ -101,9 +101,10 @@ export const sendToAssistant = (text, home, opts) => deliverToAssistant(text, ho
 
 /**
  * Where a prompt in the Assistant's conversation came from: 'phone' ([phone]), 'relay' (an automatic
- * report from the project sessions), 'laptop' (TJ typing or speaking at the laptop, or through Remote
- * Control: anything else a person wrote), or null for system text (task notifications, command output,
- * a compaction summary). A long message arrives wrapped in <pasted_content>; it is judged by what is inside.
+ * report from the project sessions), 'notice' (a notice the Mac app typed in, such as a load alert),
+ * 'laptop' (TJ typing or speaking at the laptop, or through Remote Control: anything else a person
+ * wrote), or null for system text (task notifications, command output, a compaction summary). A long
+ * message arrives wrapped in <pasted_content>; it is judged by what is inside.
  */
 export function promptSource(raw) {
   let t = String(raw || '').trim();
@@ -112,13 +113,22 @@ export function promptSource(raw) {
   if (!t) return null;
   if (t.startsWith(PHONE_PREFIX)) return 'phone';
   if (t.startsWith('[relay]')) return 'relay';
+  if (MAC_NOTICE.test(t)) return 'notice';
   if (t.startsWith('<') || t.startsWith('This session is being continued from a previous conversation')) return null;
   return 'laptop';
 }
 
 const PHONE_PREFIX_RE = /^\[phone\]\s*/;
-/** A notice the Mac app typed into the conversation (a load alert): not TJ's words, though promptSource counts it as the laptop. */
+/** A notice the Mac app typed into the conversation (a load alert): not TJ's words, so not TJ at the laptop. */
 const MAC_NOTICE = /^\[Load alert\b/;
+
+/**
+ * How long a conversation the Assistant has moved off is still read. A fresh start can end a
+ * conversation whose last turn is still being written, and that reply must still reach the phone.
+ */
+const DRAIN_MS = 10 * 60 * 1000;
+/** What the follower keeps per conversation. */
+const READER_FIELDS = ['file', 'offset', 'partial', 'texts', 'lastSource', 'lastPrompt'];
 
 /** A prompt as the phone shows it: unwrapped, without the [voice] tag. */
 const shownPrompt = (raw) => String(raw || '').trim()
@@ -162,17 +172,48 @@ export class TranscriptFollower {
      */
     this.lastPrompt = null;
     this.quiet = false;
+    /** Conversations the Assistant moved off, still read until `until` for a turn they were finishing. */
+    this.draining = [];
+  }
+
+  reader() { return Object.fromEntries(READER_FIELDS.map((k) => [k, this[k]])); }
+
+  /** Reads a conversation the Assistant has moved off, with its own offset and turn state. */
+  drain(now = Date.now()) {
+    this.draining = this.draining.filter((r) => r.until > now && fs.existsSync(r.file));
+    for (const r of this.draining) {
+      const saved = this.reader();
+      Object.assign(this, r);
+      try { this.read(r.file); } finally { Object.assign(r, this.reader()); Object.assign(this, saved); }
+    }
   }
 
   poll() {
     const file = this.resolve();
-    if (!file) return;
+    this.drain();
+    // No conversation to name (a fresh start removed the channel before the next one began):
+    // the one being followed may still be finishing its turn, so it is read as before.
+    if (!file) { if (this.file) this.read(this.file); return; }
     if (file !== this.file) {
+      if (this.file) {
+        // The tail written so far is read now; anything after it, while it drains.
+        this.read(this.file);
+        this.draining.push({ ...this.reader(), until: Date.now() + DRAIN_MS });
+      }
+      // Back on a conversation still draining: carry on from where it was, so nothing repeats.
+      const back = this.draining.find((r) => r.file === file);
+      if (back) {
+        this.draining = this.draining.filter((r) => r !== back);
+        const { until, ...state } = back;
+        Object.assign(this, state);
+        this.read(file);
+        return;
+      }
       // A new conversation is read from its start, an existing one from where it is now.
       const fresh = this.file !== null;
       this.file = file;
       this.partial = '';
-      this.texts.clear();
+      this.texts = new Map();
       // So is the first one after the bridge queued a message for a closed Assistant: the
       // Assistant it starts may have written its first turn before this poll saw the file.
       const fromStart = fresh || this.readNextFromStart;
@@ -210,7 +251,7 @@ export class TranscriptFollower {
     if (!source) return;
     this.lastSource = source;
     const words = shownPrompt(raw).replace(PHONE_PREFIX_RE, '').replace(/^\[voice\]\s*/, '').trim();
-    this.lastPrompt = (source === 'phone' || source === 'laptop') && !MAC_NOTICE.test(words)
+    this.lastPrompt = source === 'phone' || source === 'laptop'
       ? { source, turn: e.uuid, text: words }
       : (queued ? this.lastPrompt : null);
     if (source === 'laptop') {

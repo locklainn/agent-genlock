@@ -122,3 +122,52 @@ test('each reply carries the prompt that began its turn: none when an event bega
     ['Both.', { source: 'phone', turn: 'q1', text: 'and second' }],
   ]);
 });
+
+test('a reply finished in the old conversation after a fresh start still arrives', () => {
+  // 13 Nov 14:46: a fresh start ended a conversation mid-turn and removed its channel; its reply was
+  // written seconds later, while the resolver named nothing and then the next conversation.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'follower-'));
+  const a = path.join(dir, 'a.jsonl');
+  const b = path.join(dir, 'b.jsonl');
+  fs.writeFileSync(a, '');
+  let current = a;
+  const got = [];
+  const f = new TranscriptFollower(() => current, { onReply: (e) => got.push([e.text, e.answers]) });
+  f.poll();
+  const add = (file, e) => fs.appendFileSync(file, JSON.stringify(e) + '\n');
+  add(a, { type: 'user', uuid: 'p1', message: { role: 'user', content: '[phone] Status update' } });
+  f.poll();
+  current = null; // the channel is gone: nothing named
+  add(a, { type: 'assistant', message: { id: 'm1', stop_reason: null, content: [{ type: 'text', text: 'Here is where' }] } });
+  f.poll();
+  current = b; // the next conversation begins before the old one's turn ends
+  fs.writeFileSync(b, '');
+  add(b, { type: 'user', uuid: 'n1', message: { role: 'user', content: '[Load alert] CPU went red.' } });
+  f.poll();
+  add(a, { type: 'assistant', message: { id: 'm1', stop_reason: 'end_turn', content: [{ type: 'text', text: 'everything stands.' }] } });
+  add(b, { type: 'assistant', message: { id: 'm2', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Alert noted.' }] } });
+  f.poll();
+  f.poll(); // read once only
+  assert.deepEqual(got, [['Here is where\n\neverything stands.', 'phone'], ['Alert noted.', 'notice']]);
+});
+
+test('a load alert is not TJ at the laptop: no prompt, no moved-on mark, and its reply walks', async () => {
+  const { walkable } = await import('../items.mjs');
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'follower-'));
+  const file = path.join(dir, 't.jsonl');
+  fs.writeFileSync(file, '');
+  const got = [];
+  const f = new TranscriptFollower(() => file, {
+    onPrompt: (e) => got.push(['prompt', e.text]), onMoved: (e) => got.push(['moved', e.at]),
+    onReply: (e) => got.push(['reply', e.answers, e.prompt]),
+  });
+  f.poll();
+  const add = (e) => fs.appendFileSync(file, JSON.stringify(e) + '\n');
+  add({ type: 'user', uuid: 'l1', timestamp: '2026-11-13T14:49:16.000Z', message: { role: 'user', content: '  <pasted_content id="f52d"> [Load alert (test)] CPU went red.\n</pasted_content>' } });
+  add({ type: 'user', uuid: 'l2', timestamp: '2026-11-13T14:52:44.000Z', message: { role: 'user', content: '[Load alert] Memory pressure went red.' } });
+  add({ type: 'assistant', message: { id: 'm1', stop_reason: 'end_turn', content: [{ type: 'text', text: 'Muted.' }] } });
+  f.poll();
+  assert.deepEqual(got, [['reply', 'notice', null]]);
+  assert.equal(f.mark, 0);
+  assert.equal(walkable({ answers: 'notice', items: [{ id: 'x' }] }), true);
+});
