@@ -214,6 +214,8 @@ enum Driver {
         if let text = step["deskSay"] as? String { DeskModel.shared.say(text) }
         if let text = step["deskAnswer"] as? String { DeskModel.shared.answer(text) }
         if step["deskNext"] != nil { DeskModel.shared.next() }
+        // What a click on step N of the bar does (0: Start over).
+        if let n = step["deskRewind"] as? Int { DeskModel.shared.rewind(to: n) }
         if let path = step["deskState"] as? String {
             let d = DeskModel.shared
             let o: [String: Any] = ["conn": "\(d.conn)", "pending": d.pending.map(\.id), "walked": d.walked.map(\.id), "active": d.active,

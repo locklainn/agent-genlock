@@ -41,6 +41,10 @@ const steps = [
   { wait: 4 }, { deskSnap: shot('3-walk') }, { deskState: state('3-walk') },
   { deskAnswer: 'Yes, ship it' }, { wait: 1 }, { deskSnap: shot('4-next') }, { deskState: state('4-next') },
   { deskNext: true }, { wait: 3 }, { deskState: state('5-done') }, { deskSnap: shot('5-dash') }, { wait: 6 }, { deskSnap: shot('6-atwork') },
+  // Replay (T-V3FEG): Start over puts every step back from the first; then a click on step 1 after hearing it.
+  { deskRewind: 0 }, { wait: 1 }, { deskState: state('7-restart') }, { deskSnap: shot('7-restart') },
+  { deskNext: true }, { deskNext: true }, { wait: 1 }, { deskRewind: 1 }, { wait: 1 }, { deskState: state('8-step2') }, { deskSnap: shot('8-step2') },
+  { deskNext: true }, { wait: 2 },
   { deskClose: true }, { wait: 1 }, { snapshot: shot('main-after') }, { report: state('main-after') }, { quit: true },
 ];
 const drive = path.join(out, 'drive.json');
@@ -75,7 +79,7 @@ const code = await new Promise((res) => { proc.on('exit', res); setTimeout(() =>
 clearInterval(timer);
 bridge.stop();
 const read = (n) => { try { return JSON.parse(fs.readFileSync(state(n), 'utf8')); } catch { return null; } };
-const report = { app: code, out, answers, states: Object.fromEntries(['0-open', '1-sent', '2-arrival', '3-walk', '4-next', '5-done'].map((n) => [n, read(n)])) };
+const report = { app: code, out, answers, states: Object.fromEntries(['0-open', '1-sent', '2-arrival', '3-walk', '4-next', '5-done', '7-restart', '8-step2'].map((n) => [n, read(n)])) };
 console.log(JSON.stringify(report, null, 2));
 // The main window's layout and routing, which a Phone window must not disturb. Pixels and tool
 // paths are not compared: the background animates and boot finishes resolving tools meanwhile.
@@ -83,6 +87,10 @@ const MAIN = ['route', 'visible', 'focused', 'panes', 'tabLabels', 'cards', 'run
 const pick = (n) => { try { const r = JSON.parse(fs.readFileSync(state(n), 'utf8')); return JSON.stringify(MAIN.map((k) => r[k])); } catch { return null; } };
 const sameReport = pick('main-before') !== null && pick('main-before') === pick('main-after');
 console.log(`main window state identical before and after the Phone window (${MAIN.join(', ')}): ${sameReport}`);
-const ok = sameReport && answers && /\[phone\] Answers from the phone walk-through: \(1\) genlock \/ phone view - asked "Ship it\?": Yes, ship it \(2\) budget \/ minutes: heard/.test(answers);
+const st = report.states;
+const replay = st['7-restart']?.walked.length === 0 && st['7-restart']?.pending.length === 2 && st['7-restart']?.active === true
+  && st['8-step2']?.walked.length === 1 && st['8-step2']?.pending.length === 1 && st['8-step2']?.pending[0] === st['7-restart']?.pending[1];
+console.log(`replay: Start over puts both steps back and plays; clicking step 2 replays it: ${replay}`);
+const ok = replay && sameReport && answers && /\[phone\] Answers from the phone walk-through: \(1\) genlock \/ phone view - asked "Ship it\?": Yes, ship it \(2\) budget \/ minutes: heard/.test(answers);
 console.log(ok ? 'PASS: the answers reached Tally in the phone format' : 'FAIL');
 process.exit(ok ? 0 : 1);
