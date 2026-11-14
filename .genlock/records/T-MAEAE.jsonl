@@ -3,3 +3,7 @@
 {"e":"306e6bc2ffc4","at":"2026-11-13T22:37:05.533Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"start"}
 {"e":"a93a219b60cd","at":"2026-11-13T22:39:56.923Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"update","text":"Shipped 0.1.456398 (R2 link). Focus.kt: All caught up shows CAUGHT_UP_MS=5s when idle (no outgoing message, no unsent answers), then AtWork: running sessions with phase working (pulsing count) and holding (paused list). Data check: live grid.json phases {working 3, holding 1, done 5} == state.json states sweep reads. Needs TJ's eye on the phone for all 3 checks."}
 {"e":"4729410546c6","at":"2026-11-14T01:50:56.967Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"update","text":"0.1.456589: AtWork has the 38sp ExtraBold title back (N sessions working / All paused / Nothing running), with an Active · N paused line above the list (TJ asked for it back). Link sent to the Assistant. Needs TJ's eye."}
+{"e":"3383f516afbf","at":"2026-11-14T13:12:13.401Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"update","text":"All code committed and shipped in phone build 0.1.456743; no phone build needed. Left: TJ confirms on the phone (or from the bridge log)."}
+{"e":"8a0df47321f1","at":"2026-11-14T13:12:14.612Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"handoff","goal":"G-R5WR4"}
+{"e":"cdf564c60ba4","at":"2026-11-14T13:12:24.404Z","by":"62e2c353-3ab7-4e14-9490-1427da88a77e","op":"link","goal":"G-R5WR4"}
+{"e":"c7fa680e8759","at":"2026-11-14T13:12:46.306Z","by":"1e09f14b-a1a5-4d31-a91d-9ccfb83a9a35","op":"start"}

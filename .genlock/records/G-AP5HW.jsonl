@@ -9,3 +9,4 @@
 {"e":"531a0660fc5b","at":"2026-11-13T19:47:34.843Z","by":"55e588c4-ed2a-47a0-a0a2-95d3e9a8b481","op":"next_done","nid":"0b28ba"}
 {"e":"9f16fb14b6ee","at":"2026-11-13T19:47:35.201Z","by":"55e588c4-ed2a-47a0-a0a2-95d3e9a8b481","op":"next_done","nid":"2cea6c"}
 {"e":"6f51095028e9","at":"2026-11-13T19:47:35.636Z","by":"55e588c4-ed2a-47a0-a0a2-95d3e9a8b481","op":"next_add","nid":"826515","text":"Commit load panel + load alerts by path when TJ asks (shared files with other sessions)","due":null}
+{"e":"05f4ffbc0b3c","at":"2026-11-14T12:51:25.785Z","by":"e9d89667-520f-4bfd-8384-7655d2d90fd9","op":"next_add","nid":"d0dd4c","text":"TJ reviews the CPU findings and event-driven plan (cpu audit); then test + ship the CLI snapshot fix","due":null}

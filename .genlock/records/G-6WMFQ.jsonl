@@ -22,3 +22,4 @@
 {"e":"828b69397a9d","at":"2026-11-08T22:01:34.277Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"decide","did":"6efe1f","text":"TJ accepted open-from-hub and relay-back without an eye check","user_said":"im just going to trust you ;) consider it"}
 {"e":"3a56e2e1440d","at":"2026-11-08T22:01:34.576Z","by":"f34aa3bf-6257-411d-bd1c-0710fbcf726f","op":"next_done","nid":"329843"}
 {"e":"95edc62d5498","at":"2026-11-14T01:55:03.217Z","by":"4018803d-3620-48a1-9467-bde0946892f6","op":"next_keep"}
+{"e":"2113f36756ec","at":"2026-11-14T12:56:22.172Z","by":"4f454b3b-48ec-4f3b-a4d8-d781727332e5","op":"next_add","nid":"16f9b6","text":"TJ relaunches the Mac app (draft-safe delivery build) and checks: a relay arriving while he types waits, then lands once he sends or clears","due":null}
