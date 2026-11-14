@@ -54,3 +54,25 @@ test('an empty items block means nothing new: shown as text, marked quiet so the
   assert.equal(parseItems(block([{ project: 'p', task: 't', say: 'New.' }]), 't9').quiet, undefined);
   assert.equal(parseItems('No block at all.', 't9').quiet, undefined);
 });
+
+test('an item can carry images to review: local image paths, with or without a caption; others are left out', () => {
+  const r = parseItems(block([{ project: 'p', task: 't', say: 'Look at these.', images: [
+    '/tmp/a.png', { path: '/tmp/b.JPG', caption: 'the side door' }, 'https://x.test/c.png', '/tmp/notes.txt', 'relative.png',
+  ] }]), 't7');
+  assert.deepEqual(r.items[0].images, [{ path: '/tmp/a.png' }, { path: '/tmp/b.JPG', caption: 'the side door' }]);
+  assert.equal(parseItems(block([{ say: 'No images.' }]), 't7').items[0].images, undefined);
+});
+
+test('a reply to the laptop is not walked, unless it carries images to review; an empty block never is', async () => {
+  const { walkable } = await import('../items.mjs');
+  const plain = [{ id: 'r-0', say: 'x' }];
+  const review = [{ id: 'r-0', say: 'x', images: [{ path: '/tmp/a.png' }] }];
+  assert.equal(walkable({ answers: 'phone', items: plain }), true);
+  assert.equal(walkable({ answers: 'laptop', items: plain }), false);
+  assert.equal(walkable({ answers: 'laptop', items: review }), true);
+  assert.equal(walkable({ answers: 'phone', quiet: true, items: plain }), false);
+  // TJ, 2026-11-14: updates walk without a request from the phone: any reply with a block.
+  assert.equal(walkable({ answers: 'laptop', items: plain, block: true }), true);
+  assert.equal(parseItems(block([{ say: 'News.' }]), 'b').block, true);
+  assert.equal(parseItems('No block.', 'b').block, undefined);
+});

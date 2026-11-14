@@ -227,6 +227,21 @@ test('a reply with an items block reaches the phone as tagged items, the block c
   p.ws.close();
 });
 
+test('a review item sends each image to the phone as a file and names it on the item by that file id', async () => {
+  const a = path.join(home, 'door-a.png'); const b = path.join(home, 'door-b.png');
+  fs.writeFileSync(a, bigBytes(1000)); fs.writeFileSync(b, bigBytes(2000));
+  const p = phone();
+  await p.opened;
+  p.send({ kind: 'hello', lastSeen: Date.now() });
+  const items = [{ project: 'nightmaremode', task: 'side door', say: 'Two door options.', ask: 'Which reads better?', images: [a, { path: b, caption: 'option B' }] }];
+  fs.appendFileSync(transcript, JSON.stringify({ type: 'assistant', message: { id: 'm-rev', content: [{ type: 'text', text: 'Review these.\n\n```items\n' + JSON.stringify(items) + '\n```' }], stop_reason: 'end_turn' } }) + '\n');
+  const reply = await waitFor(() => p.got.find((m) => m.kind === 'reply' && m.turn === 'm-rev'));
+  assert.deepEqual(reply.items[0].images, [{ fid: 'm-rev-0-img0', name: 'door-a.png', path: a }, { fid: 'm-rev-0-img1', name: 'door-b.png', path: b, caption: 'option B' }]);
+  const fids = await waitFor(() => { const f = new Set(p.got.filter((m) => m.kind === 'file').map((m) => m.fid)); return f.has('m-rev-0-img0') && f.has('m-rev-0-img1') ? f : null; });
+  assert.ok(fids.size >= 2);
+  p.ws.close();
+});
+
 test('a walk\'s answers reach the Assistant as one message, each labelled with its project and task', async () => {
   const p = phone();
   await p.opened;

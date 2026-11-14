@@ -207,6 +207,9 @@ class Walker(private val ctx: Context, private val link: Link, private val tts: 
     /** A line for the bridge log, so a phone test can be read from the laptop. */
     fun diag(text: String) = link.diag(text)
 
+    /** The conversation, for a review's images: each arrives as a file line the bridge sent with the reply. */
+    val lines get() = link.lines
+
     /** Send what has been answered so far, as one batch, and end the walk. Unheard items stay. */
     fun flush() {
         stopAll()

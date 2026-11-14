@@ -4,9 +4,10 @@
 //   node mobile/bridge/bridge.mjs            run, using the pairing from pair.mjs
 
 import { randomUUID } from 'node:crypto';
+import path from 'node:path';
 import { Assembler, chunksFor, prepareOutgoing, saveIncoming, withAttachments } from './files.mjs';
 import { backupMessages } from './backup.mjs';
-import { parseItems, formatAnswers } from './items.mjs';
+import { parseItems, formatAnswers, walkable } from './items.mjs';
 import { Voicer, arrivalLine } from './voicing.mjs';
 import { speak as genlockSpeak, voiceFor as genlockVoiceFor } from '../../lib/speaker.mjs';
 import { loadPairing, roomURL, findAssistant, deliverToAssistant, TranscriptFollower, status, readGrid, sprintReport, genlockHome } from './lib.mjs';
@@ -52,14 +53,23 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
     try { const v = voiceFor({ project: it.project }); return v ? { ...it, voice: { parts: v.parts, speed: v.speed || 1 } } : it; } catch (e) { log('voice for', it.project, e.message); return it; }
   };
 
+  /** Which phone message began each transcript turn (prompt uuid -> the phone's message id). */
+  const phoneTurns = new Map();
   const follower = new TranscriptFollower(() => findAssistant(home)?.transcript, {
     onReply: ({ text: raw, turn, answers, prompt }) => {
       // Cut into items for the phone to walk; the text shown loses the items block.
-      const { text, items: cut, quiet } = parseItems(raw, turn);
-      const items = cut.map(withVoice);
+      const { text, items: cut, quiet, block } = parseItems(raw, turn);
+      // A review's images go to the phone as files, and the item names each by its file id.
+      const items = cut.map((it) => (it.images ? { ...it, images: it.images.map((im, k) => {
+        const fid = `${it.id}-img${k}`;
+        sendFile(im.path, { turn: fid });
+        // path: the Mac's Focus Mode opens the image where it is; the phone uses the file it was sent.
+        return { fid, name: path.basename(im.path), path: im.path, ...(im.caption ? { caption: im.caption } : {}) };
+      }) } : it)).map(withVoice);
       // A reply to TJ at the laptop or Remote Control was read there: the phone shows it, not walks it.
       // Nor one whose items block is empty: nothing in it is new to him (a repeat of what Tally said).
-      const walk = answers !== 'laptop' && !quiet;
+      // Any reply with an items block walks, whatever began the turn: TJ gets news without asking from the phone.
+      const walk = walkable({ answers, quiet, items, block });
       log('reply', items.length, 'items', walk ? '' : quiet ? '(not walked: nothing new)' : '(not walked)', text.slice(0, 60));
       // What this reply answers, for the phone's YOU SAID: TJ's own words, or '' when an event began
       // the turn (a relay report, an alert). reOf names the phone's own message, so it quotes that.
@@ -67,8 +77,6 @@ export function startBridge(pairing, { home, snap, pollMs = 1000, WebSocketImpl 
       send({ kind: 'reply', text, turn, items, re: prompt?.text?.slice(0, 400) || '', ...(reOf ? { reOf } : {}), ...(walk ? {} : { walk: false }) });
       if (walk && !ondevice && voicer) {
         // The arrival screen's line first: it is said before any item. The phone asks by the same
-  /** Which phone message began each transcript turn (prompt uuid -> the phone's message id). */
-  const phoneTurns = new Map();
         // id (arrive:<line>), so when nothing else was pending its clip is already here.
         const line = arrivalLine(items);
         voicer.line(`arrive:${line}`, line).catch((e) => log('voice', e.message));

@@ -19,14 +19,17 @@ public struct DeskItem: Codable, Equatable, Identifiable, Sendable {
     /// What TJ said that this replies to, and when the reply came (ms, laptop clock).
     public var re: String?
     public var at: Int64
+    /// Images an agent wants reviewed: paged through one at a time, a comment on each.
+    public var images: [DeskImage]
 
     public init(id: String, project: String = "", task: String = "", kind: String = "update", say: String,
-                ask: String? = nil, options: [String] = [], late: Bool = false, re: String? = nil, at: Int64 = 0) {
+                ask: String? = nil, options: [String] = [], late: Bool = false, re: String? = nil, at: Int64 = 0, images: [DeskImage] = []) {
         self.id = id; self.project = project; self.task = task; self.kind = kind; self.say = say
-        self.ask = ask; self.options = options; self.late = late; self.re = re; self.at = at
+        self.ask = ask; self.options = options; self.late = late; self.re = re; self.at = at; self.images = images
     }
 
-    public var isQuestion: Bool { kind == "question" || ask != nil }
+    /// A review asks for comments, so it waits for TJ like a question.
+    public var isQuestion: Bool { kind == "question" || ask != nil || !images.isEmpty }
     /// Same project and task means the same subject; an item with neither is only itself.
     public var key: String {
         project.trimmingCharacters(in: .whitespaces).isEmpty && task.trimmingCharacters(in: .whitespaces).isEmpty
@@ -42,8 +45,19 @@ public struct DeskItem: Codable, Equatable, Identifiable, Sendable {
         if !names.isEmpty { parts.append(names.joined(separator: ", ") + ".") }
         parts.append(DeskWalk.unlinked(say))
         if let ask { parts.append(DeskWalk.unlinked(ask)) }
+        if images.count == 1 { parts.append("One image to look at.") } else if images.count > 1 { parts.append("\(images.count) images to look at.") }
         return parts.joined(separator: " ")
     }
+}
+
+/// One image of a review. The desk is on the Mac, so it opens [path] directly; the phone gets the
+/// same image as a file named [fid].
+public struct DeskImage: Codable, Equatable, Sendable {
+    public var fid: String
+    public var name: String
+    public var caption: String?
+    public var path: String?
+    public init(fid: String, name: String, caption: String? = nil, path: String? = nil) { self.fid = fid; self.name = name; self.caption = caption; self.path = path }
 }
 
 /// TJ's answer to one item: what he said, or that he skipped it.
@@ -190,6 +204,22 @@ public enum DeskWalk {
         return s.trimmingCharacters(in: .whitespaces)
     }
 
+    /// How a review comment names its image: "Image 2 of 4 (door.png, the side door)". Same as the phone.
+    public static func imageLabel(_ images: [DeskImage], _ n: Int) -> String {
+        let im = images[n]
+        let about = [im.name, im.caption ?? ""].filter { !$0.trimmingCharacters(in: .whitespaces).isEmpty }.joined(separator: ", ")
+        return "Image \(n + 1) of \(images.count)" + (about.isEmpty ? "" : " (\(about))")
+    }
+
+    /// A review's answer: each comment on its own line, tagged with its image; nil when there are none.
+    public static func reviewAnswer(_ images: [DeskImage], _ comments: [Int: String]) -> String? {
+        let lines = images.indices.compactMap { n -> String? in
+            guard let c = comments[n]?.trimmingCharacters(in: .whitespacesAndNewlines), !c.isEmpty else { return nil }
+            return "\(imageLabel(images, n)): \(c)"
+        }
+        return lines.isEmpty ? nil : lines.joined(separator: "\n")
+    }
+
     /// The `say` message for a walk's answers, as the phone sends it: one batch, one Tally turn.
     /// Nil when nothing was actually answered (hearing items needs no reply).
     public static func answersMessage(_ batch: [DeskAnswer], left: Int) -> [String: Any]? {
@@ -214,7 +244,11 @@ public enum DeskWalk {
             return DeskItem(id: (o["id"] as? String) ?? UUID().uuidString, project: (o["project"] as? String) ?? "",
                             task: (o["task"] as? String) ?? "", kind: (o["kind"] as? String) ?? "update", say: say,
                             ask: (o["ask"] as? String).flatMap { $0.isEmpty ? nil : $0 }, options: (o["options"] as? [String]) ?? [],
-                            re: re, at: at)
+                            re: re, at: at,
+                            images: ((o["images"] as? [[String: Any]]) ?? []).compactMap { im in
+                                guard let fid = im["fid"] as? String, !fid.isEmpty else { return nil }
+                                return DeskImage(fid: fid, name: (im["name"] as? String) ?? "", caption: im["caption"] as? String, path: im["path"] as? String)
+                            })
         }
         if items.isEmpty {
             let text = ((m["text"] as? String) ?? "").replacingOccurrences(of: #"[*`#_]"#, with: "", options: .regularExpression)

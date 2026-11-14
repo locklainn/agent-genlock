@@ -504,6 +504,9 @@ private struct ArrivalCard: View {
 private struct WalkCard: View {
     @Bindable var model: DeskModel
     @State private var draft = ""
+    /// A review: the image on screen, and each image's comment (the box holds the one on screen).
+    @State private var page = 0
+    @State private var comments: [Int: String] = [:]
     @FocusState private var typing: Bool
 
     var body: some View {
@@ -546,6 +549,10 @@ private struct WalkCard: View {
                         if let ask = now.ask {
                             Text(ask).font(.system(size: 20, weight: .bold)).foregroundStyle(questionColor).padding(.top, 12)
                         }
+                        if !now.images.isEmpty {
+                            ReviewImages(images: now.images, page: page, commented: commentedPages) { turn(to: $0, images: now.images) }
+                                .padding(.top, 14)
+                        }
                         let links = DeskWalk.links(for: now, reply: replyText(now), siblings: siblings(now))
                         if !links.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
@@ -586,7 +593,7 @@ private struct WalkCard: View {
                                        startPoint: .top, endPoint: .bottom).ignoresSafeArea())
             .animation(.easeInOut(duration: 0.6), value: now.project)
             .onChange(of: model.phase) { _, p in if p == .answering { typing = true } }
-            .onChange(of: now.id) { _, _ in draft = "" }
+            .onChange(of: now.id) { _, _ in draft = ""; page = 0; comments = [:] }
         }
     }
 
@@ -636,22 +643,109 @@ private struct WalkCard: View {
                         .background(Capsule().fill(.white))
                 }
             }
+            if now.images.count > 1 {
+                let done = commentedPages.count
+                Button { finishReview() } label: {
+                    Label("Finish review  ·  \(done) of \(now.images.count) commented", systemImage: "checkmark.circle.fill")
+                        .font(.system(size: 14, weight: .bold)).foregroundStyle(ink).frame(maxWidth: .infinity).padding(.vertical, 8)
+                }
+                .buttonStyle(.plain).background(RoundedRectangle(cornerRadius: 10).fill(questionColor)).disabled(done == 0)
+                .keyboardShortcut(.return, modifiers: [.command])
+            }
             HStack(spacing: 8) {
-                TextField(now.isQuestion ? "Your answer" : "Reply to this, or let it move on", text: $draft, axis: .vertical)
+                TextField(!now.images.isEmpty ? "Your comment on image \(page + 1)" : now.isQuestion ? "Your answer" : "Reply to this, or let it move on", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain).lineLimit(1...4).focused($typing)
                     .padding(10).background(RoundedRectangle(cornerRadius: 10).fill(.white.opacity(0.12)))
                     .onSubmit { send() }
                     .onChange(of: draft) { _, d in if !d.isEmpty { model.holdForAnswer() } }
-                Button(action: send) { Image(systemName: "arrow.up.circle.fill").font(.system(size: 26)) }
-                    .buttonStyle(.plain).disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty)
+                Button(action: send) { Image(systemName: !now.images.isEmpty && page < now.images.count - 1 ? "chevron.right.circle.fill" : "arrow.up.circle.fill").font(.system(size: 26)) }
+                    .help(!now.images.isEmpty && page < now.images.count - 1 ? "Keep this comment, next image" : now.images.isEmpty ? "Send" : "Finish review")
+                    .buttonStyle(.plain).disabled(draft.trimmingCharacters(in: .whitespaces).isEmpty && !comments.values.contains { !$0.trimmingCharacters(in: .whitespaces).isEmpty })
             }
         }
     }
 
     private func send() {
         let d = draft
+        // A review: send before the last image keeps this comment and turns the page, as on the phone;
+        // the last image's send, or Finish review, sends every comment, each tagged with its image.
+        if let images = model.now?.images, !images.isEmpty, page < images.count - 1 {
+            turn(to: page + 1, images: images)
+            return
+        }
+        finishReview()
+    }
+
+    private func finishReview() {
+        let d = draft
+        if let images = model.now?.images, !images.isEmpty {
+            var all = comments; all[page] = d
+            guard let text = DeskWalk.reviewAnswer(images, all) else { return }
+            draft = ""; comments = [:]; page = 0
+            model.answer(text)
+            return
+        }
         draft = ""
         model.answer(d)
+    }
+
+    private var commentedPages: Set<Int> {
+        var s = Set(comments.filter { !$0.value.trimmingCharacters(in: .whitespaces).isEmpty }.keys)
+        if !draft.trimmingCharacters(in: .whitespaces).isEmpty { s.insert(page) }
+        return s
+    }
+
+    /// Show image [to]: this one keeps its comment, and the box takes that one's.
+    private func turn(to: Int, images: [DeskImage]) {
+        let n = max(0, min(images.count - 1, to))
+        guard n != page else { return }
+        comments[page] = draft
+        page = n
+        draft = comments[n] ?? ""
+        model.holdForAnswer()
+    }
+}
+
+/// A review's images, one at a time: the image, its label, arrows (or ⌘[ and ⌘]) to turn, and dots
+/// marking each image already commented on. Opened from where it is on this Mac.
+private struct ReviewImages: View {
+    let images: [DeskImage]
+    let page: Int
+    let commented: Set<Int>
+    let turn: (Int) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ZStack {
+                RoundedRectangle(cornerRadius: 12).fill(.white.opacity(0.08))
+                if let p = images[page].path, let img = NSImage(contentsOfFile: p) {
+                    Image(nsImage: img).resizable().scaledToFit().padding(6)
+                        .onTapGesture(count: 2) { NSWorkspace.shared.open(URL(fileURLWithPath: p)) }
+                        .help("Double-click to open it full size")
+                } else {
+                    Text("This image is not on this Mac").font(.system(size: 13)).foregroundStyle(.white.opacity(0.6))
+                }
+            }
+            .frame(maxWidth: .infinity, minHeight: 180, maxHeight: 380)
+            HStack {
+                Button { turn(page - 1) } label: { Image(systemName: "chevron.left").font(.system(size: 18, weight: .semibold)) }
+                    .buttonStyle(.plain).disabled(page == 0).keyboardShortcut("[", modifiers: [.command]).help("Previous image (⌘[)")
+                Text(DeskWalk.imageLabel(images, page)).font(.system(size: 15, weight: .semibold)).lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Button { turn(page + 1) } label: { Image(systemName: "chevron.right").font(.system(size: 18, weight: .semibold)) }
+                    .buttonStyle(.plain).disabled(page >= images.count - 1).keyboardShortcut("]", modifiers: [.command]).help("Next image (⌘])")
+            }
+            if images.count > 1 {
+                HStack(spacing: 6) {
+                    ForEach(images.indices, id: \.self) { n in
+                        Circle().fill(commented.contains(n) ? questionColor : n == page ? Color.white : Color.white.opacity(0.3))
+                            .frame(width: n == page ? 11 : 8, height: n == page ? 11 : 8)
+                            .onTapGesture { turn(n) }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+            }
+        }
     }
 }
 

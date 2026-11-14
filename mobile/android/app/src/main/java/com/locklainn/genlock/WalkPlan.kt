@@ -10,8 +10,11 @@ data class Item(
     val ask: String? = null, val options: List<String> = emptyList(), val late: Boolean = false,
     /** What TJ said that this replies to, and when the reply came: kept with the item so a restart loses neither. */
     val re: String? = null, val at: Long = 0,
+    /** Images an agent wants reviewed: paged through one at a time, a comment on each. */
+    val images: List<ImageRef> = emptyList(),
 ) {
-    val isQuestion get() = kind == "question" || ask != null
+    /** A review asks for comments, so it waits for TJ like a question. */
+    val isQuestion get() = kind == "question" || ask != null || images.isNotEmpty()
     /** Same project and task means the same subject; an item with neither is only itself. */
     val key: String get() = if (project.isBlank() && task.isBlank()) "id:$id" else "${project.trim().lowercase()}/${task.trim().lowercase()}"
     val label: String get() = listOf(project, task).filter { it.isNotBlank() }.joinToString(" / ")
@@ -20,8 +23,12 @@ data class Item(
         if (late) "Came in while we talked." else null,
         listOf(project, task).filter { it.isNotBlank() }.takeIf { it.isNotEmpty() }?.joinToString(", ", postfix = "."),
         WalkPlan.unlinked(say), ask?.let { WalkPlan.unlinked(it) },
+        when (images.size) { 0 -> null; 1 -> "One image to look at."; else -> "${images.size} images to look at." },
     ).joinToString(" ")
 }
+
+/** One image of a review: [fid] names the file the bridge sent with the reply; [name] its file name. */
+data class ImageRef(val fid: String, val name: String, val caption: String? = null)
 
 /** A link to open from the walk-through: what to call it, and where it goes. */
 data class WebLink(val label: String, val url: String)
@@ -124,6 +131,51 @@ object WalkPlan {
     }
 
     /** "send", plus the words a recognizer writes for it when it is said alone and short (TJ: "I have to say send like 12 times"). */
+    /** How a review comment names its image: "Image 2 of 4 (door.png, the side door)". */
+    fun imageLabel(images: List<ImageRef>, n: Int): String {
+        val im = images[n]
+        val about = listOfNotNull(im.name.ifBlank { null }, im.caption?.takeIf { it.isNotBlank() }).joinToString(", ")
+        return "Image ${n + 1} of ${images.size}" + if (about.isNotEmpty()) " ($about)" else ""
+    }
+
+    /**
+     * A review's answer: each comment on its own line, tagged with the image it is about, so the
+     * session that asked can tell which image each one means. Null when nothing was said on any.
+     */
+    fun reviewAnswer(images: List<ImageRef>, comments: Map<Int, String>): String? =
+        images.indices.mapNotNull { n -> comments[n]?.trim()?.takeIf { it.isNotEmpty() }?.let { "${imageLabel(images, n)}: $it" } }
+            .takeIf { it.isNotEmpty() }?.joinToString("\n")
+
+    private val pageWords = listOf("next image" to 1, "next picture" to 1, "next photo" to 1,
+        "previous image" to -1, "previous picture" to -1, "previous photo" to -1, "last image" to -1)
+
+    /**
+     * Paging a review by voice: dictation ending "next image" (or "previous image") returns the
+     * comment without those words and which way to turn; null when it does not end that way.
+     */
+    fun spokenPage(text: String): Pair<String, Int>? {
+        val t = text.trim().trimEnd('.', '!', ',', '?', ' ')
+        val low = t.lowercase()
+        for ((w, d) in pageWords) {
+            if (low == w) return "" to d
+            if (low.endsWith(" $w")) return t.dropLast(w.length).trim().trimEnd(',', '.', ' ') to d
+        }
+        return null
+    }
+
+    private val finishWords = listOf("finish review", "finish the review", "finish reviewing", "send all", "send them all", "send all of them", "done reviewing")
+
+    /** A review's finish step said aloud: the comment without those words, or null when it does not end that way. */
+    fun spokenFinish(text: String): String? {
+        val t = text.trim().trimEnd('.', '!', ',', '?', ' ')
+        val low = t.lowercase()
+        for (w in finishWords) {
+            if (low == w) return ""
+            if (low.endsWith(" $w")) return t.dropLast(w.length).trim().trimEnd(',', '.', ' ')
+        }
+        return null
+    }
+
     private val sendWords = listOf("send it", "send that", "sent it", "send", "sent", "sand", "cent", "scent", "sends")
 
     /**

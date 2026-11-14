@@ -22,6 +22,19 @@ export const plain = (text) => String(text || '')
   .replace(/\s+/g, ' ')
   .trim();
 
+/**
+ * The images an item asks TJ to review: local image files on the Mac, as paths or {path, caption}.
+ * Up to 12; anything else (a URL, a non-image) is left out, since the bridge sends each as a file.
+ */
+const IMAGE_EXT = /\.(png|jpe?g|gif|webp|heic)$/i;
+export function imagesOf(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((x) => (typeof x === 'string' ? { path: x } : x && typeof x === 'object' ? { path: x.path, caption: x.caption } : null))
+    .filter((x) => x && typeof x.path === 'string' && x.path.startsWith('/') && IMAGE_EXT.test(x.path))
+    .slice(0, 12)
+    .map((x) => ({ path: x.path, ...(str(x.caption, 120) ? { caption: str(x.caption, 120) } : {}) }));
+}
+
 /** { text, items }: the text to show, and the items to walk (ids `${turn}-${i}`). */
 export function parseItems(raw, turn = 'r') {
   const full = String(raw || '').trim();
@@ -40,13 +53,15 @@ export function parseItems(raw, turn = 'r') {
       return {
         id: `${turn}-${i}`, project: str(x.project, 60), task: str(x.task, 80), kind, say: str(x.say, 600),
         ...(str(x.ask, 300) ? { ask: str(x.ask, 300) } : {}), ...(options.length ? { options } : {}),
+        ...(imagesOf(x.images).length ? { images: imagesOf(x.images) } : {}),
       };
     });
   // An empty block is Tally saying there is nothing new to hear (a session's report repeats what TJ
   // was already told): shown with the rest, never walked or read, so he hears each update once.
   if (list && !list.length) return { text, items: [{ id: `${turn}-0`, project: '', task: '', kind: 'update', say: plain(text) }], quiet: true };
   if (!items.length) return { text, items: [{ id: `${turn}-0`, project: '', task: '', kind: 'update', say: plain(text) }] };
-  return { text: text || items.map((x) => x.say).join('\n\n'), items };
+  // block: Tally chose what the phone should hear, so it is meant for the phone whatever began the turn.
+  return { text: text || items.map((x) => x.say).join('\n\n'), items, block: true };
 }
 
 /**
@@ -67,4 +82,15 @@ export function formatAnswers(answers, { left = 0 } = {}) {
   }
   const tail = left > 0 ? ` ${left} more item${left === 1 ? ' is' : 's are'} still unheard on the phone; TJ will walk ${left === 1 ? 'it' : 'them'} later, so do not repeat ${left === 1 ? 'it' : 'them'}.` : '';
   return `Answers from the phone walk-through: ${parts.join(' ')}${tail}`;
+}
+
+/**
+ * Whether the phone walks a reply. TJ wants news on the phone without asking from it, so any reply
+ * Tally ended with an items block walks, whatever began the turn (a phone message, a session's
+ * report, TJ at the laptop or Remote Control). A reply to the laptop with no block was written for
+ * the screen he typed at, so it is shown, not walked. Never a reply whose block was empty.
+ */
+export function walkable({ answers, quiet, items, block }) {
+  if (quiet) return false;
+  return answers !== 'laptop' || Boolean(block) || items.some((it) => it.images?.length);
 }

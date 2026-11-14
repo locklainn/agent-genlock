@@ -97,4 +97,18 @@ final class DeskWalkTests: XCTestCase {
         XCTAssertEqual(two[0].options, ["Yes", "No"])
         XCTAssertTrue(two[0].isQuestion)
     }
+
+    func testAReviewInFocusModeSendsEachCommentTaggedWithItsImageLikeThePhone() {
+        let m: [String: Any] = ["kind": "reply", "turn": "r", "items": [["id": "r-0", "project": "nightmaremode", "task": "doors", "say": "Four options.",
+            "images": [["fid": "r-0-img0", "name": "a.png", "path": "/tmp/a.png"], ["fid": "r-0-img1", "name": "b.png", "caption": "the side door", "path": "/tmp/b.png"],
+                       ["fid": "r-0-img2", "name": "c.png"], ["fid": "r-0-img3", "name": "d.png"], ["name": "no-fid.png"]]]]]
+        let it = DeskWalk.items(fromReply: m, at: 0, re: nil)[0]
+        XCTAssertEqual(it.images.count, 4)
+        XCTAssertEqual(it.images[1].path, "/tmp/b.png")
+        XCTAssertTrue(it.isQuestion)
+        XCTAssertTrue(it.spoken.hasSuffix("4 images to look at."))
+        XCTAssertEqual(DeskWalk.reviewAnswer(it.images, [1: "too dark", 2: " love it ", 3: "  "]),
+                       "Image 2 of 4 (b.png, the side door): too dark\nImage 3 of 4 (c.png): love it")
+        XCTAssertNil(DeskWalk.reviewAnswer(it.images, [0: " "]))
+    }
 }

@@ -110,6 +110,30 @@ class WalkPlanTest {
         Line("ph2", Who.ME, "nightmaremode: Yes, take turns", 3),
     )
 
+    @Test fun aReviewSendsEachCommentTaggedWithItsImage() {
+        val ims = listOf(ImageRef("r-0-img0", "a.png"), ImageRef("r-0-img1", "b.png", "the side door"), ImageRef("r-0-img2", "c.png"), ImageRef("r-0-img3", "d.png"))
+        assertEquals("Image 2 of 4 (b.png, the side door): too dark\nImage 3 of 4 (c.png): love it",
+            WalkPlan.reviewAnswer(ims, mapOf(1 to "too dark", 2 to " love it ", 3 to "  ")))
+        assertEquals(null, WalkPlan.reviewAnswer(ims, mapOf(0 to " ")))
+        val review = Item("r-0", "nightmaremode", "doors", "update", "Four options.", images = ims)
+        assertEquals(true, review.isQuestion)
+        assertEquals(true, review.spoken().endsWith("4 images to look at."))
+    }
+
+    @Test fun nextImageSaidAtTheEndTurnsThePageAndKeepsTheComment() {
+        assertEquals("too dark" to 1, WalkPlan.spokenPage("too dark, next image."))
+        assertEquals("" to 1, WalkPlan.spokenPage("Next picture"))
+        assertEquals("fine" to -1, WalkPlan.spokenPage("fine previous image"))
+        assertEquals(null, WalkPlan.spokenPage("the next image is better"))
+    }
+
+    @Test fun finishReviewSaidAtTheEndSendsTheWholeSet() {
+        assertEquals("looks good", WalkPlan.spokenFinish("looks good, finish review."))
+        assertEquals("", WalkPlan.spokenFinish("Send all"))
+        assertEquals(null, WalkPlan.spokenFinish("too dark send"))
+        assertEquals(null, WalkPlan.spokenFinish("we should finish review later"))
+    }
+
     @Test fun arrivalCountsTheQueueAsItIsNowNotWhenItOpened() {
         val q = Item("a-0", "genlock", "x", "question", "s", ask = "Ship it?")
         val u = (1..5).map { Item("u-$it", "genlock", "t$it", "update", "s") }
